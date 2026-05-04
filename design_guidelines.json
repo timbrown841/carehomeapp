@@ -1,0 +1,101 @@
+{
+  "theme": "light",
+  "archetype": "1_organic_and_earthy",
+  "typography": {
+    "fonts": {
+      "heading": "Manrope",
+      "body": "DM Sans",
+      "mono": "JetBrains Mono"
+    },
+    "hierarchy": {
+      "h1": "text-4xl sm:text-5xl font-black tracking-tighter text-stone-900",
+      "h2": "text-2xl sm:text-3xl font-bold tracking-tight text-stone-800",
+      "h3": "text-xl sm:text-2xl font-semibold tracking-tight text-stone-800",
+      "h4": "text-lg sm:text-xl font-medium tracking-tight text-stone-700",
+      "body": "text-base font-normal leading-relaxed text-stone-600",
+      "small": "text-sm font-medium tracking-wide uppercase text-stone-500"
+    }
+  },
+  "colors": {
+    "background": {
+      "default": "#F5F5F0",
+      "paper": "#FFFFFF",
+      "muted": "#EAEAE5"
+    },
+    "text": {
+      "primary": "#1C1C1A",
+      "secondary": "#575752",
+      "muted": "#8A8A85"
+    },
+    "brand": {
+      "primary": "#2D4A3E",
+      "primary_hover": "#1E332A",
+      "accent": "#E57A5D",
+      "accent_hover": "#D1664A"
+    },
+    "status": {
+      "safe_routine": "#3A5A40",
+      "warning": "#D4A373",
+      "urgent_safeguarding": "#B23A48"
+    },
+    "borders": "#D6D6D0"
+  },
+  "layout_and_spacing": {
+    "strategy": "mobile-first",
+    "container_padding": "p-4 sm:p-8 lg:p-12",
+    "dashboard_grid": "grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6",
+    "bento_grid": "grid grid-cols-1 md:grid-cols-8 lg:grid-cols-12 gap-6 lg:gap-8",
+    "card_style": "bg-white border border-stone-200 rounded-xl shadow-sm",
+    "border_radius": "rounded-xl"
+  },
+  "components": {
+    "buttons": {
+      "primary": "bg-[#2D4A3E] text-white hover:bg-[#1E332A] transition-colors rounded-xl font-medium px-6 py-3",
+      "voice_cta": "bg-[#E57A5D] text-white hover:bg-[#D1664A] transition-colors rounded-full shadow-lg flex items-center justify-center p-6",
+      "secondary": "bg-stone-100 text-stone-800 hover:bg-stone-200 border border-stone-200 transition-colors rounded-xl font-medium px-6 py-3"
+    },
+    "cards": {
+      "routine_note": "bg-white border-l-4 border-l-[#3A5A40] border-y border-r border-stone-200 p-6 rounded-xl",
+      "safeguarding_incident": "bg-white border-l-4 border-l-[#B23A48] border-y border-r border-stone-200 p-6 rounded-xl"
+    },
+    "inputs": "bg-white border border-stone-200 rounded-lg px-4 py-3 text-stone-800 focus:outline-none focus:ring-2 focus:ring-[#2D4A3E] focus:border-transparent",
+    "badges": {
+      "urgent": "bg-[#B23A48]/10 text-[#B23A48] px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider",
+      "routine": "bg-[#3A5A40]/10 text-[#3A5A40] px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider"
+    }
+  },
+  "motion": {
+    "hover": "transition-all duration-200 ease-in-out",
+    "click": "active:scale-95 transition-transform",
+    "enter": "animate-in fade-in slide-in-from-bottom-4 duration-300"
+  },
+  "media": {
+    "image_urls": [
+      {
+        "url": "https://images.unsplash.com/photo-1655555082352-82e09b770bda?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA2OTV8MHwxfHNlYXJjaHw0fHxjaGlsZCUyMHBvcnRyYWl0JTIwaGFwcHklMjBjYWxtfGVufDB8fHx8MTc3Nzg5NzM4M3ww&ixlib=rb-4.1.0&q=85",
+        "category": "child_profile_avatar",
+        "description": "Happy calm child profile picture 1"
+      },
+      {
+        "url": "https://images.unsplash.com/photo-1560762354-1be2f3d3c3f6?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA2OTV8MHwxfHNlYXJjaHwxfHxjaGlsZCUyMHBvcnRyYWl0JTIwaGFwcHklMjBjYWxtfGVufDB8fHx8MTc3Nzg5NzM4M3ww&ixlib=rb-4.1.0&q=85",
+        "category": "child_profile_avatar",
+        "description": "Happy calm child profile picture 2"
+      }
+    ],
+    "icons_library": "lucide-react"
+  },
+  "accessibility_and_testing": {
+    "contrast": "Ensure all text meets at least 4.5:1 ratio against backgrounds. Use dark stone text on light backgrounds.",
+    "testing_attributes": "All interactive elements MUST include data-testid (e.g., data-testid='voice-record-btn').",
+    "focus_states": "Visible focus rings on all inputs and buttons: focus:ring-2 focus:ring-offset-2 focus:ring-[#2D4A3E]."
+  },
+  "instructions_to_main_agent": [
+    "Use Manrope for headings and DM Sans for body text. Install these via Google Fonts if necessary.",
+    "The app has two primary user modes: Mobile Staff Input (needs large touch targets, prominent voice CTA) and Manager Dashboard (needs data density and clear incident triaging).",
+    "Implement the Voice CTA as a large, floating or highly prominent circular button, colored in the accent Terracotta (#E57A5D) to ensure it's always accessible for staff on the move.",
+    "Visually differentiate Routine Notes from Safeguarding Incidents. Use left-border color coding (Green vs Red/Terracotta) on cards to quickly highlight severity without overwhelming the UI.",
+    "Do NOT use generic SaaS purples or blues. Stick strictly to the Organic & Earthy palette (Stone, Forest Green, Terracotta) to evoke calm, trust, and professionalism.",
+    "Ensure all lists, tables, and cards use generous padding (p-4 or p-6) to improve readability.",
+    "Avoid glassmorphism for this app; use flat solid surfaces with subtle 1px borders to maintain clarity and a grounded feel."
+  ]
+}
