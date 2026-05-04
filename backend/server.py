@@ -214,6 +214,7 @@ class ReportOut(BaseModel):
     note_count: int
     generated_by: str
     created_at: str
+    records: List[dict] = Field(default_factory=list)
 
 
 # ---------- Auth Endpoints ----------
@@ -546,6 +547,40 @@ async def generate_report(
             logger.exception("LLM summary failed")
             raise HTTPException(500, f"Summary generation failed: {e}")
 
+    # Build a flat list of records ordered chronologically — used by the
+    # frontend to display per-entry timestamps + authorship for full
+    # auditability of the AI summary.
+    flat_records = []
+    for inc in incidents:
+        flat_records.append(
+            {
+                "kind": "incident",
+                "id": inc.get("id"),
+                "resident_id": inc.get("resident_id"),
+                "resident_name": res_map.get(inc.get("resident_id"), "Unknown"),
+                "author_name": inc.get("author_name"),
+                "created_at": inc.get("created_at"),
+                "category": inc.get("category"),
+                "severity": inc.get("severity"),
+                "safeguarding": inc.get("safeguarding", False),
+                "body": inc.get("body", ""),
+            }
+        )
+    for n in notes:
+        flat_records.append(
+            {
+                "kind": "note",
+                "id": n.get("id"),
+                "resident_id": n.get("resident_id"),
+                "resident_name": res_map.get(n.get("resident_id"), "Unknown"),
+                "author_name": n.get("author_name"),
+                "created_at": n.get("created_at"),
+                "category": n.get("category"),
+                "body": n.get("body", ""),
+            }
+        )
+    flat_records.sort(key=lambda r: r.get("created_at") or "")
+
     doc = {
         "id": str(uuid.uuid4()),
         "summary": str(summary),
@@ -555,7 +590,9 @@ async def generate_report(
         "incident_count": len(incidents),
         "note_count": len(notes),
         "generated_by": user["name"],
+        "generated_by_id": user["id"],
         "created_at": now_iso(),
+        "records": flat_records,
     }
     await db.reports.insert_one(doc)
     doc.pop("_id", None)

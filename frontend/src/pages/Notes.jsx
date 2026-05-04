@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
 import api, { formatApiError } from "@/lib/api";
 import VoiceRecorder from "@/components/VoiceRecorder";
-import { Loader2, NotebookPen } from "lucide-react";
+import SaveReceipt from "@/components/SaveReceipt";
+import { formatFullTimestamp, recordRef } from "@/lib/format";
+import { Loader2, NotebookPen, Hash } from "lucide-react";
 import { toast } from "sonner";
 
 const CATS = ["wellbeing", "education", "health", "behaviour", "activity", "other"];
@@ -16,6 +18,7 @@ export default function Notes() {
     voice_used: false,
   });
   const [busy, setBusy] = useState(false);
+  const [lastSaved, setLastSaved] = useState(null);
 
   const reload = () =>
     Promise.all([
@@ -54,6 +57,14 @@ export default function Notes() {
           Quick observations from the day. Speak or type — your choice.
         </p>
       </div>
+
+      {lastSaved && (
+        <SaveReceipt
+          record={lastSaved}
+          label="Note saved successfully"
+          testid="note-save-receipt"
+        />
+      )}
 
       <div className="grid lg:grid-cols-3 gap-6">
         <form
@@ -170,19 +181,20 @@ export default function Notes() {
                       {n.voice_used && <span className="text-[#E57A5D] ml-2">· voice</span>}
                     </div>
                   </div>
-                  <div className="text-xs text-stone-500 text-right">
-                    {new Date(n.created_at).toLocaleString("en-GB", {
-                      day: "numeric",
-                      month: "short",
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })}
-                    <div>{n.author_name}</div>
+                  <div className="text-xs text-stone-500 text-right font-mono">
+                    {formatFullTimestamp(n.created_at)}
+                    <div className="font-sans font-medium text-stone-700 mt-0.5">
+                      {n.author_name}
+                    </div>
                   </div>
                 </div>
                 <p className="text-sm text-stone-800 leading-relaxed whitespace-pre-wrap">
                   {n.body}
                 </p>
+                <div className="mt-3 pt-2.5 border-t divider-soft flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-stone-400 font-mono">
+                  <Hash size={10} />
+                  <span>ref {recordRef(n.id)}</span>
+                </div>
               </div>
             );
           })}

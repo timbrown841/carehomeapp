@@ -315,6 +315,104 @@ class TestVoice:
         assert "text" in r.json()
 
 
+# ---- Iteration 4: Trust & Audit ----
+class TestIteration4TrustAudit:
+    """Verify server-side timestamp + author stamping and reports.records audit array."""
+
+    def test_note_has_server_side_timestamp_and_author(self, staff_token, seeded_resident_id):
+        rid = seeded_resident_id
+        payload = {
+            "resident_id": rid,
+            "category": "wellbeing",
+            "body": "TEST_trust_note",
+            # Try to spoof these — server MUST ignore them
+            "author_name": "HACKER",
+            "created_at": "1999-01-01T00:00:00+00:00",
+        }
+        r = requests.post(f"{API}/notes", headers=_h(staff_token), json=payload, timeout=15)
+        assert r.status_code == 200, r.text
+        d = r.json()
+        # created_at must be a fresh ISO string with timezone info
+        ts = d.get("created_at") or ""
+        assert ts, "created_at missing"
+        assert ("+" in ts) or ts.endswith("Z"), f"created_at lacks timezone: {ts}"
+        assert not ts.startswith("1999"), "server accepted client-supplied created_at"
+        # author_name must be the JWT user (Staff), not the spoofed value
+        assert d.get("author_name")
+        assert d["author_name"] != "HACKER", "server trusted client author_name"
+        assert "staff" in d["author_name"].lower() or d["author_name"] != "HACKER"
+        # id present
+        assert d.get("id")
+
+    def test_incident_has_server_side_timestamp_and_author(self, staff_token, seeded_resident_id):
+        rid = seeded_resident_id
+        payload = {
+            "resident_id": rid,
+            "severity": "low",
+            "category": "verbal",
+            "body": "TEST_trust_incident",
+            "safeguarding": False,
+            "author_name": "SPOOF",
+            "created_at": "2000-01-01T00:00:00+00:00",
+        }
+        r = requests.post(f"{API}/incidents", headers=_h(staff_token), json=payload, timeout=15)
+        assert r.status_code == 200, r.text
+        d = r.json()
+        ts = d.get("created_at") or ""
+        assert ts
+        assert ("+" in ts) or ts.endswith("Z"), f"created_at lacks timezone: {ts}"
+        assert not ts.startswith("2000"), "server trusted client-provided created_at"
+        assert d.get("author_name") and d["author_name"] != "SPOOF"
+        assert d.get("id")
+
+    def test_report_records_array_with_audit_trail(self, staff_token, manager_token, seeded_resident_id):
+        rid = seeded_resident_id
+        # Create one note + one incident to guarantee records are present
+        n = requests.post(f"{API}/notes", headers=_h(staff_token),
+                          json={"resident_id": rid, "category": "wellbeing",
+                                "body": "TEST_report_audit_note"}, timeout=15)
+        assert n.status_code == 200
+        inc = requests.post(f"{API}/incidents", headers=_h(staff_token),
+                            json={"resident_id": rid, "severity": "low",
+                                  "category": "verbal", "body": "TEST_report_audit_inc",
+                                  "safeguarding": True}, timeout=15)
+        assert inc.status_code == 200
+
+        r = requests.post(f"{API}/reports/generate", headers=_h(manager_token),
+                          json={"from_date": "2025-01-01", "to_date": "2026-12-31"}, timeout=120)
+        assert r.status_code == 200, r.text
+        d = r.json()
+        assert "records" in d, "records array missing from /reports/generate response"
+        records = d["records"]
+        assert isinstance(records, list)
+        # counts must match incident_count + note_count
+        incident_records = [x for x in records if x.get("kind") == "incident"]
+        note_records = [x for x in records if x.get("kind") == "note"]
+        assert len(incident_records) == d["incident_count"], \
+            f"incident records {len(incident_records)} != incident_count {d['incident_count']}"
+        assert len(note_records) == d["note_count"], \
+            f"note records {len(note_records)} != note_count {d['note_count']}"
+        assert len(records) == d["incident_count"] + d["note_count"]
+        # each record has the required fields
+        required_common = {"kind", "id", "resident_id", "resident_name",
+                           "author_name", "created_at", "category", "body"}
+        for rec in records:
+            missing = required_common - set(rec.keys())
+            assert not missing, f"record missing keys {missing}: {rec}"
+            if rec["kind"] == "incident":
+                assert "severity" in rec and "safeguarding" in rec
+        # sorted ascending by created_at
+        ts_list = [x["created_at"] for x in records if x.get("created_at")]
+        assert ts_list == sorted(ts_list), "records not sorted ascending by created_at"
+
+    def test_report_generated_by_populated(self, manager_token):
+        r = requests.post(f"{API}/reports/generate", headers=_h(manager_token),
+                          json={"from_date": "2025-01-01", "to_date": "2026-12-31"}, timeout=120)
+        assert r.status_code == 200
+        d = r.json()
+        assert d.get("generated_by"), "generated_by should be present"
+
+
 # ---- Cleanup ----
 def teardown_module(module):
     try:

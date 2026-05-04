@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import api, { formatApiError } from "@/lib/api";
-import { Loader2, Sparkles, FileText } from "lucide-react";
+import { formatFullTimestamp, recordRef } from "@/lib/format";
+import { Loader2, Sparkles, FileText, Clock, User, Hash, ChevronDown } from "lucide-react";
 import { toast } from "sonner";
 
 function isoDate(d) {
@@ -127,12 +128,21 @@ export default function Reports() {
         >
           <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
             <div>
-              <div className="text-xs font-semibold uppercase tracking-wider text-[#E57A5D]">
-                Generated · {new Date(latest.created_at).toLocaleString("en-GB")}
+              <div className="text-xs font-semibold uppercase tracking-wider text-[#E57A5D] flex items-center gap-1.5">
+                <Sparkles size={12} />
+                Generated · {formatFullTimestamp(latest.created_at)}
               </div>
               <h3 className="font-display font-bold text-2xl text-stone-900 mt-1">
                 {latest.from_date} → {latest.to_date}
               </h3>
+              <div className="text-xs text-stone-500 mt-1 flex items-center gap-3 flex-wrap">
+                <span className="inline-flex items-center gap-1">
+                  <User size={12} /> {latest.generated_by}
+                </span>
+                <span className="inline-flex items-center gap-1 font-mono uppercase tracking-wider">
+                  <Hash size={11} /> {recordRef(latest.id)}
+                </span>
+              </div>
             </div>
             <div className="text-xs text-stone-500">
               {latest.incident_count} incidents · {latest.note_count} notes
@@ -141,6 +151,65 @@ export default function Reports() {
           <div className="prose prose-stone max-w-none text-stone-800 whitespace-pre-wrap text-sm leading-relaxed">
             {latest.summary}
           </div>
+
+          {(latest.records?.length || 0) > 0 && (
+            <details className="mt-5 group" data-testid="latest-audit-trail">
+              <summary className="cursor-pointer list-none flex items-center justify-between gap-2 px-3 py-2.5 rounded-xl bg-stone-50 border divider-soft text-sm font-semibold text-stone-700 hover:bg-stone-100">
+                <span className="inline-flex items-center gap-2">
+                  <Clock size={14} /> Audit trail ·{" "}
+                  {latest.records.length} entries
+                </span>
+                <ChevronDown
+                  size={14}
+                  className="text-stone-400 group-open:rotate-180 transition-transform"
+                />
+              </summary>
+              <ol className="mt-3 space-y-2">
+                {latest.records.map((rec) => (
+                  <li
+                    key={`${rec.kind}-${rec.id}`}
+                    className={`p-3 rounded-xl border-l-4 border-y border-r divider-soft bg-stone-50/60 ${
+                      rec.kind === "incident"
+                        ? rec.safeguarding
+                          ? "border-l-[#B23A48]"
+                          : "border-l-[#D4A373]"
+                        : "border-l-[#3A5A40]"
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-2 flex-wrap mb-1">
+                      <div className="text-[10px] font-bold uppercase tracking-wider text-stone-500">
+                        {rec.kind === "incident" ? "Incident" : "Note"} ·{" "}
+                        {rec.resident_name}
+                        {rec.kind === "incident" && (
+                          <>
+                            {" "}
+                            · {rec.severity}
+                            {rec.safeguarding && (
+                              <span className="text-[#B23A48]"> · safeguarding</span>
+                            )}
+                          </>
+                        )}
+                      </div>
+                      <div className="text-[10px] text-stone-500 font-mono">
+                        {formatFullTimestamp(rec.created_at)}
+                      </div>
+                    </div>
+                    <div className="text-sm text-stone-800 leading-snug line-clamp-2">
+                      {rec.body}
+                    </div>
+                    <div className="mt-1.5 flex items-center gap-2 text-[10px] text-stone-500">
+                      <span className="font-medium text-stone-700">
+                        {rec.author_name}
+                      </span>
+                      <span className="font-mono uppercase tracking-wider text-stone-400">
+                        ref {recordRef(rec.id)}
+                      </span>
+                    </div>
+                  </li>
+                ))}
+              </ol>
+            </details>
+          )}
         </div>
       )}
 
@@ -158,20 +227,68 @@ export default function Reports() {
             className="bg-white border divider-soft rounded-2xl group"
           >
             <summary className="cursor-pointer p-5 flex items-center justify-between gap-4 list-none">
-              <div>
+              <div className="min-w-0">
                 <div className="font-display font-semibold text-stone-900">
                   {r.from_date} → {r.to_date}
                 </div>
-                <div className="text-xs text-stone-500 mt-0.5">
-                  by {r.generated_by} · {r.incident_count} incidents · {r.note_count} notes
+                <div className="text-xs text-stone-500 mt-0.5 flex items-center gap-2 flex-wrap">
+                  <span className="inline-flex items-center gap-1">
+                    <User size={11} />
+                    {r.generated_by}
+                  </span>
+                  <span>·</span>
+                  <span className="font-mono">
+                    {formatFullTimestamp(r.created_at)}
+                  </span>
+                  <span className="hidden sm:inline">·</span>
+                  <span className="hidden sm:inline">
+                    {r.incident_count} incidents · {r.note_count} notes
+                  </span>
                 </div>
               </div>
-              <span className="text-xs text-stone-500 group-open:rotate-180 transition-transform">
-                ▾
-              </span>
+              <ChevronDown
+                size={16}
+                className="text-stone-400 group-open:rotate-180 transition-transform shrink-0"
+              />
             </summary>
             <div className="p-5 pt-0 text-sm text-stone-800 whitespace-pre-wrap leading-relaxed border-t divider-soft">
               {r.summary}
+              {(r.records?.length || 0) > 0 && (
+                <ol className="mt-4 space-y-2">
+                  {r.records.map((rec) => (
+                    <li
+                      key={`${rec.kind}-${rec.id}`}
+                      className={`p-3 rounded-xl border-l-4 border-y border-r divider-soft bg-stone-50/60 not-prose ${
+                        rec.kind === "incident"
+                          ? rec.safeguarding
+                            ? "border-l-[#B23A48]"
+                            : "border-l-[#D4A373]"
+                          : "border-l-[#3A5A40]"
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-2 flex-wrap mb-1">
+                        <div className="text-[10px] font-bold uppercase tracking-wider text-stone-500">
+                          {rec.kind} · {rec.resident_name}
+                        </div>
+                        <div className="text-[10px] text-stone-500 font-mono">
+                          {formatFullTimestamp(rec.created_at)}
+                        </div>
+                      </div>
+                      <div className="text-sm leading-snug line-clamp-2">
+                        {rec.body}
+                      </div>
+                      <div className="mt-1 text-[10px] text-stone-500 flex gap-2">
+                        <span className="font-medium text-stone-700">
+                          {rec.author_name}
+                        </span>
+                        <span className="font-mono uppercase tracking-wider text-stone-400">
+                          ref {recordRef(rec.id)}
+                        </span>
+                      </div>
+                    </li>
+                  ))}
+                </ol>
+              )}
             </div>
           </details>
         ))}

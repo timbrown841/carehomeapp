@@ -1,0 +1,40 @@
+{
+  "summary": "Iteration 4 (Trust & Reliability) verified end-to-end. Backend 28/28 pytest pass — added TestIteration4TrustAudit with 4 new tests: (a) POST /api/notes returns server-generated created_at (ISO with +00:00 tz) and author_name from JWT, ignoring spoofed client-supplied values; (b) POST /api/incidents same server-side stamping; (c) POST /api/reports/generate response contains records: List[dict] with kind/id/resident_id/resident_name/author_name/created_at/category/body (+severity/safeguarding for incidents), sorted ASC by created_at, and len(records)==incident_count+note_count; (d) generated_by populated. Frontend Playwright (mobile 390px + desktop): LogIncident /incidents/new — save does NOT navigate, renders incident-save-receipt with timestamp (en-GB, HH:MM:SS 24h) + author ('Alex Staff') + ref '#43DF82A1' (starts with '#'); log-another-btn resets form AND clears receipt; goto-incidents-btn present; 2nd save produces NEW ref (#E5BA4E10 ≠ #43DF82A1). Incidents legacy quick form: incident-quick-save-receipt + 3 sub-testids all render correctly ('#FB00F515'). Reports page: latest-report card shows generated_by ('Sarah Manager'), ref ('#4B72D8CE'), counts ('20 incidents · 9 notes'), full timestamp; latest-audit-trail details element present and expands. Dashboard recent items show full timestamp with seconds and 'by {author_name}'. Mobile 390px: scrollWidth==clientWidth==390, no horizontal overflow. ONE frontend bug found: Notes.jsx submit() does not wire the API response → setLastSaved, so data-testid='note-save-receipt' never appears on the Notes page (acceptance criterion fails).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "Notes.jsx (pages/Notes.jsx submit handler, lines 33-48)",
+        "issue": "SaveReceipt never renders after saving a note. The submit handler calls `await api.post('/notes', form)` but discards the response and never calls `setLastSaved(data)`. Therefore the `lastSaved` state stays null and `<SaveReceipt data-testid='note-save-receipt' />` is never mounted. Acceptance criterion 'Notes page: after submitting a note, a SaveReceipt strip appears (data-testid=note-save-receipt) showing timestamp/author/ref' FAILS.",
+        "selector": "[data-testid='note-save-receipt']",
+        "priority": "HIGH"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "Notes.jsx submit(): capture the response and call setLastSaved(data). Example fix:\n  const { data } = await api.post('/notes', form);\n  setLastSaved(data);\n  toast.success('Note logged');\n  setForm({ ...form, body: '', voice_used: false });\n  reload();\nThis is the only failing acceptance criterion for iteration 4."
+  ],
+  "critical_code_review_comments": [
+    "Notes.jsx: BUG — submit() discards axios response, so note-save-receipt never renders (see action_items).",
+    "LogIncident.jsx: log-another-btn and goto-incidents-btn correctly wired; form reset is complete (transcript cleared, structured preview cleared, savedRecord cleared). Verified.",
+    "Reports.jsx latest-audit-trail: each <li> row has timestamp + author + ref but NO per-row data-testid. Spec wording 'containing all incident+note rows each with a full timestamp and author and ref' is satisfied content-wise; consider adding data-testid='audit-row-{id}' for easier future automation.",
+    "server.py generate_report: flat_records correctly excludes _id and populates resident_name from res_map, with sort asc by created_at. Verified with counts matching incident_count+note_count (20+9=29).",
+    "server.py: notes/incidents creation correctly overrides any client-provided created_at/author_name by always spreading payload.model_dump() first then setting server-side values afterward. Verified via spoofing test (payload author_name='HACKER' + created_at='1999-...' both ignored).",
+    "Dashboard.jsx: recent_incidents / recent_notes rows show HH:MM:SS timestamp via formatFullTimestamp and 'by {author_name}' line — verified. Consider adding data-testid='recent-incident-{id}' / 'recent-note-{id}' for test stability.",
+    "Still-open items from prior iterations: deprecated FastAPI on_event, raw exception text leaked in /voice/transcribe & /reports/generate, no brute-force login lockout."
+  ],
+  "updated_files": ["/app/backend/tests/backend_test.py"],
+  "success_rate": {"backend": "100% (28/28)", "frontend": "~85% — 1 of ~10 acceptance criteria failing (Notes SaveReceipt wiring)"},
+  "test_credentials": "manager@care.local/Manager@123 and staff@care.local/Staff@123 — both verified.",
+  "seed_data_creation": "TestIteration4TrustAudit creates TEST_trust_note, TEST_trust_incident, TEST_report_audit_note, TEST_report_audit_inc. Teardown already removes TEST_* residents (incidents/notes remain by design — small dataset impact).",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Only Notes.jsx SaveReceipt wiring needs retest after fix. All other iteration-4 acceptance criteria PASS. Backend 28/28 stable. Spoofing test (client-supplied created_at/author_name) is the key security test — ensure future auth refactors preserve server-side field override in POST /api/notes and /api/incidents.",
+  "rca of the issue": "Root cause: Notes.jsx:39 does `await api.post('/notes', form)` without destructuring `.data` and never calls `setLastSaved`. The state `lastSaved` therefore remains null and the `{lastSaved && <SaveReceipt ... testid='note-save-receipt' />}` block (lines 61-67) never renders. Reproduction: login as staff → go to /notes → pick resident → fill body → Save → toast shows but no save-receipt strip. Mitigation: destructure response and call setLastSaved, identical pattern to Incidents.jsx:53-56 which works correctly."
+}

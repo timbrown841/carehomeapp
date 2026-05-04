@@ -2,6 +2,7 @@ import { useEffect, useState, useMemo } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import api, { formatApiError } from "@/lib/api";
 import VoiceRecorder from "@/components/VoiceRecorder";
+import SaveReceipt from "@/components/SaveReceipt";
 import {
   ArrowLeft,
   Loader2,
@@ -11,6 +12,8 @@ import {
   Mic,
   X,
   ChevronDown,
+  Plus,
+  ListChecks,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -42,6 +45,7 @@ export default function LogIncident() {
   const [structuring, setStructuring] = useState(false);
   const [saving, setSaving] = useState(false);
   const [structured, setStructured] = useState(null);
+  const [savedRecord, setSavedRecord] = useState(null);
 
   const [form, setForm] = useState({
     resident_id: "",
@@ -130,7 +134,7 @@ export default function LogIncident() {
         absconding: "missing",
         other: "other",
       };
-      await api.post("/incidents", {
+      const { data } = await api.post("/incidents", {
         resident_id: form.resident_id,
         severity: form.severity,
         category: categoryMap[form.incident_type] || "other",
@@ -143,13 +147,31 @@ export default function LogIncident() {
         structured_report: form.structured_report || "",
         raw_transcript: form.transcript || "",
       });
-      toast.success("Incident logged");
-      nav("/incidents");
+      setSavedRecord(data);
+      toast.success("Incident saved · audit-trail recorded");
+      // Scroll to top so the receipt is visible
+      window.scrollTo({ top: 0, behavior: "smooth" });
     } catch (e) {
       toast.error(formatApiError(e.response?.data?.detail) || "Save failed");
     } finally {
       setSaving(false);
     }
+  };
+
+  const logAnother = () => {
+    setSavedRecord(null);
+    setStructured(null);
+    setForm({
+      resident_id: "",
+      incident_type: "behaviour",
+      transcript: "",
+      severity: "medium",
+      tags: [],
+      safeguarding: false,
+      structured_report: "",
+      suggested_action: "",
+    });
+    window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
   return (
@@ -175,6 +197,34 @@ export default function LogIncident() {
           Speak naturally. We'll structure an Ofsted-ready report for you.
         </p>
       </div>
+
+      {savedRecord && (
+        <>
+          <SaveReceipt
+            record={savedRecord}
+            label="Incident saved successfully"
+            testid="incident-save-receipt"
+          />
+          <div className="grid grid-cols-2 gap-2.5">
+            <button
+              type="button"
+              onClick={logAnother}
+              data-testid="log-another-btn"
+              className="inline-flex items-center justify-center gap-2 bg-[#1E4D5C] hover:bg-[#163A47] text-white font-semibold rounded-xl px-4 py-3 text-sm transition-colors"
+            >
+              <Plus size={16} /> Log another
+            </button>
+            <button
+              type="button"
+              onClick={() => nav("/incidents")}
+              data-testid="goto-incidents-btn"
+              className="inline-flex items-center justify-center gap-2 bg-white hover:bg-stone-50 text-stone-800 font-semibold rounded-xl px-4 py-3 text-sm border divider-soft transition-colors"
+            >
+              <ListChecks size={16} /> View all incidents
+            </button>
+          </div>
+        </>
+      )}
 
       {/* Step 1: Young Person */}
       <section className="bg-white border divider-soft rounded-2xl p-4 sm:p-5">

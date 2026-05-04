@@ -2,8 +2,10 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import api, { formatApiError } from "@/lib/api";
 import VoiceRecorder from "@/components/VoiceRecorder";
+import SaveReceipt from "@/components/SaveReceipt";
+import { formatFullTimestamp, recordRef } from "@/lib/format";
 import { useAuth } from "@/context/AuthContext";
-import { Loader2, ShieldAlert } from "lucide-react";
+import { Loader2, ShieldAlert, Hash } from "lucide-react";
 import { toast } from "sonner";
 
 const CATS = ["physical", "verbal", "self-harm", "missing", "medical", "other"];
@@ -28,6 +30,7 @@ export default function Incidents() {
     voice_used: false,
   });
   const [busy, setBusy] = useState(false);
+  const [lastSaved, setLastSaved] = useState(null);
   const canReview = user?.role === "manager" || user?.role === "admin";
 
   const reload = () =>
@@ -49,8 +52,9 @@ export default function Incidents() {
     if (!form.body.trim()) return toast.error("Describe the incident");
     setBusy(true);
     try {
-      await api.post("/incidents", form);
-      toast.success("Incident logged");
+      const { data } = await api.post("/incidents", form);
+      setLastSaved(data);
+      toast.success("Incident saved · audit-trail recorded");
       setForm({ ...form, body: "", action_taken: "", voice_used: false });
       reload();
     } catch (err) {
@@ -103,6 +107,14 @@ export default function Incidents() {
           </label>
         </div>
       </div>
+
+      {lastSaved && (
+        <SaveReceipt
+          record={lastSaved}
+          label="Incident saved successfully"
+          testid="incident-quick-save-receipt"
+        />
+      )}
 
       <div className="grid lg:grid-cols-3 gap-6">
         <form
@@ -296,20 +308,21 @@ export default function Incidents() {
                   </p>
                 )}
                 <div className="flex items-center justify-between mt-3 pt-3 border-t divider-soft">
-                  <div className="text-xs text-stone-500">
-                    by {i.author_name} ·{" "}
-                    {new Date(i.created_at).toLocaleString("en-GB", {
-                      day: "numeric",
-                      month: "short",
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })}
+                  <div className="text-xs text-stone-500 flex items-center gap-2 flex-wrap">
+                    <span className="font-medium text-stone-700">{i.author_name}</span>
+                    <span>·</span>
+                    <span className="font-mono">{formatFullTimestamp(i.created_at)}</span>
+                    <span className="hidden sm:inline">·</span>
+                    <span className="hidden sm:inline-flex items-center gap-1 font-mono uppercase tracking-wider text-stone-400">
+                      <Hash size={10} />
+                      ref {recordRef(i.id)}
+                    </span>
                   </div>
                   {canReview && i.status !== "reviewed" && (
                     <button
                       data-testid={`review-${i.id}`}
                       onClick={() => updateStatus(i.id, "reviewed")}
-                      className="text-xs font-semibold text-[#2D4A3E] hover:underline"
+                      className="text-xs font-semibold text-[#1E4D5C] hover:underline shrink-0"
                     >
                       Mark reviewed
                     </button>

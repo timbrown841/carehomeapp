@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import api from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
+import { formatFullTimestamp } from "@/lib/format";
 import {
   Users,
   NotebookPen,
@@ -328,16 +329,16 @@ export default function Dashboard() {
                       <span className="ml-1.5 text-[#B23A48]">· safeguarding</span>
                     )}
                   </div>
-                  <div className="text-xs text-stone-500 shrink-0">
-                    {new Date(inc.created_at).toLocaleDateString("en-GB", {
-                      day: "numeric",
-                      month: "short",
-                    })}
+                  <div className="text-xs text-stone-500 shrink-0 font-mono">
+                    {formatFullTimestamp(inc.created_at)}
                   </div>
                 </div>
                 <p className="text-sm text-stone-800 leading-snug line-clamp-2">
                   {inc.body}
                 </p>
+                <div className="text-[10px] text-stone-500 mt-1.5 font-medium">
+                  by {inc.author_name}
+                </div>
               </div>
             ))}
           </div>
@@ -373,16 +374,16 @@ export default function Dashboard() {
                       <span className="ml-1.5 text-[#E57A5D]">· voice</span>
                     )}
                   </div>
-                  <div className="text-xs text-stone-500 shrink-0">
-                    {new Date(n.created_at).toLocaleDateString("en-GB", {
-                      day: "numeric",
-                      month: "short",
-                    })}
+                  <div className="text-xs text-stone-500 shrink-0 font-mono">
+                    {formatFullTimestamp(n.created_at)}
                   </div>
                 </div>
                 <p className="text-sm text-stone-800 leading-snug line-clamp-2">
                   {n.body}
                 </p>
+                <div className="text-[10px] text-stone-500 mt-1.5 font-medium">
+                  by {n.author_name}
+                </div>
               </div>
             ))}
           </div>
