@@ -11,6 +11,7 @@ import Residents from "@/pages/Residents";
 import Notes from "@/pages/Notes";
 import Incidents from "@/pages/Incidents";
 import LogIncident from "@/pages/LogIncident";
+import IncidentDetail from "@/pages/IncidentDetail";
 import Reports from "@/pages/Reports";
 import ComingSoon from "@/pages/ComingSoon";
 
@@ -52,6 +53,7 @@ function App() {
               <Route path="/notes" element={<Notes />} />
               <Route path="/incidents" element={<Incidents />} />
               <Route path="/incidents/new" element={<LogIncident />} />
+              <Route path="/incidents/:id" element={<IncidentDetail />} />
               <Route
                 path="/staff"
                 element={

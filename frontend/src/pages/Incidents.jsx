@@ -1,11 +1,11 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import api, { formatApiError } from "@/lib/api";
+import api, { API, formatApiError } from "@/lib/api";
 import VoiceRecorder from "@/components/VoiceRecorder";
 import SaveReceipt from "@/components/SaveReceipt";
 import { formatFullTimestamp, recordRef } from "@/lib/format";
 import { useAuth } from "@/context/AuthContext";
-import { Loader2, ShieldAlert, Hash } from "lucide-react";
+import { Loader2, ShieldAlert, Hash, Download, Eye } from "lucide-react";
 import { toast } from "sonner";
 
 const CATS = ["physical", "verbal", "self-harm", "missing", "medical", "other"];
@@ -71,6 +71,30 @@ export default function Incidents() {
       reload();
     } catch (err) {
       toast.error(formatApiError(err.response?.data?.detail));
+    }
+  };
+
+  const downloadPdf = async (incident, residentName) => {
+    try {
+      const token = localStorage.getItem("cc_token");
+      const r = await fetch(`${API}/incidents/${incident.id}/pdf`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const blob = await r.blob();
+      const safeName = (residentName || "incident").replace(/\s+/g, "_");
+      const shortRef = String(incident.id).replace(/-/g, "").slice(-8).toUpperCase();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `Safelyn_Incident_${safeName}_${shortRef}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1500);
+      toast.success("PDF downloaded");
+    } catch (e) {
+      toast.error("PDF download failed");
     }
   };
 
@@ -318,15 +342,36 @@ export default function Incidents() {
                       ref {recordRef(i.id)}
                     </span>
                   </div>
-                  {canReview && i.status !== "reviewed" && (
-                    <button
-                      data-testid={`review-${i.id}`}
-                      onClick={() => updateStatus(i.id, "reviewed")}
-                      className="text-xs font-semibold text-[#1E4D5C] hover:underline shrink-0"
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <Link
+                      to={`/incidents/${i.id}`}
+                      data-testid={`view-incident-${i.id}`}
+                      className="inline-flex items-center gap-1 text-xs font-semibold text-stone-600 hover:text-stone-900 px-2 py-1 rounded-lg hover:bg-stone-100"
+                      title="View detail"
                     >
-                      Mark reviewed
+                      <Eye size={13} />
+                      <span className="hidden sm:inline">View</span>
+                    </Link>
+                    <button
+                      type="button"
+                      data-testid={`download-pdf-${i.id}`}
+                      onClick={() => downloadPdf(i, res?.name)}
+                      className="inline-flex items-center gap-1 text-xs font-semibold text-[#1E4D5C] hover:text-[#0F2A47] px-2 py-1 rounded-lg hover:bg-[#1E4D5C]/10"
+                      title="Download PDF"
+                    >
+                      <Download size={13} />
+                      <span className="hidden sm:inline">PDF</span>
                     </button>
-                  )}
+                    {canReview && i.status !== "reviewed" && (
+                      <button
+                        data-testid={`review-${i.id}`}
+                        onClick={() => updateStatus(i.id, "reviewed")}
+                        className="text-xs font-semibold text-[#3A5A40] hover:text-[#2C4A33] px-2 py-1 rounded-lg hover:bg-[#3A5A40]/10"
+                      >
+                        Mark reviewed
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
             );

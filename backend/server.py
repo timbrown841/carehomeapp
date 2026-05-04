@@ -21,6 +21,9 @@ from pydantic import BaseModel, Field, EmailStr, field_validator
 
 from emergentintegrations.llm.openai import OpenAISpeechToText
 from emergentintegrations.llm.chat import LlmChat, UserMessage
+from fastapi.responses import StreamingResponse
+
+from pdf_builder import build_incident_pdf
 
 
 # ---------- Setup ----------
@@ -445,6 +448,40 @@ async def update_incident_status(
     if not doc:
         raise HTTPException(404, "Not found")
     return doc
+
+
+@api_router.get("/incidents/{iid}", response_model=Incident)
+async def get_incident(iid: str, _: dict = Depends(get_current_user)):
+    doc = await db.incidents.find_one({"id": iid}, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, "Incident not found")
+    return doc
+
+
+@api_router.get("/incidents/{iid}/pdf")
+async def export_incident_pdf(iid: str, user: dict = Depends(get_current_user)):
+    incident = await db.incidents.find_one({"id": iid}, {"_id": 0})
+    if not incident:
+        raise HTTPException(404, "Incident not found")
+    resident = await db.residents.find_one(
+        {"id": incident.get("resident_id")}, {"_id": 0}
+    )
+    pdf_buf = build_incident_pdf(
+        incident=incident,
+        resident=resident,
+        generated_for=user.get("name", "—"),
+    )
+    safe_name = (resident or {}).get("name", "incident").replace(" ", "_")
+    short_ref = str(iid).replace("-", "")[-8:].upper()
+    filename = f"Safelyn_Incident_{safe_name}_{short_ref}.pdf"
+    return StreamingResponse(
+        pdf_buf,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 @api_router.delete("/incidents/{iid}")

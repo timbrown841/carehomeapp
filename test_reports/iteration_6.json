@@ -1,0 +1,29 @@
+{
+  "summary": "Iteration 6 PDF export testing. Backend: 7/7 pytest tests pass — GET /api/incidents/{id} returns full dict with all required fields, GET /api/incidents/{id}/pdf returns 200 application/pdf with correct Content-Disposition (Safelyn_Incident_{name}_{ref}.pdf), PDF content (pypdf-extracted) includes all required sections (Safelyn Systems, INCIDENT REPORT, YOUNG PERSON, LOGGED BY, REFERENCE, STRUCTURED REPORT, VERIFICATION, REPORTING STAFF, REVIEWED BY (MANAGER), 2x Signature: lines, 2x Date: lines, #8-char ref, SAFEGUARDING FLAGGED, tag names, author name), unauth→401, non-existent→404. Frontend: IncidentDetail page renders correctly on desktop+mobile with all data-testids (incident-detail-page, detail-timestamp, detail-author, detail-ref starting with #, detail-structured-report, download-pdf-btn). download-pdf-btn triggers fetch to /api/incidents/{id}/pdf and anchor download with suggested_filename='Safelyn_Incident_*_*.pdf'. Incidents list has 21 view-incident-{id} + download-pdf-{id} buttons — view navigates to /incidents/{id}, download triggers PDF download. Mobile 390px: no horizontal overflow (sw=cw=390), download button at y=89 (top of page). LogIncident save-receipt-download-pdf button code verified (downloadSavedPdf function identical to detail page's).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_pdf_export.py",
+    "/app/test_reports/pytest/pdf_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Backend PDF endpoint and detail endpoint correctly exclude _id projection and require auth via get_current_user. PDF builder (~460 lines) is a single-purpose module — borderline but acceptable since it's cohesive.",
+    "Minor UX note (not a bug): When the frontend cannot find the resident in the residents list (e.g. legacy incident whose resident was deleted), downloadPdf in IncidentDetail.jsx and LogIncident.jsx falls back to filename 'Safelyn_Incident_incident_{REF}.pdf'. The backend Content-Disposition actually sends the correct resident name, but the frontend anchor.download attribute overrides the server filename. Consider honoring the server-provided filename from Content-Disposition for full correctness. Doesn't affect acceptance criteria.",
+    "downloadSavedPdf in LogIncident.jsx and downloadPdf in IncidentDetail.jsx are near-duplicates (>20 LOC each). Consider extracting to a shared lib/pdf.js helper (DRY).",
+    "GET /api/incidents/{iid}/pdf uses user.get('name', '—') for generated_for audit footer — verified present in PDF text. Good."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_pdf_export.py (new)"
+  ],
+  "success_rate": {"backend": "100% (7/7)", "frontend": "100%"},
+  "test_credentials": "staff@care.local/Staff@123, manager@care.local/Manager@123 — both used and working",
+  "seed_data_creation": "Created 1 TEST_PDF_Young_Person resident + 1 safeguarding incident with tags/structured_report via backend_test for PDF content verification (cleaned up in teardown_module).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "All acceptance criteria met. PDF content verified via pypdf: contains 'Safelyn Systems', 'INCIDENT REPORT', resident name, author_name, 'YOUNG PERSON', 'LOGGED BY', 'REFERENCE', 'STRUCTURED REPORT', 'VERIFICATION', 'REPORTING STAFF', 'REVIEWED BY (MANAGER)', 2x 'Signature:' lines, 2x 'Date:' lines, '#' + 8-char ref, 'SAFEGUARDING FLAGGED', tag names ('aggression', 'restraint'). Frontend: Detail page data-testids all present and populated; download-pdf-btn triggers correct fetch + anchor download. List page has view-incident-{id} and download-pdf-{id} per card. Mobile 390 no overflow. LogIncident save-receipt-download-pdf testid exists and logic mirrors detail page (full save-then-download flow not end-to-end tested because it requires microphone/transcript flow, but code review confirms correctness)."
+}

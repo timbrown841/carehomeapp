@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo } from "react";
 import { useNavigate, Link } from "react-router-dom";
-import api, { formatApiError } from "@/lib/api";
+import api, { API, formatApiError } from "@/lib/api";
 import VoiceRecorder from "@/components/VoiceRecorder";
 import SaveReceipt from "@/components/SaveReceipt";
 import {
@@ -14,6 +14,7 @@ import {
   ChevronDown,
   Plus,
   ListChecks,
+  Download,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -174,6 +175,31 @@ export default function LogIncident() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
+  const downloadSavedPdf = async () => {
+    if (!savedRecord) return;
+    try {
+      const token = localStorage.getItem("cc_token");
+      const r = await fetch(`${API}/incidents/${savedRecord.id}/pdf`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const blob = await r.blob();
+      const safeName = (selectedResident?.name || "incident").replace(/\s+/g, "_");
+      const shortRef = String(savedRecord.id).replace(/-/g, "").slice(-8).toUpperCase();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `Safelyn_Incident_${safeName}_${shortRef}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1500);
+      toast.success("PDF downloaded");
+    } catch (e) {
+      toast.error("PDF download failed");
+    }
+  };
+
   return (
     <div className="space-y-5 max-w-2xl mx-auto" data-testid="log-incident-page">
       {/* Header */}
@@ -205,22 +231,30 @@ export default function LogIncident() {
             label="Incident saved successfully"
             testid="incident-save-receipt"
           />
-          <div className="grid grid-cols-2 gap-2.5">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+            <button
+              type="button"
+              onClick={downloadSavedPdf}
+              data-testid="save-receipt-download-pdf"
+              className="inline-flex items-center justify-center gap-2 bg-[#1E4D5C] hover:bg-[#163A47] text-white font-semibold rounded-xl px-4 py-3 text-sm transition-colors shadow-sm"
+            >
+              <Download size={16} /> Download PDF
+            </button>
             <button
               type="button"
               onClick={logAnother}
               data-testid="log-another-btn"
-              className="inline-flex items-center justify-center gap-2 bg-[#1E4D5C] hover:bg-[#163A47] text-white font-semibold rounded-xl px-4 py-3 text-sm transition-colors"
+              className="inline-flex items-center justify-center gap-2 bg-white hover:bg-stone-50 text-stone-800 font-semibold rounded-xl px-4 py-3 text-sm border divider-soft transition-colors"
             >
               <Plus size={16} /> Log another
             </button>
             <button
               type="button"
-              onClick={() => nav("/incidents")}
+              onClick={() => nav(`/incidents/${savedRecord.id}`)}
               data-testid="goto-incidents-btn"
               className="inline-flex items-center justify-center gap-2 bg-white hover:bg-stone-50 text-stone-800 font-semibold rounded-xl px-4 py-3 text-sm border divider-soft transition-colors"
             >
-              <ListChecks size={16} /> View all incidents
+              <ListChecks size={16} /> View report
             </button>
           </div>
         </>
