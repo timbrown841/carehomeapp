@@ -1,0 +1,44 @@
+{
+  "summary": "Iteration 5 retest of single failing acceptance criterion: Notes.jsx submit() now captures API response and renders SaveReceipt with all sub-testids. Verified on both desktop (1920) and mobile (390) viewports. PASS.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Notes.jsx submit() correctly destructures `data` from api.post('/notes', form) and calls setLastSaved(data) — fix verified.",
+    "SaveReceipt receives `record={lastSaved}` and renders sub-testids: note-save-receipt-timestamp (font-mono UK), note-save-receipt-author, note-save-receipt-ref (starts with #).",
+    "Mobile 390px: receipt rendered above form (y=197 vs y=349), no horizontal overflow (scrollWidth=clientWidth=390)."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "skipped", "frontend": "100%"},
+  "test_credentials": "staff@care.local / Staff@123 (used as supplied)",
+  "seed_data_creation": "Created 2 notes during testing: 'Receipt retest body' (desktop) and 'Receipt retest body mobile' (mobile)",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Acceptance criterion fully verified. Desktop: timestamp='Mon, 04 May 2026, 13:21:43', author='Alex Staff', ref='#8ABCC99E', font-mono on timestamp confirmed. Mobile 390: no overflow, receipt above form. Backend was 28/28 in iter 4, not retested per request. Single test only run; all other iter-4 frontend behaviours not retested per request.",
+  "verification_evidence": {
+    "desktop_1920": {
+      "timestamp_text": "Mon, 04 May 2026, 13:21:43",
+      "timestamp_classes_contain_font_mono": true,
+      "author_text": "Alex Staff",
+      "ref_text": "#8ABCC99E",
+      "ref_starts_with_hash": true,
+      "receipt_visible": true,
+      "receipt_y": 128.6,
+      "form_y": 226
+    },
+    "mobile_390": {
+      "receipt_visible": true,
+      "horizontal_overflow": false,
+      "scroll_width": 390,
+      "client_width": 390,
+      "receipt_y": 197.3,
+      "form_y": 349,
+      "receipt_above_form": true
+    }
+  }
+}

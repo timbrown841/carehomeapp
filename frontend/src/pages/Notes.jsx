@@ -36,8 +36,9 @@ export default function Notes() {
     if (!form.body.trim()) return toast.error("Add some content");
     setBusy(true);
     try {
-      await api.post("/notes", form);
-      toast.success("Note logged");
+      const { data } = await api.post("/notes", form);
+      setLastSaved(data);
+      toast.success("Note saved · audit-trail recorded");
       setForm({ ...form, body: "", voice_used: false });
       reload();
     } catch (err) {
