@@ -455,7 +455,7 @@ export default function LogIncident() {
       </section>
 
       {/* Sticky Save bar */}
-      <div className="sticky bottom-0 -mx-4 sm:mx-0 px-4 sm:px-0 py-3 sm:py-0 bg-canvas/95 backdrop-blur-sm border-t divider-soft sm:border-0 sm:bg-transparent sm:backdrop-blur-0">
+      <div className="sticky bottom-0 -mx-4 sm:mx-0 px-4 pb-4 sm:pb-0 sm:px-0 pt-3 sm:pt-0 bg-canvas/95 backdrop-blur-sm border-t divider-soft sm:border-0 sm:bg-transparent sm:backdrop-blur-0">
         <button
           type="button"
           onClick={submit}
