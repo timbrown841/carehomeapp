@@ -127,7 +127,7 @@ export default function Dashboard() {
       testid: "card-notes",
     },
     {
-      to: "/incidents",
+      to: "/incidents/new",
       label: "Incident Reports",
       sub: "Safeguarding & escalations",
       icon: ShieldAlert,
@@ -204,7 +204,7 @@ export default function Dashboard() {
       {/* Hero quick actions */}
       <section className="grid sm:grid-cols-2 gap-3 sm:gap-4" data-testid="hero-actions">
         <Link
-          to="/incidents"
+          to="/incidents/new"
           data-testid="hero-log-incident"
           className="group flex items-center gap-4 bg-[#B23A48] hover:bg-[#962F3B] text-white rounded-2xl p-5 sm:p-6 shadow-sm transition-colors"
         >

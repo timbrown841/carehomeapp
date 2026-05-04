@@ -172,6 +172,101 @@ class TestDashboard:
         assert after == baseline + 1
 
 
+@pytest.fixture(scope="session")
+def seeded_resident_id(manager_token):
+    # Ensure a resident exists for tests that run before TestResidents alphabetically
+    rid = getattr(pytest, "resident_id", None)
+    if rid:
+        return rid
+    r = requests.post(f"{API}/residents", headers=_h(manager_token),
+                      json={"name": "TEST_Resident_Seed"}, timeout=15)
+    assert r.status_code == 200
+    rid = r.json()["id"]
+    pytest.resident_id = rid
+    return rid
+
+
+# ---- Incident /structure endpoint (GPT-5.2) ----
+class TestIncidentStructure:
+    def test_structure_unauth(self):
+        r = requests.post(f"{API}/incidents/structure",
+                          json={"incident_type": "behaviour", "severity": "low",
+                                "transcript": "John kicked chair and shouted"}, timeout=15)
+        assert r.status_code == 401
+
+    def test_structure_transcript_too_short(self, staff_token):
+        r = requests.post(f"{API}/incidents/structure", headers=_h(staff_token),
+                          json={"incident_type": "behaviour", "severity": "low",
+                                "transcript": "hi", "tags": []}, timeout=30)
+        assert r.status_code == 400
+
+    def test_structure_ok(self, staff_token, seeded_resident_id):
+        rid = seeded_resident_id
+        payload = {
+            "resident_id": rid,
+            "incident_type": "behaviour",
+            "severity": "medium",
+            "transcript": "At about 3pm John became angry during homework, threw his pen, "
+                          "shouted at staff and refused to engage. Calmed after 10 minutes "
+                          "with 1:1 support from Sarah.",
+            "tags": ["aggression"],
+        }
+        r = requests.post(f"{API}/incidents/structure", headers=_h(staff_token),
+                          json=payload, timeout=60)
+        assert r.status_code == 200, r.text
+        d = r.json()
+        for k in ["structured_report", "suggested_action",
+                  "suggested_severity", "suggested_safeguarding"]:
+            assert k in d, f"missing key {k}"
+        assert d["suggested_severity"] in ["low", "medium", "high"]
+        assert isinstance(d["suggested_safeguarding"], bool)
+        assert "1)" in d["structured_report"], "expected Ofsted section '1)'"
+        assert "6)" in d["structured_report"], "expected Ofsted section '6)'"
+
+    def test_incident_new_fields_roundtrip(self, staff_token, seeded_resident_id):
+        rid = seeded_resident_id
+        body = {
+            "resident_id": rid,
+            "severity": "medium",
+            "category": "verbal",
+            "incident_type": "behaviour",
+            "body": "TEST_structured_incident body",
+            "safeguarding": False,
+            "tags": ["aggression", "refusal"],
+            "structured_report": "1) Who: John\n2) What: shouted\n3) Where...\n6) Follow up: review",
+            "raw_transcript": "he shouted and threw a pen",
+            "voice_used": True,
+            "action_taken": "Offered 1:1 support",
+        }
+        cr = requests.post(f"{API}/incidents", headers=_h(staff_token), json=body, timeout=15)
+        assert cr.status_code == 200, cr.text
+        iid = cr.json()["id"]
+        pytest.structured_incident_id = iid
+        # GET list and find
+        lr = requests.get(f"{API}/incidents", headers=_h(staff_token), timeout=15)
+        assert lr.status_code == 200
+        found = [x for x in lr.json() if x["id"] == iid]
+        assert found, "structured incident not returned in list"
+        it = found[0]
+        assert it["tags"] == ["aggression", "refusal"]
+        assert it["structured_report"].startswith("1) Who: John")
+        assert it["raw_transcript"] == "he shouted and threw a pen"
+        assert it["incident_type"] == "behaviour"
+
+    def test_incident_backward_compat_old_row(self, staff_token):
+        # Any earlier incident (created without the new fields) must still load with defaults
+        lr = requests.get(f"{API}/incidents", headers=_h(staff_token), timeout=15)
+        assert lr.status_code == 200
+        # At least one of the legacy TEST_incident rows should be present
+        legacy = [x for x in lr.json() if x.get("body", "").startswith("TEST_incident")]
+        assert legacy, "expected legacy incident in list"
+        for it in legacy:
+            assert isinstance(it.get("tags", []), list)
+            assert "structured_report" in it
+            assert "raw_transcript" in it
+            assert "incident_type" in it
+
+
 # ---- Reports (LLM) ----
 class TestReports:
     def test_staff_forbidden(self, staff_token):

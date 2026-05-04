@@ -163,10 +163,16 @@ class IncidentIn(BaseModel):
     resident_id: str
     severity: Literal["low", "medium", "high"] = "low"
     category: Literal["physical", "verbal", "self-harm", "missing", "medical", "other"] = "other"
+    incident_type: Optional[
+        Literal["behaviour", "safeguarding", "absconding", "other"]
+    ] = "other"
     body: str
     safeguarding: bool = False
     action_taken: Optional[str] = ""
     voice_used: bool = False
+    tags: List[str] = Field(default_factory=list)
+    structured_report: Optional[str] = ""
+    raw_transcript: Optional[str] = ""
 
 
 class Incident(IncidentIn):
@@ -175,6 +181,21 @@ class Incident(IncidentIn):
     author_name: str
     status: Literal["open", "reviewed", "closed"] = "open"
     created_at: str
+
+
+class StructureRequest(BaseModel):
+    resident_id: Optional[str] = None
+    incident_type: Literal["behaviour", "safeguarding", "absconding", "other"] = "other"
+    severity: Literal["low", "medium", "high"] = "low"
+    transcript: str
+    tags: List[str] = Field(default_factory=list)
+
+
+class StructureOut(BaseModel):
+    structured_report: str
+    suggested_action: str
+    suggested_severity: Literal["low", "medium", "high"]
+    suggested_safeguarding: bool
 
 
 class ReportRequest(BaseModel):
@@ -325,6 +346,91 @@ async def create_incident(payload: IncidentIn, user: dict = Depends(get_current_
     await db.incidents.insert_one(doc)
     doc.pop("_id", None)
     return doc
+
+
+@api_router.post("/incidents/structure", response_model=StructureOut)
+async def structure_incident(payload: StructureRequest, _: dict = Depends(get_current_user)):
+    if not EMERGENT_LLM_KEY:
+        raise HTTPException(500, "AI structuring not configured")
+    if not payload.transcript or len(payload.transcript.strip()) < 5:
+        raise HTTPException(400, "Transcript too short")
+
+    resident_name = "the young person"
+    if payload.resident_id:
+        r = await db.residents.find_one({"id": payload.resident_id}, {"_id": 0, "name": 1})
+        if r:
+            resident_name = r["name"]
+
+    system = (
+        "You are an experienced safeguarding lead writing an Ofsted-ready incident report "
+        "for a UK children's home / supported-living service. You take a staff member's raw "
+        "voice transcript and produce a clear, factual, professional incident report.\n\n"
+        "STRICT RULES:\n"
+        "- UK English. Plain, neutral, non-judgemental tone.\n"
+        "- Never invent details. If something is unclear, write 'Not specified'.\n"
+        "- Always anonymise other young people referred to (e.g. 'Peer A').\n"
+        "- Output MUST be valid JSON only, no markdown, no preamble.\n\n"
+        "JSON schema:\n"
+        "{\n"
+        '  "structured_report": "Multi-line plain-text report with these labelled sections: '
+        "1) Summary (1 sentence), 2) Antecedent / Context, 3) Behaviour / Incident, "
+        "4) Consequence / Outcome, 5) Action Taken by Staff, 6) Risk & Safeguarding Notes. "
+        'Use blank lines between sections.",\n'
+        '  "suggested_action": "Short follow-up action managers should consider.",\n'
+        '  "suggested_severity": "low|medium|high",\n'
+        '  "suggested_safeguarding": true|false\n'
+        "}"
+    )
+    user_prompt = (
+        f"Young person: {resident_name}\n"
+        f"Incident type: {payload.incident_type}\n"
+        f"Staff-selected severity: {payload.severity}\n"
+        f"Quick tags: {', '.join(payload.tags) if payload.tags else 'none'}\n\n"
+        f"Raw voice transcript from staff:\n\"\"\"\n{payload.transcript.strip()}\n\"\"\"\n\n"
+        "Return ONLY the JSON object."
+    )
+
+    chat = LlmChat(
+        api_key=EMERGENT_LLM_KEY,
+        session_id=f"structure-{uuid.uuid4()}",
+        system_message=system,
+    ).with_model("openai", "gpt-5.2")
+
+    try:
+        raw = await chat.send_message(UserMessage(text=user_prompt))
+    except Exception as e:
+        logger.exception("Structure failed")
+        raise HTTPException(500, "AI structuring failed")
+
+    import json as _json
+    import re as _re
+
+    text = str(raw).strip()
+    # Strip markdown code fences if present
+    text = _re.sub(r"^```(?:json)?\s*", "", text)
+    text = _re.sub(r"\s*```$", "", text)
+    try:
+        data = _json.loads(text)
+    except Exception:
+        # Last resort: extract first {...} block
+        m = _re.search(r"\{.*\}", text, _re.DOTALL)
+        if not m:
+            raise HTTPException(500, "AI returned non-JSON output")
+        try:
+            data = _json.loads(m.group(0))
+        except Exception:
+            raise HTTPException(500, "AI returned malformed JSON")
+
+    sev = (data.get("suggested_severity") or payload.severity).lower()
+    if sev not in ("low", "medium", "high"):
+        sev = payload.severity
+
+    return {
+        "structured_report": str(data.get("structured_report", "")).strip(),
+        "suggested_action": str(data.get("suggested_action", "")).strip(),
+        "suggested_severity": sev,
+        "suggested_safeguarding": bool(data.get("suggested_safeguarding", False)),
+    }
 
 
 @api_router.patch("/incidents/{iid}/status", response_model=Incident)

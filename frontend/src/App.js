@@ -10,6 +10,7 @@ import Dashboard from "@/pages/Dashboard";
 import Residents from "@/pages/Residents";
 import Notes from "@/pages/Notes";
 import Incidents from "@/pages/Incidents";
+import LogIncident from "@/pages/LogIncident";
 import Reports from "@/pages/Reports";
 import ComingSoon from "@/pages/ComingSoon";
 
@@ -50,6 +51,7 @@ function App() {
               <Route path="/residents" element={<Residents />} />
               <Route path="/notes" element={<Notes />} />
               <Route path="/incidents" element={<Incidents />} />
+              <Route path="/incidents/new" element={<LogIncident />} />
               <Route
                 path="/staff"
                 element={

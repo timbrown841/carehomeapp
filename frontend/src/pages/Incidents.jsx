@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import api, { formatApiError } from "@/lib/api";
 import VoiceRecorder from "@/components/VoiceRecorder";
 import { useAuth } from "@/context/AuthContext";
@@ -80,18 +81,27 @@ export default function Incidents() {
             Log clearly. Flag safeguarding. Keep everyone safe.
           </p>
         </div>
-        <label className="flex items-center gap-2 text-sm font-medium text-stone-700 cursor-pointer">
-          <input
-            type="checkbox"
-            data-testid="safeguarding-only-toggle"
-            checked={filter.safeguarding_only}
-            onChange={(e) =>
-              setFilter({ ...filter, safeguarding_only: e.target.checked })
-            }
-            className="w-4 h-4 accent-[#B23A48]"
-          />
-          Safeguarding only
-        </label>
+        <div className="flex items-center gap-3 ml-auto sm:ml-0">
+          <Link
+            to="/incidents/new"
+            data-testid="quick-log-incident-btn"
+            className="inline-flex items-center gap-2 bg-[#B23A48] hover:bg-[#962F3B] text-white font-semibold rounded-xl px-4 py-2.5 text-sm transition-colors shadow-sm"
+          >
+            <ShieldAlert size={16} /> Quick log
+          </Link>
+          <label className="flex items-center gap-2 text-sm font-medium text-stone-700 cursor-pointer">
+            <input
+              type="checkbox"
+              data-testid="safeguarding-only-toggle"
+              checked={filter.safeguarding_only}
+              onChange={(e) =>
+                setFilter({ ...filter, safeguarding_only: e.target.checked })
+              }
+              className="w-4 h-4 accent-[#B23A48]"
+            />
+            Safeguarding only
+          </label>
+        </div>
       </div>
 
       <div className="grid lg:grid-cols-3 gap-6">
