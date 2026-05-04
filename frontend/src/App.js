@@ -13,6 +13,7 @@ import Incidents from "@/pages/Incidents";
 import LogIncident from "@/pages/LogIncident";
 import IncidentDetail from "@/pages/IncidentDetail";
 import Reports from "@/pages/Reports";
+import Supervisions from "@/pages/Supervisions";
 import ComingSoon from "@/pages/ComingSoon";
 
 function Protected({ children }) {
@@ -66,13 +67,7 @@ function App() {
               />
               <Route
                 path="/supervisions"
-                element={
-                  <ComingSoon
-                    title="Supervisions & Appraisals"
-                    description="1:1 records, development plans, and reflective practice logs."
-                    icon={ClipboardCheck}
-                  />
-                }
+                element={<Supervisions />}
               />
               <Route
                 path="/ofsted"

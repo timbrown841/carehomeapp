@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import api, { formatApiError } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
+import { personaColor, personaInitials } from "@/lib/persona";
 import { Plus, X, User, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -61,15 +62,21 @@ export default function Residents() {
             No residents yet.
           </div>
         )}
-        {list.map((r) => (
+        {list.map((r) => {
+          const persona = personaColor(r.name);
+          return (
           <div
             key={r.id}
             data-testid={`resident-card-${r.id}`}
-            className="bg-white border divider-soft rounded-2xl p-5 hover:shadow-sm transition-shadow"
+            className="bg-white border-l-4 border-y border-r divider-soft rounded-2xl p-5 hover:shadow-sm transition-shadow"
+            style={{ borderLeftColor: persona.hex }}
           >
             <div className="flex items-start gap-4">
-              <div className="w-12 h-12 rounded-xl bg-[#2D4A3E]/10 text-[#2D4A3E] flex items-center justify-center font-display font-bold text-lg">
-                {r.name?.[0] || <User size={20} />}
+              <div
+                className="w-12 h-12 rounded-xl flex items-center justify-center font-display font-bold text-base"
+                style={{ background: persona.soft, color: persona.on }}
+              >
+                {personaInitials(r.name)}
               </div>
               <div className="flex-1 min-w-0">
                 <div className="font-display font-bold text-lg text-stone-900 truncate">
@@ -87,7 +94,7 @@ export default function Residents() {
               </p>
             )}
           </div>
-        ))}
+        );})}
       </div>
 
       {/* Modal */}

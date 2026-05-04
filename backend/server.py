@@ -22,8 +22,10 @@ from pydantic import BaseModel, Field, EmailStr, field_validator
 from emergentintegrations.llm.openai import OpenAISpeechToText
 from emergentintegrations.llm.chat import LlmChat, UserMessage
 from fastapi.responses import StreamingResponse
+from contextlib import asynccontextmanager
 
 from pdf_builder import build_incident_pdf, build_report_pdf
+from notifications_service import send_email, send_sms, recipient_for
 
 
 # ---------- Setup ----------
@@ -35,7 +37,221 @@ JWT_SECRET = os.environ["JWT_SECRET"]
 JWT_ALGORITHM = "HS256"
 EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY", "")
 
-app = FastAPI(title="Care Companion API")
+# Login lockout policy
+LOCKOUT_MAX_ATTEMPTS = 5
+LOCKOUT_WINDOW_MINUTES = 15
+LOCKOUT_DURATION_MINUTES = 15
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    # ---- startup ----
+    await db.users.create_index("email", unique=True)
+    await db.residents.create_index("created_at")
+    await db.notes.create_index([("resident_id", 1), ("created_at", -1)])
+    await db.incidents.create_index([("resident_id", 1), ("created_at", -1)])
+    await db.notifications.create_index([("recipient_role", 1), ("created_at", -1)])
+    await db.supervisions.create_index([("staff_id", 1), ("completed_at", -1)])
+    await db.login_attempts.create_index("email")
+
+    admin_email = os.environ.get("ADMIN_EMAIL", "admin@care.local").lower()
+    admin_password = os.environ.get("ADMIN_PASSWORD", "Admin@123")
+    existing = await db.users.find_one({"email": admin_email})
+    if not existing:
+        await db.users.insert_one(
+            {
+                "id": str(uuid.uuid4()),
+                "email": admin_email,
+                "password_hash": hash_password(admin_password),
+                "name": "Admin",
+                "role": "admin",
+                "created_at": now_iso(),
+            }
+        )
+        logger.info(f"Seeded admin user: {admin_email}")
+    elif not verify_password(admin_password, existing["password_hash"]):
+        await db.users.update_one(
+            {"email": admin_email},
+            {"$set": {"password_hash": hash_password(admin_password)}},
+        )
+
+    for email, name, role, pwd in [
+        ("manager@care.local", "Sarah Manager", "manager", "Manager@123"),
+        ("staff@care.local", "Alex Staff", "staff", "Staff@123"),
+        ("james@care.local", "James Patel", "staff", "Staff@123"),
+    ]:
+        if not await db.users.find_one({"email": email}):
+            await db.users.insert_one(
+                {
+                    "id": str(uuid.uuid4()),
+                    "email": email,
+                    "password_hash": hash_password(pwd),
+                    "name": name,
+                    "role": role,
+                    "created_at": now_iso(),
+                }
+            )
+
+    await _seed_demo_data_if_empty()
+
+    yield
+    # ---- shutdown ----
+    client.close()
+
+
+async def _seed_demo_data_if_empty():
+    """Populate a realistic demo dataset on first run."""
+    if await db.residents.count_documents({}) > 0:
+        return
+    logger.info("Seeding demo data…")
+
+    staff_user = await db.users.find_one({"email": "staff@care.local"})
+    james = await db.users.find_one({"email": "james@care.local"})
+    manager_user = await db.users.find_one({"email": "manager@care.local"})
+
+    residents = [
+        {"name": "Jordan Reilly", "dob": "2010-03-14", "room": "1A", "notes": "Likes football and art. Long-term placement."},
+        {"name": "Aisha Khan", "dob": "2009-11-02", "room": "2B", "notes": "Strong academic interests, anxious in groups."},
+        {"name": "Leo Martinez", "dob": "2011-07-21", "room": "3A", "notes": "Recently arrived, settling in. Loves cycling."},
+        {"name": "Maddy O'Brien", "dob": "2008-05-30", "room": "3B", "notes": "Approaching independence; weekly key-work sessions."},
+    ]
+    res_docs = []
+    for r in residents:
+        d = {**r, "id": str(uuid.uuid4()), "created_at": now_iso()}
+        res_docs.append(d)
+        await db.residents.insert_one(d)
+
+    now = datetime.now(timezone.utc)
+
+    notes = [
+        ("Jordan Reilly", "wellbeing", "Good day at school, came home settled and chatted about football trial.", 1, staff_user, False),
+        ("Aisha Khan", "education", "Completed maths homework independently, proud of progress.", 1, james, False),
+        ("Leo Martinez", "behaviour", "Some testing of boundaries at dinner — calmed quickly with key-work.", 2, staff_user, True),
+        ("Maddy O'Brien", "activity", "Attended cooking session, made spaghetti bolognese for the house.", 2, manager_user, False),
+        ("Jordan Reilly", "health", "GP appointment for asthma review, all observations normal.", 3, james, False),
+        ("Aisha Khan", "wellbeing", "Withdrawn this evening, declined dinner. Will monitor.", 4, staff_user, False),
+    ]
+    for name, cat, body, days_ago, user, voice in notes:
+        rid = next(r["id"] for r in res_docs if r["name"] == name)
+        await db.notes.insert_one(
+            {
+                "id": str(uuid.uuid4()),
+                "resident_id": rid,
+                "category": cat,
+                "body": body,
+                "voice_used": voice,
+                "author_id": user["id"],
+                "author_name": user["name"],
+                "created_at": (now - timedelta(days=days_ago, hours=2)).isoformat(),
+            }
+        )
+
+    incidents = [
+        {
+            "name": "Leo Martinez",
+            "type": "behaviour",
+            "severity": "medium",
+            "category": "verbal",
+            "body": "1) Summary: Verbal altercation with peer over PlayStation use.\n\n2) Antecedent: Leo had been waiting 20 minutes for his turn.\n\n3) Behaviour: Raised voice, swore at Peer A, kicked the controller across the floor.\n\n4) Consequence: Peer A left the room upset; controller damaged (cosmetic only).\n\n5) Action Taken: Staff de-escalated using calm voice, gave Leo space for 10 minutes, then revisited via key-work conversation. Leo apologised to Peer A.\n\n6) Risk & Safeguarding Notes: No physical harm. Pattern of frustration around shared resources noted — to be discussed with manager.",
+            "tags": ["aggression", "verbal abuse"],
+            "safeguarding": False,
+            "action": "Key-work session booked. Monitor sharing dynamics over next 7 days.",
+            "voice": True,
+            "days_ago": 1,
+            "user": staff_user,
+            "status": "open",
+        },
+        {
+            "name": "Aisha Khan",
+            "type": "safeguarding",
+            "severity": "high",
+            "category": "self-harm",
+            "body": "1) Summary: Aisha disclosed historical self-harm during 1:1 with key-worker.\n\n2) Antecedent: Routine check-in following withdrawn behaviour at dinner.\n\n3) Behaviour: Aisha shared experiences of self-harm prior to placement (last incident reportedly 4 months ago). No current marks observed during the conversation.\n\n4) Consequence: Aisha appeared relieved to share, requested ongoing support.\n\n5) Action Taken: Key-worker thanked her for trusting them, emphasised confidentiality limits. DSL informed within 30 minutes (verbal). Manager notified.\n\n6) Risk & Safeguarding Notes: Active safeguarding concern. CAMHS referral discussion to be raised at next clinical review.",
+            "tags": ["disclosure", "self-harm"],
+            "safeguarding": True,
+            "action": "DSL notified. Care plan update scheduled for tomorrow. Increased check-ins for 7 days.",
+            "voice": True,
+            "days_ago": 2,
+            "user": manager_user,
+            "status": "reviewed",
+        },
+        {
+            "name": "Maddy O'Brien",
+            "type": "absconding",
+            "severity": "high",
+            "category": "missing",
+            "body": "1) Summary: Maddy left the house without permission for 3 hours; returned safely.\n\n2) Antecedent: After phone call with biological mother, Maddy was visibly upset.\n\n3) Behaviour: Left through the front door without telling staff at 18:42; phone unanswered.\n\n4) Consequence: Returned at 21:48 of own accord; appeared low but unharmed.\n\n5) Action Taken: Police informed at 19:00 per missing-from-care procedure. Welfare interview completed on return. Care plan reviewed with Maddy.\n\n6) Risk & Safeguarding Notes: Pattern noted — third absconding event linked to family contact. Risk assessment to be updated.",
+            "tags": ["missing", "returned", "police informed"],
+            "safeguarding": True,
+            "action": "Update missing-from-care risk assessment. Discuss family-contact protocol with social worker.",
+            "voice": True,
+            "days_ago": 4,
+            "user": james,
+            "status": "open",
+        },
+        {
+            "name": "Jordan Reilly",
+            "type": "other",
+            "severity": "low",
+            "category": "medical",
+            "body": "1) Summary: Mild allergic reaction to a snack (peanut traces).\n\n2) Antecedent: Jordan ate a chocolate bar from a friend at school.\n\n3) Behaviour: Reported itchy lips and slight throat tightness on return.\n\n4) Consequence: Antihistamine administered, symptoms resolved within 30 minutes.\n\n5) Action Taken: Allergy info repeated, school informed. No A&E required.\n\n6) Risk & Safeguarding Notes: None. Continue allergy awareness conversations.",
+            "tags": ["medical"],
+            "safeguarding": False,
+            "action": "Reinforce allergy awareness; replace expired antihistamine in first-aid box.",
+            "voice": False,
+            "days_ago": 5,
+            "user": staff_user,
+            "status": "reviewed",
+        },
+    ]
+    for inc in incidents:
+        rid = next(r["id"] for r in res_docs if r["name"] == inc["name"])
+        u = inc["user"]
+        await db.incidents.insert_one(
+            {
+                "id": str(uuid.uuid4()),
+                "resident_id": rid,
+                "severity": inc["severity"],
+                "category": inc["category"],
+                "incident_type": inc["type"],
+                "body": inc["body"],
+                "structured_report": inc["body"],
+                "raw_transcript": inc["body"][:200] + "…",
+                "safeguarding": inc["safeguarding"],
+                "action_taken": inc["action"],
+                "voice_used": inc["voice"],
+                "tags": inc["tags"],
+                "author_id": u["id"],
+                "author_name": u["name"],
+                "status": inc["status"],
+                "created_at": (now - timedelta(days=inc["days_ago"], hours=4)).isoformat(),
+            }
+        )
+
+    # Supervisions: log one for each staff/manager so dashboard shows "1 due" rather than empty
+    for u, kind, days in [
+        (staff_user, "supervision", 12),
+        (james, "supervision", 45),  # overdue
+        (manager_user, "supervision", 8),
+        (staff_user, "appraisal", 90),
+        (james, "appraisal", 400),  # overdue
+    ]:
+        await db.supervisions.insert_one(
+            {
+                "id": str(uuid.uuid4()),
+                "staff_id": u["id"],
+                "kind": kind,
+                "completed_at": (now - timedelta(days=days)).isoformat()[:10],
+                "notes": "Demo seed record.",
+                "created_by_id": manager_user["id"],
+                "created_by_name": manager_user["name"],
+                "created_at": (now - timedelta(days=days)).isoformat(),
+            }
+        )
+
+    logger.info("Demo data seeded.")
+
+app = FastAPI(title="Care Companion API", lifespan=lifespan)
 api_router = APIRouter(prefix="/api")
 bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -218,6 +434,22 @@ class Notification(BaseModel):
     created_at: str
     read_at: Optional[str] = None
     incident_summary: Optional[dict] = None
+    delivery: List[dict] = Field(default_factory=list)
+    delivery_mocked: bool = True
+
+
+class SupervisionIn(BaseModel):
+    staff_id: str
+    kind: Literal["supervision", "appraisal"] = "supervision"
+    completed_at: str  # YYYY-MM-DD
+    notes: Optional[str] = ""
+
+
+class Supervision(SupervisionIn):
+    id: str
+    created_by_id: str
+    created_by_name: str
+    created_at: str
 
 
 class ReportRequest(BaseModel):
@@ -261,11 +493,48 @@ async def register(payload: RegisterIn):
 
 
 @api_router.post("/auth/login", response_model=AuthOut)
-async def login(payload: LoginIn):
+async def login(payload: LoginIn, request: Request):
     email = payload.email.lower()
+    now = datetime.now(timezone.utc)
+    cutoff = (now - timedelta(minutes=LOCKOUT_WINDOW_MINUTES)).isoformat()
+    lock_until_cutoff = (now - timedelta(minutes=LOCKOUT_DURATION_MINUTES)).isoformat()
+
+    # Active lockout?
+    lock = await db.login_attempts.find_one({"email": email, "kind": "lock"})
+    if lock and (lock.get("until", "") > now.isoformat()):
+        raise HTTPException(
+            status_code=423,
+            detail="Account temporarily locked after too many failed attempts. Try again in 15 minutes.",
+        )
+
     user = await db.users.find_one({"email": email})
     if not user or not verify_password(payload.password, user["password_hash"]):
+        # Record fail
+        await db.login_attempts.insert_one(
+            {
+                "email": email,
+                "kind": "fail",
+                "at": now.isoformat(),
+            }
+        )
+        recent_fails = await db.login_attempts.count_documents(
+            {"email": email, "kind": "fail", "at": {"$gte": cutoff}}
+        )
+        if recent_fails >= LOCKOUT_MAX_ATTEMPTS:
+            until = (now + timedelta(minutes=LOCKOUT_DURATION_MINUTES)).isoformat()
+            await db.login_attempts.update_one(
+                {"email": email, "kind": "lock"},
+                {"$set": {"until": until, "set_at": now.isoformat()}},
+                upsert=True,
+            )
+            raise HTTPException(
+                status_code=423,
+                detail="Account temporarily locked after too many failed attempts. Try again in 15 minutes.",
+            )
         raise HTTPException(status_code=401, detail="Invalid email or password")
+
+    # Success — clear fails
+    await db.login_attempts.delete_many({"email": email})
     token = create_access_token(user["id"], email, user["role"])
     user.pop("password_hash", None)
     user.pop("_id", None)
@@ -421,9 +690,9 @@ async def structure_incident(payload: StructureRequest, _: dict = Depends(get_cu
 
     try:
         raw = await chat.send_message(UserMessage(text=user_prompt))
-    except Exception as e:
+    except Exception:
         logger.exception("Structure failed")
-        raise HTTPException(500, "AI structuring failed")
+        raise HTTPException(502, "AI service unavailable. Please try again.")
 
     import json as _json
     import re as _re
@@ -538,9 +807,9 @@ async def transcribe(audio: UploadFile = File(...), _: dict = Depends(get_curren
         )
         text = getattr(response, "text", None) or str(response)
         return {"text": text}
-    except Exception as e:
+    except Exception:
         logger.exception("Transcription failed")
-        raise HTTPException(500, f"Transcription failed: {e}")
+        raise HTTPException(502, "Voice transcription service unavailable.")
 
 
 # ---------- AI Reports ----------
@@ -599,9 +868,9 @@ async def generate_report(
         )
         try:
             summary = await chat.send_message(UserMessage(text=prompt))
-        except Exception as e:
+        except Exception:
             logger.exception("LLM summary failed")
-            raise HTTPException(500, f"Summary generation failed: {e}")
+            raise HTTPException(502, "AI service unavailable. Please try again.")
 
     # Build a flat list of records ordered chronologically — used by the
     # frontend to display per-entry timestamps + authorship for full
@@ -700,19 +969,65 @@ async def create_notification(
         "created_at": incident.get("created_at"),
     }
     recipient_role = "admin" if payload.kind == "dsl" else "manager"
+
+    # Build notification message
+    body_excerpt = (incident.get("structured_report") or incident.get("body") or "")[:240]
+    summary = {
+        "id": incident["id"],
+        "resident_name": (resident or {}).get("name", "—"),
+        "severity": incident.get("severity"),
+        "incident_type": incident.get("incident_type") or incident.get("category"),
+        "safeguarding": bool(incident.get("safeguarding")),
+        "body_excerpt": body_excerpt,
+        "created_at": incident.get("created_at"),
+    }
+    msg_text = (payload.message or "").strip() or (
+        f"{user.get('name','Staff')} flagged an incident requiring "
+        + ("DSL review" if payload.kind == "dsl" else "manager review")
+    )
+
+    # Dispatch via notification service (mocked unless keys are configured)
+    rcpt = recipient_for(payload.kind)
+    public_url = os.environ.get("PUBLIC_APP_URL", "").rstrip("/")
+    incident_link = (
+        f"{public_url}/incidents/{incident['id']}" if public_url else ""
+    )
+    email_html = (
+        f"<div style='font-family:Helvetica,Arial,sans-serif;color:#1c1c1a'>"
+        f"<h2 style='color:#0F2A47'>Safelyn Systems · "
+        f"{'DSL alert' if payload.kind=='dsl' else 'Manager alert'}</h2>"
+        f"<p>{msg_text}</p>"
+        f"<p><b>{summary['resident_name']}</b> · {summary['incident_type']} · "
+        f"severity {summary['severity']}"
+        + (" · <span style='color:#B23A48'><b>SAFEGUARDING</b></span>" if summary["safeguarding"] else "")
+        + "</p>"
+        f"<blockquote style='border-left:4px solid #1E4D5C;padding:.6rem 1rem;color:#444;background:#f5f5f0'>"
+        f"{body_excerpt}</blockquote>"
+        + (f"<p><a href='{incident_link}'>Open in Safelyn →</a></p>" if incident_link else "")
+        + "</div>"
+    )
+    sms_body = (
+        f"[Safelyn] {('DSL' if payload.kind=='dsl' else 'Manager')} alert · "
+        f"{summary['resident_name']} · {summary['severity']} severity. "
+        f"{msg_text[:80]}"
+    )
+    delivery = []
+    delivery.append(await send_email(to=rcpt["email"], subject="Safelyn alert · " + (summary["resident_name"] or ""), html=email_html))
+    delivery.append(await send_sms(to=rcpt["phone"], body=sms_body))
+
     doc = {
         "id": str(uuid.uuid4()),
         "incident_id": payload.incident_id,
         "kind": payload.kind,
-        "message": (payload.message or "").strip()
-        or f"{user.get('name','Staff')} flagged an incident requiring "
-        + ("DSL review" if payload.kind == "dsl" else "manager review"),
+        "message": msg_text,
         "sent_by_id": user["id"],
         "sent_by_name": user["name"],
         "recipient_role": recipient_role,
         "created_at": now_iso(),
         "read_at": None,
         "incident_summary": summary,
+        "delivery": delivery,
+        "delivery_mocked": all(d.get("mocked") for d in delivery),
     }
     await db.notifications.insert_one(doc)
     doc.pop("_id", None)
@@ -747,6 +1062,44 @@ async def mark_notification_read(nid: str, _: dict = Depends(get_current_user)):
     if not doc:
         raise HTTPException(404, "Not found")
     return doc
+
+
+# ---------- Supervisions & Appraisals ----------
+@api_router.get("/supervisions", response_model=List[Supervision])
+async def list_supervisions(_: dict = Depends(get_current_user)):
+    docs = (
+        await db.supervisions.find({}, {"_id": 0})
+        .sort("completed_at", -1)
+        .to_list(500)
+    )
+    return docs
+
+
+@api_router.post("/supervisions", response_model=Supervision)
+async def create_supervision(
+    payload: SupervisionIn, user: dict = Depends(require_role("manager", "admin"))
+):
+    staff = await db.users.find_one({"id": payload.staff_id}, {"_id": 0})
+    if not staff:
+        raise HTTPException(404, "Staff member not found")
+    doc = {
+        **payload.model_dump(),
+        "id": str(uuid.uuid4()),
+        "created_by_id": user["id"],
+        "created_by_name": user["name"],
+        "created_at": now_iso(),
+    }
+    await db.supervisions.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api_router.delete("/supervisions/{sid}")
+async def delete_supervision(
+    sid: str, _: dict = Depends(require_role("manager", "admin"))
+):
+    res = await db.supervisions.delete_one({"id": sid})
+    return {"deleted": res.deleted_count}
 
 
 # ---------- Dashboard ----------
@@ -868,56 +1221,7 @@ async def root():
     return {"message": "Care Companion API", "status": "ok"}
 
 
-# ---------- Startup ----------
-@app.on_event("startup")
-async def on_startup():
-    await db.users.create_index("email", unique=True)
-    await db.residents.create_index("created_at")
-    await db.notes.create_index([("resident_id", 1), ("created_at", -1)])
-    await db.incidents.create_index([("resident_id", 1), ("created_at", -1)])
-
-    admin_email = os.environ.get("ADMIN_EMAIL", "admin@care.local").lower()
-    admin_password = os.environ.get("ADMIN_PASSWORD", "Admin@123")
-    existing = await db.users.find_one({"email": admin_email})
-    if not existing:
-        await db.users.insert_one(
-            {
-                "id": str(uuid.uuid4()),
-                "email": admin_email,
-                "password_hash": hash_password(admin_password),
-                "name": "Admin",
-                "role": "admin",
-                "created_at": now_iso(),
-            }
-        )
-        logger.info(f"Seeded admin user: {admin_email}")
-    elif not verify_password(admin_password, existing["password_hash"]):
-        await db.users.update_one(
-            {"email": admin_email},
-            {"$set": {"password_hash": hash_password(admin_password)}},
-        )
-
-    # Seed test manager + staff if missing
-    for email, name, role, pwd in [
-        ("manager@care.local", "Sarah Manager", "manager", "Manager@123"),
-        ("staff@care.local", "Alex Staff", "staff", "Staff@123"),
-    ]:
-        if not await db.users.find_one({"email": email}):
-            await db.users.insert_one(
-                {
-                    "id": str(uuid.uuid4()),
-                    "email": email,
-                    "password_hash": hash_password(pwd),
-                    "name": name,
-                    "role": role,
-                    "created_at": now_iso(),
-                }
-            )
-
-
-@app.on_event("shutdown")
-async def shutdown_db_client():
-    client.close()
+# ---------- Startup is handled via lifespan above ----------
 
 
 app.include_router(api_router)

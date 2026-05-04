@@ -1,0 +1,38 @@
+{
+  "summary": "Iteration 9 — Supervisions module, login lockout, lifespan + demo seed, sanitised errors, notification delivery scaffold (Resend/Twilio MOCKED) and persona-tinted resident cards. Backend: 13/13 pytest tests pass. Frontend: all 9 requested flows verified via Playwright across manager + staff roles.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration9.py",
+    "/app/test_reports/pytest/iteration9_results.xml"
+  ],
+  "action_items": [
+    "(Optional, low-priority) Add data-testid=\"notification-item-{id}\" on each <li> inside NotificationBell.jsx to make per-notification selection deterministic for future tests. Today the test had to fall back to '[data-testid=\"notification-panel\"] ul li' which still works.",
+    "(Optional) Add explicit data-testid attributes to the supervision modal fields (supervision-staff-select / supervision-completed-at / save-supervision-btn). The form currently uses a native <select> without a testid so tests select via fallback selectors. The flow works — this is purely for testability.",
+    "(Cosmetic) Supervisions modal renders <option><span style={display:contents}> which fires a React hydration warning ('span cannot be a child of option'). Wrap option label without <span> or use plain text to silence.",
+    "Note: dashboard now reflects supervisions_due=2 / appraisals_overdue=3 (not 1/2 from the brief) because tests added/removed records; values are non-zero as required."
+  ],
+  "critical_code_review_comments": [
+    "server.py is now 1236 lines — consider splitting into routers (auth, residents, notes, incidents, notifications, supervisions, dashboard, reports). Crosses the 700-line guideline.",
+    "Login lockout logic is correct: counter resets on success (delete_many on email), 5th fail upserts a 'lock' doc with until=now+15m, 423 returned during active lockout. Verified end-to-end.",
+    "Notification delivery shape is consistent: list of {channel, status, mocked, preview} + delivery_mocked boolean — clean and testable.",
+    "NotificationBell.jsx <li> entries should expose data-testid=\"notification-item-{n.id}\" for stable testing (matches data-testid pattern used elsewhere e.g. resident-card-{id}, supervision-{id}).",
+    "Supervisions.jsx: native <select> wraps option text in <span style={display:contents}> which emits a React DOM warning. Minor.",
+    "Persona colour helper produces 4 visibly distinct border-left colours (rgb(45,106,79), rgb(122,90,139), rgb(156,107,61), rgb(79,112,98)) — accessible and pleasant.",
+    "Lifespan migration succeeded — no on_event used; demo seed runs idempotently when collections empty."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration9.py (new)"
+  ],
+  "success_rate": {"backend": "100% (13/13)", "frontend": "100% (all 9 flows)"},
+  "test_credentials": "manager@care.local / Manager@123, staff@care.local / Staff@123, admin@care.local / Admin@123",
+  "seed_data_creation": "Used auto-seeded demo data (4 residents Jordan/Aisha/Leo/Maddy, 4 incidents). During tests created/removed: 1 supervision via API (deleted), 1 supervision via UI (kept — 'Alex Staff e2e test'), 1 throwaway lockout-test user, 2 notifications on Leo Martinez incident.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Notification bell has split testids: notification-bell-mobile and notification-bell-desktop (iter 8 fix). When clicking the desktop bell programmatically, prefer JS click via document.querySelector() because the success toast can intercept Playwright's click for ~3-4s after login. Notification list <li> elements DO NOT yet have notification-item-{id} testids — use '[data-testid=\"notification-panel\"] ul li' as selector. Supervisions history items DO have data-testid='supervision-{id}'. Login lockout test must use a unique throwaway email (test creates one via /api/auth/register) to avoid locking out the shared admin/manager/staff seeded accounts — the lockout fixture clears on success automatically, so it's safe to run repeatedly.",
+  "rca of the issue": "N/A — no bugs. Initial bell-click failure was a test-side problem: my first script searched for the old testid 'notification-bell' which the main agent already split into '...-mobile' and '...-desktop' per iter 8 feedback; switching to the new testid + JS click resolved it."
+}

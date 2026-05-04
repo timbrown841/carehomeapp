@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import api from "@/lib/api";
-import { Bell, ShieldAlert, X, CheckCircle2 } from "lucide-react";
+import { Bell, ShieldAlert, X, CheckCircle2, Mail, MessageSquare } from "lucide-react";
 import { formatFullTimestamp, recordRef } from "@/lib/format";
 
 export default function NotificationBell({ testid = "notification-bell" }) {
@@ -135,6 +135,37 @@ export default function NotificationBell({ testid = "notification-bell" }) {
                             ref {recordRef(n.incident_id)}
                           </span>
                         </div>
+                        {(n.delivery || []).length > 0 && (
+                          <div className="mt-1.5 flex items-center gap-1.5 flex-wrap">
+                            {n.delivery.map((d, idx) => (
+                              <span
+                                key={idx}
+                                className={`inline-flex items-center gap-1 text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-full ${
+                                  d.status === "sent"
+                                    ? "bg-[#3A5A40]/12 text-[#3A5A40]"
+                                    : d.status === "mocked"
+                                    ? "bg-[#D4A373]/20 text-[#9C6B3D]"
+                                    : "bg-[#B23A48]/12 text-[#B23A48]"
+                                }`}
+                                title={
+                                  d.status === "mocked"
+                                    ? "Demo mode — connect Resend/Twilio keys to send for real"
+                                    : d.status
+                                }
+                              >
+                                {d.channel === "email" ? (
+                                  <Mail size={9} />
+                                ) : (
+                                  <MessageSquare size={9} />
+                                )}
+                                {d.channel}
+                                {d.status === "mocked" && " · MOCKED"}
+                                {d.status === "sent" && " · sent"}
+                                {d.status === "failed" && " · failed"}
+                              </span>
+                            ))}
+                          </div>
+                        )}
                       </div>
                       {n.read_at && (
                         <CheckCircle2 size={12} className="text-stone-300 shrink-0" />
