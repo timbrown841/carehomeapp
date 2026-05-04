@@ -55,7 +55,7 @@ export default function Layout() {
             <WordMark size="md" />
           </div>
           <div className="ml-auto md:hidden">
-            <NotificationBell />
+            <NotificationBell testid="notification-bell-mobile" />
           </div>
         </div>
 
@@ -105,7 +105,7 @@ export default function Layout() {
       <main className="flex-1 md:ml-64">
         <div className="max-w-6xl mx-auto px-4 sm:px-8 py-6 sm:py-10">
           <div className="hidden md:flex items-center justify-end mb-4">
-            <NotificationBell />
+            <NotificationBell testid="notification-bell-desktop" />
           </div>
           <Outlet />
         </div>

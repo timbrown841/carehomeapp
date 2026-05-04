@@ -4,7 +4,7 @@ import api from "@/lib/api";
 import { Bell, ShieldAlert, X, CheckCircle2 } from "lucide-react";
 import { formatFullTimestamp, recordRef } from "@/lib/format";
 
-export default function NotificationBell() {
+export default function NotificationBell({ testid = "notification-bell" }) {
   const [items, setItems] = useState([]);
   const [open, setOpen] = useState(false);
   const nav = useNavigate();
@@ -44,14 +44,14 @@ export default function NotificationBell() {
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
-        data-testid="notification-bell"
+        data-testid={testid}
         className="relative w-10 h-10 rounded-xl border divider-soft bg-white hover:bg-stone-50 flex items-center justify-center text-stone-700 transition-colors"
         aria-label="Notifications"
       >
         <Bell size={18} />
         {unread > 0 && (
           <span
-            data-testid="notification-bell-badge"
+            data-testid={`${testid}-badge`}
             className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-[#B23A48] text-white text-[10px] font-bold flex items-center justify-center"
           >
             {unread > 9 ? "9+" : unread}
