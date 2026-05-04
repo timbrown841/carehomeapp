@@ -94,10 +94,11 @@ export default function NotificationBell({ testid = "notification-bell" }) {
               <ul className="divide-y divider-soft">
                 {items.slice(0, 30).map((n) => (
                   <li
-                    key={n.id}
-                    className={`px-4 py-3 cursor-pointer hover:bg-stone-50 ${
-                      !n.read_at ? "bg-[#B23A48]/5" : ""
-                    }`}
+                key={n.id}
+                data-testid={`notification-item-${n.id}`}
+                className={`px-4 py-3 cursor-pointer hover:bg-stone-50 ${
+                  !n.read_at ? "bg-[#B23A48]/5" : ""
+                }`}
                     onClick={() => open_incident(n)}
                   >
                     <div className="flex items-start gap-2.5">
