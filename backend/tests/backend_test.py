@@ -132,8 +132,44 @@ class TestDashboard:
         assert r.status_code == 200
         d = r.json()
         for k in ["total_residents", "notes_today", "incidents_week", "safeguarding_open",
-                  "recent_incidents", "recent_notes"]:
-            assert k in d
+                  "recent_incidents", "recent_notes",
+                  "high_risk_alerts", "overdue_tasks", "missing_records"]:
+            assert k in d, f"missing field {k}"
+        # new fields must be ints
+        assert isinstance(d["high_risk_alerts"], int)
+        assert isinstance(d["overdue_tasks"], int)
+        assert isinstance(d["missing_records"], int)
+        assert d["high_risk_alerts"] >= 0
+        assert d["overdue_tasks"] >= 0
+        assert d["missing_records"] >= 0
+
+    def test_high_risk_alerts_counts_safeguarding_open(self, staff_token, manager_token):
+        # Get baseline
+        baseline = requests.get(f"{API}/dashboard/stats", headers=_h(staff_token), timeout=15).json()["high_risk_alerts"]
+        # Create a safeguarding + open incident
+        rid = pytest.resident_id
+        r = requests.post(f"{API}/incidents", headers=_h(staff_token),
+                          json={"resident_id": rid, "severity": "low", "category": "verbal",
+                                "body": "TEST_high_risk_sf", "safeguarding": True}, timeout=15)
+        assert r.status_code == 200
+        after = requests.get(f"{API}/dashboard/stats", headers=_h(staff_token), timeout=15).json()["high_risk_alerts"]
+        assert after == baseline + 1, f"expected high_risk_alerts to incr: {baseline} -> {after}"
+        # close it
+        iid = r.json()["id"]
+        requests.patch(f"{API}/incidents/{iid}/status", headers=_h(manager_token),
+                       params={"status": "closed"}, timeout=15)
+        after2 = requests.get(f"{API}/dashboard/stats", headers=_h(staff_token), timeout=15).json()["high_risk_alerts"]
+        assert after2 == baseline, f"closing should decrement: {after2} vs {baseline}"
+
+    def test_high_risk_alerts_counts_high_severity_open(self, staff_token):
+        baseline = requests.get(f"{API}/dashboard/stats", headers=_h(staff_token), timeout=15).json()["high_risk_alerts"]
+        rid = pytest.resident_id
+        r = requests.post(f"{API}/incidents", headers=_h(staff_token),
+                          json={"resident_id": rid, "severity": "high", "category": "physical",
+                                "body": "TEST_high_sev", "safeguarding": False}, timeout=15)
+        assert r.status_code == 200
+        after = requests.get(f"{API}/dashboard/stats", headers=_h(staff_token), timeout=15).json()["high_risk_alerts"]
+        assert after == baseline + 1
 
 
 # ---- Reports (LLM) ----

@@ -465,13 +465,39 @@ async def list_reports(_: dict = Depends(require_role("manager", "admin"))):
 # ---------- Dashboard ----------
 @api_router.get("/dashboard/stats")
 async def dashboard_stats(_: dict = Depends(get_current_user)):
-    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
-    week_start = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+    now = datetime.now(timezone.utc)
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+    week_start = (now - timedelta(days=7)).isoformat()
+    overdue_cutoff = (now - timedelta(hours=48)).isoformat()
+    yesterday = (now - timedelta(hours=24)).isoformat()
 
     total_residents = await db.residents.count_documents({})
     notes_today = await db.notes.count_documents({"created_at": {"$gte": today_start}})
     incidents_week = await db.incidents.count_documents({"created_at": {"$gte": week_start}})
     safeguarding_open = await db.incidents.count_documents({"safeguarding": True, "status": "open"})
+
+    # Risk overview metrics
+    high_risk_alerts = await db.incidents.count_documents(
+        {
+            "$or": [
+                {"safeguarding": True, "status": {"$ne": "closed"}},
+                {"severity": "high", "status": {"$ne": "closed"}},
+            ]
+        }
+    )
+    overdue_tasks = await db.incidents.count_documents(
+        {"status": "open", "created_at": {"$lt": overdue_cutoff}}
+    )
+
+    # Missing records: residents with no daily note in last 24h
+    residents = await db.residents.find({}, {"_id": 0, "id": 1}).to_list(500)
+    missing_records = 0
+    for r in residents:
+        has_recent = await db.notes.find_one(
+            {"resident_id": r["id"], "created_at": {"$gte": yesterday}}
+        )
+        if not has_recent:
+            missing_records += 1
 
     recent_incidents = (
         await db.incidents.find({}, {"_id": 0}).sort("created_at", -1).to_list(5)
@@ -483,6 +509,9 @@ async def dashboard_stats(_: dict = Depends(get_current_user)):
         "notes_today": notes_today,
         "incidents_week": incidents_week,
         "safeguarding_open": safeguarding_open,
+        "high_risk_alerts": high_risk_alerts,
+        "overdue_tasks": overdue_tasks,
+        "missing_records": missing_records,
         "recent_incidents": recent_incidents,
         "recent_notes": recent_notes,
     }
