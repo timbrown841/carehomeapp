@@ -263,6 +263,20 @@ export default function Reports() {
               />
             </summary>
             <div className="p-5 pt-0 text-sm text-stone-800 whitespace-pre-wrap leading-relaxed border-t divider-soft">
+              <div className="flex justify-end mb-3 not-prose">
+                <button
+                  type="button"
+                  data-testid={`download-report-pdf-${r.id}`}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    downloadReportPdf(r);
+                  }}
+                  className="inline-flex items-center gap-2 bg-[#1E4D5C] hover:bg-[#163A47] text-white font-semibold rounded-lg px-3 py-1.5 text-xs transition-colors"
+                >
+                  <Download size={12} /> Download PDF
+                </button>
+              </div>
               {r.summary}
               {(r.records?.length || 0) > 0 && (
                 <ol className="mt-4 space-y-2">

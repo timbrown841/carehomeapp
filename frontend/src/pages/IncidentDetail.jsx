@@ -40,6 +40,7 @@ export default function IncidentDetail() {
   const [resident, setResident] = useState(null);
   const [loading, setLoading] = useState(true);
   const [downloading, setDownloading] = useState(false);
+  const [notifyingKind, setNotifyingKind] = useState(null);
   const canReview = user?.role === "manager" || user?.role === "admin";
 
   useEffect(() => {

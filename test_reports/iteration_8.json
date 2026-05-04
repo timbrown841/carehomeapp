@@ -1,0 +1,28 @@
+{
+  "summary": "Iteration 8 retest (frontend only). Both blocker fixes verified end-to-end as staff and manager. /incidents/:id now renders without ReferenceError (notifyingKind useState present at line 43); all detail-* test ids show non-empty text; PDF download works; Notify Manager & Notify DSL POST /api/notifications correctly with right kind and show success toasts; bell+panel show the new notifications. /reports per-report download button now renders inside each <details> body with data-testid='download-report-pdf-{id}' (11/11 buttons present for 11 past reports) and clicking the first one triggered a real PDF download (Safelyn_Manager_Report_4C15C1E5.pdf).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Layout (desktop+mobile bells)", "issues": ["Two elements share data-testid='notification-bell' (one for mobile, one for desktop). Tests using a strict selector with .click(force=True) on the first match hit the hidden mobile one and fail with 'Element is not visible'. Suggest making the testids unique (notification-bell-mobile / notification-bell-desktop) or hiding the inactive one with display:none rather than the layout-class approach to avoid duplicate testid noise."]}
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [
+    "Optional: split data-testid='notification-bell' into distinct mobile/desktop testids (cosmetic, not functional)."
+  ],
+  "critical_code_review_comments": [
+    "Reports.jsx: per-report download button correctly placed inside the open <details> body — works as expected.",
+    "IncidentDetail.jsx: notifyingKind state added; both notify buttons share single state (good UX, prevents double-fires).",
+    "NotificationBell is rendered twice in Layout (mobile/desktop) with the same data-testid; consider unique testids."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (skipped per request)", "frontend": "100% of requested flows"},
+  "test_credentials": "manager@care.local / Manager@123, staff@care.local / Staff@123",
+  "seed_data_creation": "None (used existing seeded incidents and reports). Created 2 notifications during test run via Notify Manager / Notify DSL on incident be02577e-f172-40bc-bda1-cd4ddd9ecd3b.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "All iter-7 blockers are resolved. /incidents/:id renders cleanly, notify endpoints integrate, reports page has per-report PDF buttons (count == reports.length). Note about duplicate notification-bell testid — Playwright .click(force=True) on the locator alone will fail on hidden first match; use JS click or filter by visibility.",
+  "rca of the issue": "N/A — both fixes verified working. (1) Adding notifyingKind useState restored render of IncidentDetail. (2) Adding the per-report Download PDF button inside the details body before {r.summary} restored the per-report download flow."
+}
