@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import api, { formatApiError } from "@/lib/api";
+import { downloadReportPdf } from "@/lib/pdf";
 import { formatFullTimestamp, recordRef } from "@/lib/format";
-import { Loader2, Sparkles, FileText, Clock, User, Hash, ChevronDown } from "lucide-react";
+import { Loader2, Sparkles, FileText, Clock, User, Hash, ChevronDown, Download } from "lucide-react";
 import { toast } from "sonner";
 
 function isoDate(d) {
@@ -144,8 +145,18 @@ export default function Reports() {
                 </span>
               </div>
             </div>
-            <div className="text-xs text-stone-500">
-              {latest.incident_count} incidents · {latest.note_count} notes
+            <div className="flex items-center gap-3 flex-wrap">
+              <div className="text-xs text-stone-500">
+                {latest.incident_count} incidents · {latest.note_count} notes
+              </div>
+              <button
+                type="button"
+                data-testid="download-latest-report-pdf"
+                onClick={() => downloadReportPdf(latest)}
+                className="inline-flex items-center gap-2 bg-[#1E4D5C] hover:bg-[#163A47] text-white font-semibold rounded-xl px-3.5 py-2 text-xs transition-colors shadow-sm"
+              >
+                <Download size={14} /> Download PDF
+              </button>
             </div>
           </div>
           <div className="prose prose-stone max-w-none text-stone-800 whitespace-pre-wrap text-sm leading-relaxed">

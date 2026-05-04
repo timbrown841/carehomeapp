@@ -23,7 +23,7 @@ from emergentintegrations.llm.openai import OpenAISpeechToText
 from emergentintegrations.llm.chat import LlmChat, UserMessage
 from fastapi.responses import StreamingResponse
 
-from pdf_builder import build_incident_pdf
+from pdf_builder import build_incident_pdf, build_report_pdf
 
 
 # ---------- Setup ----------
@@ -199,6 +199,25 @@ class StructureOut(BaseModel):
     suggested_action: str
     suggested_severity: Literal["low", "medium", "high"]
     suggested_safeguarding: bool
+
+
+class NotificationIn(BaseModel):
+    incident_id: str
+    kind: Literal["manager", "dsl"]
+    message: Optional[str] = ""
+
+
+class Notification(BaseModel):
+    id: str
+    incident_id: str
+    kind: Literal["manager", "dsl"]
+    message: str
+    sent_by_id: str
+    sent_by_name: str
+    recipient_role: str
+    created_at: str
+    read_at: Optional[str] = None
+    incident_summary: Optional[dict] = None
 
 
 class ReportRequest(BaseModel):
@@ -642,19 +661,113 @@ async def list_reports(_: dict = Depends(require_role("manager", "admin"))):
     return docs
 
 
+@api_router.get("/reports/{rid}/pdf")
+async def export_report_pdf(rid: str, user: dict = Depends(require_role("manager", "admin"))):
+    report = await db.reports.find_one({"id": rid}, {"_id": 0})
+    if not report:
+        raise HTTPException(404, "Report not found")
+    pdf_buf = build_report_pdf(report=report, generated_for=user.get("name", "—"))
+    short_ref = str(rid).replace("-", "")[-8:].upper()
+    filename = f"Safelyn_Manager_Report_{short_ref}.pdf"
+    return StreamingResponse(
+        pdf_buf,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+# ---------- Notifications ----------
+@api_router.post("/notifications", response_model=Notification)
+async def create_notification(
+    payload: NotificationIn, user: dict = Depends(get_current_user)
+):
+    incident = await db.incidents.find_one({"id": payload.incident_id}, {"_id": 0})
+    if not incident:
+        raise HTTPException(404, "Incident not found")
+    resident = await db.residents.find_one(
+        {"id": incident.get("resident_id")}, {"_id": 0, "name": 1}
+    )
+    summary = {
+        "id": incident["id"],
+        "resident_name": (resident or {}).get("name", "—"),
+        "severity": incident.get("severity"),
+        "incident_type": incident.get("incident_type") or incident.get("category"),
+        "safeguarding": bool(incident.get("safeguarding")),
+        "body_excerpt": (incident.get("structured_report") or incident.get("body") or "")[:240],
+        "created_at": incident.get("created_at"),
+    }
+    recipient_role = "admin" if payload.kind == "dsl" else "manager"
+    doc = {
+        "id": str(uuid.uuid4()),
+        "incident_id": payload.incident_id,
+        "kind": payload.kind,
+        "message": (payload.message or "").strip()
+        or f"{user.get('name','Staff')} flagged an incident requiring "
+        + ("DSL review" if payload.kind == "dsl" else "manager review"),
+        "sent_by_id": user["id"],
+        "sent_by_name": user["name"],
+        "recipient_role": recipient_role,
+        "created_at": now_iso(),
+        "read_at": None,
+        "incident_summary": summary,
+    }
+    await db.notifications.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api_router.get("/notifications", response_model=List[Notification])
+async def list_notifications(
+    unread_only: bool = False, user: dict = Depends(get_current_user)
+):
+    role = user.get("role")
+    # Managers see manager notifications; admins see manager + dsl;
+    # staff see only the ones they sent themselves.
+    if role == "admin":
+        q = {"recipient_role": {"$in": ["manager", "admin"]}}
+    elif role == "manager":
+        q = {"recipient_role": "manager"}
+    else:
+        q = {"sent_by_id": user["id"]}
+    if unread_only:
+        q["read_at"] = None
+    docs = await db.notifications.find(q, {"_id": 0}).sort("created_at", -1).to_list(100)
+    return docs
+
+
+@api_router.post("/notifications/{nid}/read", response_model=Notification)
+async def mark_notification_read(nid: str, _: dict = Depends(get_current_user)):
+    await db.notifications.update_one(
+        {"id": nid}, {"$set": {"read_at": now_iso()}}
+    )
+    doc = await db.notifications.find_one({"id": nid}, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, "Not found")
+    return doc
+
+
 # ---------- Dashboard ----------
 @api_router.get("/dashboard/stats")
-async def dashboard_stats(_: dict = Depends(get_current_user)):
+async def dashboard_stats(user: dict = Depends(get_current_user)):
     now = datetime.now(timezone.utc)
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
     week_start = (now - timedelta(days=7)).isoformat()
+    prev_week_start = (now - timedelta(days=14)).isoformat()
     overdue_cutoff = (now - timedelta(hours=48)).isoformat()
     yesterday = (now - timedelta(hours=24)).isoformat()
 
     total_residents = await db.residents.count_documents({})
     notes_today = await db.notes.count_documents({"created_at": {"$gte": today_start}})
     incidents_week = await db.incidents.count_documents({"created_at": {"$gte": week_start}})
-    safeguarding_open = await db.incidents.count_documents({"safeguarding": True, "status": "open"})
+    incidents_prev_week = await db.incidents.count_documents(
+        {"created_at": {"$gte": prev_week_start, "$lt": week_start}}
+    )
+    safeguarding_open = await db.incidents.count_documents(
+        {"safeguarding": True, "status": "open"}
+    )
 
     # Risk overview metrics
     high_risk_alerts = await db.incidents.count_documents(
@@ -679,19 +792,72 @@ async def dashboard_stats(_: dict = Depends(get_current_user)):
         if not has_recent:
             missing_records += 1
 
+    # Trend
+    if incidents_prev_week == 0:
+        incidents_trend_pct = 100 if incidents_week > 0 else 0
+    else:
+        incidents_trend_pct = round(
+            ((incidents_week - incidents_prev_week) / incidents_prev_week) * 100
+        )
+
+    # Staff compliance — Supervisions (every 30 days), Appraisals (every 365 days)
+    # We compute against the staff/manager/admin user list. If a user has no
+    # supervisions collection record, they are counted as 'due'.
+    staff_users = await db.users.find(
+        {"role": {"$in": ["staff", "manager"]}}, {"_id": 0, "id": 1, "created_at": 1}
+    ).to_list(500)
+    sup_cutoff = (now - timedelta(days=30)).isoformat()
+    app_cutoff = (now - timedelta(days=365)).isoformat()
+    supervisions_due = 0
+    appraisals_overdue = 0
+    for u in staff_users:
+        last_sup = await db.supervisions.find_one(
+            {"staff_id": u["id"], "kind": "supervision"},
+            sort=[("completed_at", -1)],
+        )
+        if not last_sup or (last_sup.get("completed_at") or "") < sup_cutoff:
+            supervisions_due += 1
+        last_app = await db.supervisions.find_one(
+            {"staff_id": u["id"], "kind": "appraisal"},
+            sort=[("completed_at", -1)],
+        )
+        if not last_app or (last_app.get("completed_at") or "") < app_cutoff:
+            appraisals_overdue += 1
+
     recent_incidents = (
         await db.incidents.find({}, {"_id": 0}).sort("created_at", -1).to_list(5)
     )
     recent_notes = await db.notes.find({}, {"_id": 0}).sort("created_at", -1).to_list(5)
 
+    # Top recurring tags this week
+    week_incidents = await db.incidents.find(
+        {"created_at": {"$gte": week_start}}, {"_id": 0, "tags": 1, "incident_type": 1}
+    ).to_list(500)
+    tag_counts: dict = {}
+    type_counts: dict = {}
+    for inc in week_incidents:
+        for t in inc.get("tags") or []:
+            tag_counts[t] = tag_counts.get(t, 0) + 1
+        it = inc.get("incident_type") or "other"
+        type_counts[it] = type_counts.get(it, 0) + 1
+    top_tags = sorted(tag_counts.items(), key=lambda kv: kv[1], reverse=True)[:5]
+    top_types = sorted(type_counts.items(), key=lambda kv: kv[1], reverse=True)[:4]
+
     return {
         "total_residents": total_residents,
         "notes_today": notes_today,
         "incidents_week": incidents_week,
+        "incidents_prev_week": incidents_prev_week,
+        "incidents_trend_pct": incidents_trend_pct,
         "safeguarding_open": safeguarding_open,
         "high_risk_alerts": high_risk_alerts,
         "overdue_tasks": overdue_tasks,
         "missing_records": missing_records,
+        "supervisions_due": supervisions_due,
+        "appraisals_overdue": appraisals_overdue,
+        "total_staff": len(staff_users),
+        "top_tags": [{"tag": t, "count": c} for t, c in top_tags],
+        "top_types": [{"type": t, "count": c} for t, c in top_types],
         "recent_incidents": recent_incidents,
         "recent_notes": recent_notes,
     }

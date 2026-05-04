@@ -1,6 +1,7 @@
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import Logo, { WordMark } from "@/components/Logo";
+import NotificationBell from "@/components/NotificationBell";
 import {
   LayoutDashboard,
   Users,
@@ -53,6 +54,9 @@ export default function Layout() {
           <div className="hidden md:block">
             <WordMark size="md" />
           </div>
+          <div className="ml-auto md:hidden">
+            <NotificationBell />
+          </div>
         </div>
 
         <nav className="flex md:flex-col gap-1 ml-auto md:ml-0 overflow-x-auto md:overflow-visible">
@@ -100,6 +104,9 @@ export default function Layout() {
 
       <main className="flex-1 md:ml-64">
         <div className="max-w-6xl mx-auto px-4 sm:px-8 py-6 sm:py-10">
+          <div className="hidden md:flex items-center justify-end mb-4">
+            <NotificationBell />
+          </div>
           <Outlet />
         </div>
       </main>

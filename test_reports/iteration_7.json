@@ -1,0 +1,42 @@
+{
+  "summary": "Iteration 7 testing. Backend: 15/15 pytest tests PASS (test_iteration7.py) covering expanded /api/dashboard/stats (new fields supervisions_due/appraisals_overdue/total_staff/incidents_prev_week/incidents_trend_pct/top_tags/top_types present and correctly typed), /api/notifications (POST manager + dsl by staff creates correct recipient_role admin/manager, 404 on bad incident, 401 unauth, list role-scoping works for staff/manager/admin, unread_only filter works, mark-read sets read_at and removes from unread), /api/reports/{id}/pdf (auth/role enforcement, 404, manager downloads PDF containing 'Safelyn Systems', 'Manager Report', 'AI-GENERATED SUMMARY', 'AUDIT TRAIL', 'VERIFICATION', 2x 'Signature:' and 'Audit hash:'), and /api/incidents/{id}/pdf now contains 'Audit hash:' + 'Scan to verify' QR caption. Frontend Dashboard: all 14 required data-testids present (primary-cta, primary-log-incident href='/incidents/new', trust-strip, risk-overview, risk-high-alerts/overdue/missing tiles each labelled Action Required/Watch/All clear, risk-intelligence, risk-intelligence-trend shows '+100% vs last week (0 prev)', staff-compliance, supervisions-due/appraisals-overdue with counts, action-cards, notification-bell with unread badge '1'); recent incident links to /incidents/:id exist. BLOCKING FRONTEND BUGS: (1) IncidentDetail.jsx throws runtime ReferenceError 'notifyingKind is not defined' — the JSX references `notifyingKind` and `notify()` but neither the useState declaration nor the notify() function exist; entire detail page fails to render (IncidentDetail component crashes, replaced with error overlay). (2) Reports.jsx originally had duplicate trailing orphan code (lines 310-317) causing 'Unexpected token </div>' build failure — I fixed this (removed duplicate). Per-report `download-report-pdf-{id}` testid is MISSING from Reports.jsx (only `download-latest-report-pdf` exists on line 154) — spec requires each past report card to have its own download button. Because IncidentDetail crashes, notify-manager-btn/notify-dsl-btn cannot be reached via UI even though they are coded; same for download-pdf-btn. NotificationBell click: 2 bells exist in DOM (mobile + desktop). Visible-bell click opened but notification-panel returned not-visible on one run — needs retest after IncidentDetail fix.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "IncidentDetail", "issue": "Runtime ReferenceError: notifyingKind is not defined. Missing useState declaration + notify() function. Page fails to render entirely. Affects notify-manager-btn, notify-dsl-btn, download-pdf-btn, detail-* testids.", "selector": "[data-testid='incident-detail-page']", "priority": "CRITICAL"},
+      {"component": "Reports", "issue": "Missing per-report download buttons data-testid='download-report-pdf-{id}'. Only the global 'download-latest-report-pdf' is implemented. Spec says each past report card must have its own PDF download button.", "selector": "[data-testid^='download-report-pdf-']", "priority": "HIGH"},
+      {"component": "Reports", "issue": "(FIXED by test agent) File had 8 orphan duplicate lines after component close causing 'Unexpected token </div>' at 311:13 → full compile failure. Removed lines 310-317.", "selector": "n/a", "priority": "HIGH"}
+    ],
+    "integration_issues": [
+      {"flow": "Notify Manager / Notify DSL from incident detail", "issue": "Cannot be tested end-to-end because IncidentDetail component crashes before rendering. Backend POST /api/notifications verified working via pytest.", "affected_selectors": ["[data-testid='notify-manager-btn']", "[data-testid='notify-dsl-btn']"]}
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration7.py",
+    "/app/test_reports/pytest/iteration7_results.xml"
+  ],
+  "action_items": [
+    "[CRITICAL] Fix IncidentDetail.jsx: add `const [notifyingKind, setNotifyingKind] = useState(null);` and implement `notify(kind)` function that POSTs to /api/notifications with {incident_id, kind}, sets notifyingKind while in-flight, shows success toast ('Manager notified' / 'DSL notified'), and handles errors. Without this the entire incident detail route throws and every downstream button (download-pdf-btn, notify-*, detail-*) is unreachable.",
+    "[HIGH] Reports.jsx: add per-report PDF download button with data-testid='download-report-pdf-{report.id}' inside each <details> card in the Past reports list. The latest-card download-latest-report-pdf already works.",
+    "[MEDIUM] Retest NotificationBell panel open/close after IncidentDetail fix — the panel did not become visible on one click in my run; may be a focus/dismiss-on-outside-click issue but could not be fully isolated while the site was throwing unrelated React errors."
+  ],
+  "critical_code_review_comments": [
+    "IncidentDetail.jsx: references to `notifyingKind` and `notify()` are undefined — evidence of incomplete merge. Also means the button-click flow was never smoke-tested before handoff.",
+    "Reports.jsx had clearly-duplicated dead code at EOF; basic lint (`eslint --max-warnings=0`) or build verification would catch this. Recommend adding a pre-commit `yarn build` check.",
+    "NotificationBell is rendered twice in Layout (desktop header + mobile sidebar); both share the same data-testid='notification-bell'. Playwright picks first-match which may be hidden. Consider adding a distinguishing suffix (e.g. 'notification-bell-desktop' / 'notification-bell-mobile') for deterministic testing.",
+    "server.py /api/dashboard/stats total_staff excludes admin role — docstring/spec implicit but worth documenting; test assumed staff+manager+admin which needed relaxing.",
+    "PDF endpoints, notifications, and expanded stats are fully functional on the backend and follow good patterns (role checks via get_current_user, _id projected out, UUID ids, ISO timestamps)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration7.py (new, 15 tests)",
+    "/app/frontend/src/pages/Reports.jsx (removed 8 orphan duplicate lines 310-317 that broke compilation)"
+  ],
+  "success_rate": {"backend": "100% (15/15)", "frontend": "~50% (Dashboard + NotificationBell OK; IncidentDetail + Reports download-per-id broken)"},
+  "test_credentials": "admin@care.local/Admin@123, manager@care.local/Manager@123, staff@care.local/Staff@123 — all working",
+  "seed_data_creation": "TEST_IT7_YP resident + 1 high-severity safeguarding incident. Cleaned up in teardown.",
+  "retest_needed": true,
+  "main_agent_can_self_test": false,
+  "context_for_next_testing_agent": "Backend is solid — test_iteration7.py covers it all. Frontend Dashboard verified. Two critical frontend gaps remain: (A) IncidentDetail.jsx crashes due to missing `notifyingKind` state + `notify()` function; (B) Reports.jsx missing per-report download-report-pdf-{id} buttons. After those fixes, retest: notify-manager-btn click → POST /api/notifications → toast; per-report PDF download triggers blob download; NotificationBell panel open/close + mark-as-read via UI; mobile 390px dashboard (not horizontally tested due to time).",
+  "rca of the issue": "IncidentDetail.jsx: developer added JSX referencing notifyingKind + notify() but forgot to declare useState + function body. Fix: add `const [notifyingKind, setNotifyingKind] = useState(null);` at component top, plus `async function notify(kind){ try { setNotifyingKind(kind); await axios.post(`${API}/notifications`, {incident_id: id, kind}); toast.success(kind==='manager'?'Manager notified':'DSL notified'); } catch(e){ toast.error('Failed to notify'); } finally { setNotifyingKind(null);} }`. Reports.jsx duplicate-tail issue was a stale-merge artefact (already fixed by me)."
+}

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
-import api, { API, formatApiError } from "@/lib/api";
+import api, { formatApiError } from "@/lib/api";
+import { downloadIncidentPdf } from "@/lib/pdf";
 import { useAuth } from "@/context/AuthContext";
 import { formatFullTimestamp, recordRef } from "@/lib/format";
 import {
@@ -14,6 +15,8 @@ import {
   Tag,
   CheckCircle2,
   AlertCircle,
+  BellRing,
+  Send,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -66,27 +69,29 @@ export default function IncidentDetail() {
     if (!incident) return;
     setDownloading(true);
     try {
-      const token = localStorage.getItem("cc_token");
-      const response = await fetch(`${API}/incidents/${incident.id}/pdf`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const blob = await response.blob();
-      const safeName = (resident?.name || "incident").replace(/\s+/g, "_");
-      const shortRef = String(incident.id).replace(/-/g, "").slice(-8).toUpperCase();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `Safelyn_Incident_${safeName}_${shortRef}.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 1500);
-      toast.success("PDF downloaded");
-    } catch (e) {
-      toast.error("PDF download failed");
+      await downloadIncidentPdf(incident, resident?.name);
     } finally {
       setDownloading(false);
+    }
+  };
+
+  const notify = async (kind) => {
+    if (!incident) return;
+    setNotifyingKind(kind);
+    try {
+      await api.post("/notifications", {
+        incident_id: incident.id,
+        kind,
+      });
+      toast.success(
+        kind === "dsl"
+          ? "DSL notified successfully"
+          : "Manager notified successfully"
+      );
+    } catch (e) {
+      toast.error(formatApiError(e.response?.data?.detail) || "Notification failed");
+    } finally {
+      setNotifyingKind(null);
     }
   };
 
@@ -257,8 +262,36 @@ export default function IncidentDetail() {
         )}
 
       {/* Status actions */}
-      {canReview && incident.status !== "reviewed" && (
-        <div className="flex items-center justify-end gap-2">
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        <button
+          type="button"
+          data-testid="notify-manager-btn"
+          onClick={() => notify("manager")}
+          disabled={notifyingKind !== null}
+          className="inline-flex items-center gap-2 bg-white hover:bg-stone-50 text-[#1E4D5C] font-semibold rounded-xl px-4 py-2.5 text-sm border-2 border-[#1E4D5C]/30 hover:border-[#1E4D5C]/60 disabled:opacity-50 transition-colors"
+        >
+          {notifyingKind === "manager" ? (
+            <Loader2 size={15} className="animate-spin" />
+          ) : (
+            <Send size={15} />
+          )}
+          Notify Manager
+        </button>
+        <button
+          type="button"
+          data-testid="notify-dsl-btn"
+          onClick={() => notify("dsl")}
+          disabled={notifyingKind !== null}
+          className="inline-flex items-center gap-2 bg-[#B23A48] hover:bg-[#962F3B] text-white font-semibold rounded-xl px-4 py-2.5 text-sm disabled:opacity-50 transition-colors shadow-sm"
+        >
+          {notifyingKind === "dsl" ? (
+            <Loader2 size={15} className="animate-spin" />
+          ) : (
+            <BellRing size={15} />
+          )}
+          Notify DSL
+        </button>
+        {canReview && incident.status !== "reviewed" && (
           <button
             type="button"
             data-testid="mark-reviewed-btn"
@@ -267,8 +300,8 @@ export default function IncidentDetail() {
           >
             <CheckCircle2 size={16} /> Mark reviewed
           </button>
-        </div>
-      )}
+        )}
+      </div>
 
       {/* Audit footer */}
       <div className="text-center text-[10px] uppercase tracking-wider text-stone-400 font-mono pt-4">

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import api, { API, formatApiError } from "@/lib/api";
+import api, { formatApiError } from "@/lib/api";
+import { downloadIncidentPdf } from "@/lib/pdf";
 import VoiceRecorder from "@/components/VoiceRecorder";
 import SaveReceipt from "@/components/SaveReceipt";
 import { formatFullTimestamp, recordRef } from "@/lib/format";
@@ -75,27 +76,7 @@ export default function Incidents() {
   };
 
   const downloadPdf = async (incident, residentName) => {
-    try {
-      const token = localStorage.getItem("cc_token");
-      const r = await fetch(`${API}/incidents/${incident.id}/pdf`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      const blob = await r.blob();
-      const safeName = (residentName || "incident").replace(/\s+/g, "_");
-      const shortRef = String(incident.id).replace(/-/g, "").slice(-8).toUpperCase();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `Safelyn_Incident_${safeName}_${shortRef}.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 1500);
-      toast.success("PDF downloaded");
-    } catch (e) {
-      toast.error("PDF download failed");
-    }
+    await downloadIncidentPdf(incident, residentName);
   };
 
   return (
