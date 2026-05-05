@@ -4,6 +4,7 @@ import api, { formatApiError } from "@/lib/api";
 import { downloadIncidentPdf } from "@/lib/pdf";
 import VoiceRecorder from "@/components/VoiceRecorder";
 import SaveReceipt from "@/components/SaveReceipt";
+import { renderRich } from "@/lib/markdown";
 import {
   ArrowLeft,
   Loader2,
@@ -379,7 +380,7 @@ export default function LogIncident() {
                   </div>
                 ) : null}
                 <p className="text-sm text-stone-800 leading-relaxed whitespace-pre-wrap">
-                  {s.body}
+                  {renderRich(s.body)}
                 </p>
               </div>
             ))}
@@ -391,7 +392,7 @@ export default function LogIncident() {
                 Suggested action
               </div>
               <p className="text-sm text-stone-800 leading-relaxed">
-                {form.suggested_action}
+                {renderRich(form.suggested_action)}
               </p>
             </div>
           )}

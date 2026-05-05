@@ -8,6 +8,7 @@ import Layout from "@/components/Layout";
 import Login from "@/pages/Login";
 import Dashboard from "@/pages/Dashboard";
 import Residents from "@/pages/Residents";
+import ResidentDetail from "@/pages/ResidentDetail";
 import Notes from "@/pages/Notes";
 import Incidents from "@/pages/Incidents";
 import LogIncident from "@/pages/LogIncident";
@@ -15,6 +16,7 @@ import IncidentDetail from "@/pages/IncidentDetail";
 import Reports from "@/pages/Reports";
 import Supervisions from "@/pages/Supervisions";
 import ComingSoon from "@/pages/ComingSoon";
+import MissingShare from "@/pages/MissingShare";
 
 function Protected({ children }) {
   const { user, loading } = useAuth();
@@ -42,6 +44,7 @@ function App() {
         <BrowserRouter>
           <Routes>
             <Route path="/login" element={<Login />} />
+            <Route path="/missing/share/:token" element={<MissingShare />} />
             <Route
               element={
                 <Protected>
@@ -51,6 +54,7 @@ function App() {
             >
               <Route path="/" element={<Dashboard />} />
               <Route path="/residents" element={<Residents />} />
+              <Route path="/residents/:id" element={<ResidentDetail />} />
               <Route path="/notes" element={<Notes />} />
               <Route path="/incidents" element={<Incidents />} />
               <Route path="/incidents/new" element={<LogIncident />} />

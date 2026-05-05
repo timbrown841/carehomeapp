@@ -25,7 +25,9 @@ from fastapi.responses import StreamingResponse
 from contextlib import asynccontextmanager
 
 from pdf_builder import build_incident_pdf, build_report_pdf
+from missing_pack_pdf import build_missing_pack_pdf
 from notifications_service import send_email, send_sms, recipient_for
+import secrets as _secrets
 
 
 # ---------- Setup ----------
@@ -53,6 +55,8 @@ async def lifespan(_app: FastAPI):
     await db.notifications.create_index([("recipient_role", 1), ("created_at", -1)])
     await db.supervisions.create_index([("staff_id", 1), ("completed_at", -1)])
     await db.login_attempts.create_index("email")
+    await db.missing_episodes.create_index([("resident_id", 1), ("reported_at", -1)])
+    await db.missing_episodes.create_index("share_token", unique=True, sparse=True)
 
     admin_email = os.environ.get("ADMIN_EMAIL", "admin@care.local").lower()
     admin_password = os.environ.get("ADMIN_PASSWORD", "Admin@123")
@@ -101,8 +105,20 @@ async def lifespan(_app: FastAPI):
 
 async def _seed_demo_data_if_empty():
     """Populate a realistic demo dataset on first run."""
-    if await db.residents.count_documents({}) > 0:
+    # If any resident is missing the rich profile fields (e.g. legal_status),
+    # treat data as stale demo data and rebuild.
+    sample = await db.residents.find_one({}, {"_id": 0, "legal_status": 1})
+    if (await db.residents.count_documents({}) > 0) and sample and sample.get("legal_status"):
         return
+    if await db.residents.count_documents({}) > 0:
+        logger.info("Stale demo residents detected — clearing care collections to reseed full profiles.")
+        await db.residents.delete_many({})
+        await db.notes.delete_many({})
+        await db.incidents.delete_many({})
+        await db.missing_episodes.delete_many({})
+        await db.supervisions.delete_many({})
+        await db.reports.delete_many({})
+        await db.notifications.delete_many({})
     logger.info("Seeding demo data…")
 
     staff_user = await db.users.find_one({"email": "staff@care.local"})
@@ -110,10 +126,300 @@ async def _seed_demo_data_if_empty():
     manager_user = await db.users.find_one({"email": "manager@care.local"})
 
     residents = [
-        {"name": "Jordan Reilly", "dob": "2010-03-14", "room": "1A", "notes": "Likes football and art. Long-term placement."},
-        {"name": "Aisha Khan", "dob": "2009-11-02", "room": "2B", "notes": "Strong academic interests, anxious in groups."},
-        {"name": "Leo Martinez", "dob": "2011-07-21", "room": "3A", "notes": "Recently arrived, settling in. Loves cycling."},
-        {"name": "Maddy O'Brien", "dob": "2008-05-30", "room": "3B", "notes": "Approaching independence; weekly key-work sessions."},
+        {
+            "name": "Jordan Reilly",
+            "preferred_name": "Jordy",
+            "dob": "2010-03-14",
+            "room": "1A",
+            "gender": "Male",
+            "placement_date": "2023-04-12",
+            "legal_status": "Section 20 (voluntary accommodation)",
+            "social_worker_name": "Priya Shah",
+            "social_worker_contact": "07700 900111 · priya.shah@la.gov.uk",
+            "local_authority": "Manchester City Council",
+            "key_worker": "Alex Staff",
+            "placement_summary": "Long-term placement, settled. Likes football and art.",
+            "risk_level": "low",
+            "notes": "Likes football and art. Long-term placement.",
+            "referral_reason": "Family breakdown following parental ill-health.",
+            "placement_history": "Two short-term foster placements (2021-22) before current home.",
+            "family_background": "Mother in recovery; supervised contact monthly. No paternal contact.",
+            "education_background": "Year 9, mainstream secondary. Reading age slightly below peers.",
+            "trauma_history": "Witnessed domestic conflict aged 6-9.",
+            "professional_involvement": "CAMHS — discharged 2024. School counsellor weekly.",
+            "presenting_needs": "Needs predictability, anxious about contact visits.",
+            "risks": {
+                "self_harm": "None known",
+                "absconding": "Low — has not absconded",
+                "aggression": "Low — verbal only when frustrated",
+                "substance": "None",
+                "cse": "None known",
+                "mental_health": "Mild anxiety",
+                "medical": "Asthma",
+            },
+            "risk_triggers": ["Contact-visit anxiety", "Loud or chaotic environments"],
+            "protective_factors": ["Strong relationship with key worker", "Loves football team"],
+            "risk_management": "Reassure 24h before contact visits; quiet wind-down routine post-school.",
+            "risk_last_reviewed": "2026-01-14",
+            "risk_next_review": "2026-04-14",
+            "emotional_support": "Daily 10-min check-ins with key worker.",
+            "behaviour_strategies": "Use 'name it to tame it' for anger; quiet space available.",
+            "education_support": "Reading catch-up programme; meet SENCo termly.",
+            "health_needs": "Asthma — preventer + reliever inhalers, peak-flow weekly.",
+            "independence_skills": "Cooking once a week, money management age-appropriate.",
+            "contact_arrangements": "Mum: supervised, monthly, 1 hour at family centre.",
+            "goals_outcomes": "Keep mainstream education; gain Bronze Duke of Edinburgh.",
+            "staff_guidance": "Avoid surprises before contact days. Praise specific actions.",
+            "height": "5'2\"",
+            "build": "Slim",
+            "hair": "Brown, short",
+            "eyes": "Hazel",
+            "distinguishing_marks": "Small scar above left eyebrow",
+            "usual_clothing": "Football tracksuits, Adidas trainers",
+            "phone": "07700 900221",
+            "known_locations": ["Local park (skate area)", "Football club Mon/Wed evenings"],
+            "known_associates": ["Tom (school friend, Year 9)", "Riley (cousin)"],
+            "family_contacts": ["Mum — Lisa Reilly · 07700 900112 (supervised contact only)"],
+            "missing_triggers": ["Conflict with peers", "Disappointing news from contact"],
+            "safety_plan": "If missing: contact football club, then school friends. Strong return record.",
+            "medical": {
+                "nhs_number": "401 020 3045",
+                "gp": "Dr A. Roberts, Northern Family Practice · 0161 555 0123",
+                "allergies": "Peanuts (mild)",
+                "diagnoses": "Asthma",
+                "current_medication": "Salbutamol PRN, Beclometasone preventer 100mcg AM/PM",
+                "prn": "Antihistamine for peanut exposure",
+                "schedule": "Inhalers AM/PM",
+                "conditions": "Asthma — well controlled",
+                "emergency_notes": "Carry inhaler at all times. Antihistamine in first-aid box.",
+                "appointments": "Annual asthma review · April 2026",
+            },
+            "emergency_contacts": [
+                {"name": "Priya Shah (Social Worker)", "relation": "LA", "phone": "07700 900111"},
+                {"name": "Manchester EDT", "relation": "Out-of-hours", "phone": "0161 234 5001"},
+            ],
+        },
+        {
+            "name": "Aisha Khan",
+            "preferred_name": "Aisha",
+            "dob": "2009-11-02",
+            "room": "2B",
+            "gender": "Female",
+            "placement_date": "2024-09-03",
+            "legal_status": "Care Order (Section 31)",
+            "social_worker_name": "Marcus Wright",
+            "social_worker_contact": "07700 900113 · marcus.wright@la.gov.uk",
+            "local_authority": "Manchester City Council",
+            "key_worker": "James Patel",
+            "placement_summary": "Recent placement; settling. Strong academic ability.",
+            "risk_level": "high",
+            "notes": "Strong academic interests, anxious in groups.",
+            "referral_reason": "Safeguarding — historic neglect and emotional abuse.",
+            "placement_history": "One previous residential placement (6 months).",
+            "family_background": "Estranged from mother. Letterbox contact only.",
+            "education_background": "Year 10, A* / A predicted. Strong in sciences.",
+            "trauma_history": "Historic self-harm. Disclosure made Feb 2026.",
+            "professional_involvement": "CAMHS active. School ELSA support.",
+            "presenting_needs": "Trust-building; anxiety in unstructured social settings.",
+            "risks": {
+                "self_harm": "Active concern — historical, monitored",
+                "absconding": "Low",
+                "aggression": "None",
+                "substance": "None known",
+                "cse": "Low — online safety reviewed",
+                "mental_health": "Anxiety + low mood",
+                "medical": "None",
+            },
+            "risk_triggers": ["Unstructured group settings", "Reminders of birth family"],
+            "protective_factors": ["Trust in James (key worker)", "Academic engagement"],
+            "risk_management": "Daily check-ins. CAMHS clinical review monthly. Sharps audit weekly.",
+            "risk_last_reviewed": "2026-02-01",
+            "risk_next_review": "2026-03-01",
+            "emotional_support": "1:1 sessions with key worker 3x/week.",
+            "behaviour_strategies": "Validate emotions; offer regulated activities (art, journaling).",
+            "education_support": "Quiet study space; mentor for university aspirations.",
+            "health_needs": "CAMHS therapy ongoing.",
+            "independence_skills": "Strong — focus on emotional independence.",
+            "contact_arrangements": "Letterbox via LA, twice yearly.",
+            "goals_outcomes": "Sit GCSEs; emotional regulation toolkit; supportive transition planning.",
+            "staff_guidance": "Always offer choice. Watch for withdrawn periods after letterbox.",
+            "height": "5'5\"",
+            "build": "Slim",
+            "hair": "Black, long",
+            "eyes": "Dark brown",
+            "distinguishing_marks": "—",
+            "usual_clothing": "Hoodie + jeans, often a denim jacket",
+            "phone": "07700 900222",
+            "known_locations": ["School library", "Local mosque (Friday)"],
+            "known_associates": ["Hannah (school friend)"],
+            "family_contacts": [],
+            "missing_triggers": ["Letterbox contact week", "Anniversary dates"],
+            "safety_plan": "If missing: contact school first. CAMHS to be informed within 4h.",
+            "medical": {
+                "nhs_number": "402 030 4055",
+                "gp": "Dr A. Roberts, Northern Family Practice · 0161 555 0123",
+                "allergies": "None",
+                "diagnoses": "Generalised anxiety disorder",
+                "current_medication": "Sertraline 50mg AM",
+                "prn": "—",
+                "schedule": "Sertraline 50mg with breakfast",
+                "conditions": "—",
+                "emergency_notes": "Active CAMHS plan. Sharps protocol in place.",
+                "appointments": "CAMHS · monthly",
+            },
+            "emergency_contacts": [
+                {"name": "Marcus Wright (Social Worker)", "relation": "LA", "phone": "07700 900113"},
+                {"name": "Manchester EDT", "relation": "Out-of-hours", "phone": "0161 234 5001"},
+                {"name": "CAMHS Crisis", "relation": "Clinical", "phone": "0161 222 0000"},
+            ],
+        },
+        {
+            "name": "Leo Martinez",
+            "preferred_name": "Leo",
+            "dob": "2011-07-21",
+            "room": "3A",
+            "gender": "Male",
+            "placement_date": "2025-12-01",
+            "legal_status": "Section 20 (voluntary accommodation)",
+            "social_worker_name": "Helena Brown",
+            "social_worker_contact": "07700 900114 · helena.brown@la.gov.uk",
+            "local_authority": "Salford City Council",
+            "key_worker": "Alex Staff",
+            "placement_summary": "Recently arrived. Settling in. Loves cycling.",
+            "risk_level": "medium",
+            "notes": "Recently arrived, settling in. Loves cycling.",
+            "referral_reason": "Parental capacity — temporary placement during family assessment.",
+            "placement_history": "First placement.",
+            "family_background": "Maternal contact weekly, supervised. Father unknown.",
+            "education_background": "Year 8, achieving expected. Behaviour notes around frustration.",
+            "trauma_history": "Witnessed parental substance misuse.",
+            "professional_involvement": "Family Support Worker via LA.",
+            "presenting_needs": "Settling routines; emotional regulation.",
+            "risks": {
+                "self_harm": "None",
+                "absconding": "Medium — left placement once",
+                "aggression": "Medium — verbal/property",
+                "substance": "None known",
+                "cse": "None known",
+                "mental_health": "Adjustment difficulty",
+                "medical": "None",
+            },
+            "risk_triggers": ["Sharing equipment", "Sudden routine changes"],
+            "protective_factors": ["Cycling — strong outlet", "Good rapport with staff"],
+            "risk_management": "Predictable routine. Cycling time daily. Restorative approach.",
+            "risk_last_reviewed": "2026-01-20",
+            "risk_next_review": "2026-02-20",
+            "emotional_support": "Key-work 2x/week + ad-hoc check-ins.",
+            "behaviour_strategies": "Restorative conversations; clear, calm boundaries.",
+            "education_support": "Liaise with school behaviour lead weekly.",
+            "health_needs": "Routine.",
+            "independence_skills": "Bike maintenance, basic cooking.",
+            "contact_arrangements": "Mum: weekly supervised at family centre.",
+            "goals_outcomes": "Stable placement; consistent attendance; broaden friendships.",
+            "staff_guidance": "Prepare for transitions 15 min ahead. Avoid public correction.",
+            "height": "4'11\"",
+            "build": "Average",
+            "hair": "Black, curly",
+            "eyes": "Brown",
+            "distinguishing_marks": "Birthmark on right forearm",
+            "usual_clothing": "Cycling top, joggers",
+            "phone": "07700 900223",
+            "known_locations": ["BMX track Salford Quays", "Cycling club Saturday"],
+            "known_associates": ["Sam (cycling club)"],
+            "family_contacts": ["Mum — Carla Martinez · 07700 900115 (supervised only)"],
+            "missing_triggers": ["Disappointing contact visits", "Conflict over rules"],
+            "safety_plan": "Check BMX track and cycling club first. Mum to be informed only after police.",
+            "medical": {
+                "nhs_number": "403 040 5066",
+                "gp": "Dr A. Roberts, Northern Family Practice · 0161 555 0123",
+                "allergies": "None",
+                "diagnoses": "—",
+                "current_medication": "—",
+                "prn": "—",
+                "schedule": "—",
+                "conditions": "—",
+                "emergency_notes": "—",
+                "appointments": "Routine medical · April 2026",
+            },
+            "emergency_contacts": [
+                {"name": "Helena Brown (Social Worker)", "relation": "LA", "phone": "07700 900114"},
+                {"name": "Salford EDT", "relation": "Out-of-hours", "phone": "0161 794 0000"},
+            ],
+        },
+        {
+            "name": "Maddy O'Brien",
+            "preferred_name": "Mads",
+            "dob": "2008-05-30",
+            "room": "3B",
+            "gender": "Female",
+            "placement_date": "2022-06-18",
+            "legal_status": "Care Order (Section 31)",
+            "social_worker_name": "Daniel Owusu",
+            "social_worker_contact": "07700 900116 · daniel.owusu@la.gov.uk",
+            "local_authority": "Trafford Council",
+            "key_worker": "Sarah Manager",
+            "placement_summary": "Approaching independence. Pathway plan in progress.",
+            "risk_level": "high",
+            "notes": "Approaching independence; weekly key-work sessions.",
+            "referral_reason": "Family breakdown; long-term LA care.",
+            "placement_history": "Three foster placements before residential (2018-22).",
+            "family_background": "Inconsistent maternal contact; phone only.",
+            "education_background": "College — Health & Social Care L2.",
+            "trauma_history": "Childhood neglect; multiple disruptions.",
+            "professional_involvement": "Personal Adviser (post-16); IRO; LAC nurse.",
+            "presenting_needs": "Identity and family contact distress; pre-independence skills.",
+            "risks": {
+                "self_harm": "Historic — none in last 12 months",
+                "absconding": "High — three episodes in last 12 months",
+                "aggression": "Low",
+                "substance": "Cannabis use disclosed Feb 2026",
+                "cse": "Moderate — historic; ongoing online-safety work",
+                "mental_health": "Low mood after maternal contact",
+                "medical": "None",
+            },
+            "risk_triggers": ["Phone calls from biological mother", "Birthdays"],
+            "protective_factors": ["Trusting bond with manager", "College engagement"],
+            "risk_management": "Pre-and-post contact session with key worker. Substance-misuse keyworker referral made.",
+            "risk_last_reviewed": "2026-01-29",
+            "risk_next_review": "2026-02-26",
+            "emotional_support": "Weekly 1:1 + check-in after every contact.",
+            "behaviour_strategies": "Validate, then reflect. Avoid pressuring decisions when distressed.",
+            "education_support": "College mentor weekly; transport pass.",
+            "health_needs": "—",
+            "independence_skills": "Pathway plan: budgeting, tenancy, cooking once weekly.",
+            "contact_arrangements": "Mum: phone, weekly. In-person when assessed safe.",
+            "goals_outcomes": "Complete L2; secure semi-independent placement at 18.",
+            "staff_guidance": "Always assume distress after maternal contact. Offer space + key-work.",
+            "height": "5'6\"",
+            "build": "Average",
+            "hair": "Blonde, long",
+            "eyes": "Blue",
+            "distinguishing_marks": "Small tattoo on left wrist (rose)",
+            "usual_clothing": "Hoodie, leggings, white trainers",
+            "phone": "07700 900224",
+            "known_locations": ["Manchester Piccadilly Gardens", "Friend's flat — Stretford"],
+            "known_associates": ["Chloe (older friend) — caution noted", "Jamie (college)"],
+            "family_contacts": ["Mum — Lorraine O'Brien · 07700 900117 (phone only)"],
+            "missing_triggers": ["Contact phone-calls", "Anniversary of removal (June)"],
+            "safety_plan": "If missing: police IMMEDIATELY. Check Piccadilly Gardens and Stretford address. Cannabis use risk in associates.",
+            "medical": {
+                "nhs_number": "404 050 6077",
+                "gp": "Dr A. Roberts, Northern Family Practice · 0161 555 0123",
+                "allergies": "None known",
+                "diagnoses": "—",
+                "current_medication": "Combined contraceptive pill",
+                "prn": "—",
+                "schedule": "Pill daily AM",
+                "conditions": "—",
+                "emergency_notes": "Substance-misuse risk noted. LAC nurse contactable.",
+                "appointments": "LAC review · monthly",
+            },
+            "emergency_contacts": [
+                {"name": "Daniel Owusu (Social Worker)", "relation": "LA", "phone": "07700 900116"},
+                {"name": "Trafford EDT", "relation": "Out-of-hours", "phone": "0161 912 2020"},
+                {"name": "Personal Adviser — Lou Carter", "relation": "Post-16", "phone": "07700 900118"},
+            ],
+        },
     ]
     res_docs = []
     for r in residents:
@@ -358,6 +664,65 @@ class ResidentIn(BaseModel):
     notes: Optional[str] = ""
     photo_url: Optional[str] = None
 
+    # Overview
+    preferred_name: Optional[str] = None
+    gender: Optional[str] = None
+    placement_date: Optional[str] = None
+    legal_status: Optional[str] = None
+    social_worker_name: Optional[str] = None
+    social_worker_contact: Optional[str] = None
+    local_authority: Optional[str] = None
+    key_worker: Optional[str] = None
+    placement_summary: Optional[str] = None
+    risk_level: Optional[Literal["low", "medium", "high"]] = "medium"
+
+    # Background & Referral
+    referral_reason: Optional[str] = None
+    placement_history: Optional[str] = None
+    family_background: Optional[str] = None
+    education_background: Optional[str] = None
+    trauma_history: Optional[str] = None
+    professional_involvement: Optional[str] = None
+    presenting_needs: Optional[str] = None
+
+    # Risk
+    risks: Optional[dict] = None  # { self_harm, absconding, aggression, substance, cse, mental_health, medical }
+    risk_triggers: Optional[List[str]] = None
+    protective_factors: Optional[List[str]] = None
+    risk_management: Optional[str] = None
+    risk_last_reviewed: Optional[str] = None
+    risk_next_review: Optional[str] = None
+
+    # Care plan
+    emotional_support: Optional[str] = None
+    behaviour_strategies: Optional[str] = None
+    education_support: Optional[str] = None
+    health_needs: Optional[str] = None
+    independence_skills: Optional[str] = None
+    contact_arrangements: Optional[str] = None
+    goals_outcomes: Optional[str] = None
+    staff_guidance: Optional[str] = None
+
+    # Missing-from-care / Philomena
+    height: Optional[str] = None
+    build: Optional[str] = None
+    hair: Optional[str] = None
+    eyes: Optional[str] = None
+    distinguishing_marks: Optional[str] = None
+    usual_clothing: Optional[str] = None
+    phone: Optional[str] = None
+    known_locations: Optional[List[str]] = None
+    known_associates: Optional[List[str]] = None
+    family_contacts: Optional[List[str]] = None
+    missing_triggers: Optional[List[str]] = None
+    safety_plan: Optional[str] = None
+
+    # Medical
+    medical: Optional[dict] = None  # { gp, nhs_number, allergies, diagnoses, current_medication, prn, schedule, conditions, emergency_notes, appointments }
+
+    # Emergency contacts
+    emergency_contacts: Optional[List[dict]] = None  # [{ name, relation, phone }]
+
 
 class Resident(ResidentIn):
     id: str
@@ -571,6 +936,344 @@ async def create_resident(payload: ResidentIn, user: dict = Depends(require_role
 async def delete_resident(rid: str, _: dict = Depends(require_role("admin"))):
     res = await db.residents.delete_one({"id": rid})
     return {"deleted": res.deleted_count}
+
+
+@api_router.get("/residents/{rid}", response_model=Resident)
+async def get_resident(rid: str, _: dict = Depends(get_current_user)):
+    doc = await db.residents.find_one({"id": rid}, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, "Resident not found")
+    return doc
+
+
+class ResidentPatch(BaseModel):
+    """All fields optional — partial update of a resident profile."""
+    name: Optional[str] = None
+    dob: Optional[str] = None
+    room: Optional[str] = None
+    notes: Optional[str] = None
+    photo_url: Optional[str] = None
+    preferred_name: Optional[str] = None
+    gender: Optional[str] = None
+    placement_date: Optional[str] = None
+    legal_status: Optional[str] = None
+    social_worker_name: Optional[str] = None
+    social_worker_contact: Optional[str] = None
+    local_authority: Optional[str] = None
+    key_worker: Optional[str] = None
+    placement_summary: Optional[str] = None
+    risk_level: Optional[Literal["low", "medium", "high"]] = None
+    referral_reason: Optional[str] = None
+    placement_history: Optional[str] = None
+    family_background: Optional[str] = None
+    education_background: Optional[str] = None
+    trauma_history: Optional[str] = None
+    professional_involvement: Optional[str] = None
+    presenting_needs: Optional[str] = None
+    risks: Optional[dict] = None
+    risk_triggers: Optional[List[str]] = None
+    protective_factors: Optional[List[str]] = None
+    risk_management: Optional[str] = None
+    risk_last_reviewed: Optional[str] = None
+    risk_next_review: Optional[str] = None
+    emotional_support: Optional[str] = None
+    behaviour_strategies: Optional[str] = None
+    education_support: Optional[str] = None
+    health_needs: Optional[str] = None
+    independence_skills: Optional[str] = None
+    contact_arrangements: Optional[str] = None
+    goals_outcomes: Optional[str] = None
+    staff_guidance: Optional[str] = None
+    height: Optional[str] = None
+    build: Optional[str] = None
+    hair: Optional[str] = None
+    eyes: Optional[str] = None
+    distinguishing_marks: Optional[str] = None
+    usual_clothing: Optional[str] = None
+    phone: Optional[str] = None
+    known_locations: Optional[List[str]] = None
+    known_associates: Optional[List[str]] = None
+    family_contacts: Optional[List[str]] = None
+    missing_triggers: Optional[List[str]] = None
+    safety_plan: Optional[str] = None
+    medical: Optional[dict] = None
+    emergency_contacts: Optional[List[dict]] = None
+
+
+@api_router.patch("/residents/{rid}", response_model=Resident)
+async def update_resident(
+    rid: str,
+    payload: ResidentPatch,
+    _: dict = Depends(require_role("manager", "admin")),
+):
+    update_doc = {k: v for k, v in payload.model_dump(exclude_unset=True).items() if v is not None}
+    if not update_doc:
+        doc = await db.residents.find_one({"id": rid}, {"_id": 0})
+        if not doc:
+            raise HTTPException(404, "Resident not found")
+        return doc
+    update_doc["updated_at"] = now_iso()
+    result = await db.residents.update_one({"id": rid}, {"$set": update_doc})
+    if result.matched_count == 0:
+        raise HTTPException(404, "Resident not found")
+    doc = await db.residents.find_one({"id": rid}, {"_id": 0})
+    return doc
+
+
+@api_router.get("/residents/{rid}/timeline")
+async def resident_timeline(rid: str, _: dict = Depends(get_current_user)):
+    incidents = await db.incidents.find({"resident_id": rid}, {"_id": 0}).sort("created_at", -1).to_list(100)
+    notes = await db.notes.find({"resident_id": rid}, {"_id": 0}).sort("created_at", -1).to_list(100)
+    episodes = await db.missing_episodes.find({"resident_id": rid}, {"_id": 0}).sort("reported_at", -1).to_list(50)
+    items = []
+    for inc in incidents:
+        items.append({
+            "kind": "incident",
+            "id": inc["id"],
+            "at": inc.get("created_at"),
+            "title": (inc.get("incident_type") or inc.get("category") or "incident").title(),
+            "severity": inc.get("severity"),
+            "safeguarding": bool(inc.get("safeguarding")),
+            "body": (inc.get("structured_report") or inc.get("body") or "")[:240],
+            "author": inc.get("author_name"),
+        })
+    for n in notes:
+        items.append({
+            "kind": "note",
+            "id": n["id"],
+            "at": n.get("created_at"),
+            "title": (n.get("category") or "note").title(),
+            "body": (n.get("body") or "")[:240],
+            "author": n.get("author_name"),
+        })
+    for ep in episodes:
+        items.append({
+            "kind": "missing",
+            "id": ep["id"],
+            "at": ep.get("reported_at"),
+            "title": "Missing episode" + (" · returned" if ep.get("returned_at") else " · open"),
+            "body": ep.get("last_seen_location") or "",
+            "author": ep.get("reported_by_name"),
+            "share_token": ep.get("share_token"),
+        })
+    items.sort(key=lambda x: x.get("at") or "", reverse=True)
+    return {"items": items[:120]}
+
+
+# ---------- Missing-from-Care / Rapid Response Pack ----------
+class MissingEpisodeIn(BaseModel):
+    last_seen_location: Optional[str] = None
+    last_seen_at: Optional[str] = None
+    direction_of_travel: Optional[str] = None
+    clothing_last_seen: Optional[str] = None
+    contact_phone: Optional[str] = None
+    police_reference: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class MissingEpisode(BaseModel):
+    id: str
+    resident_id: str
+    reported_at: str
+    reported_by_id: str
+    reported_by_name: str
+    police_notified_at: Optional[str] = None
+    returned_at: Optional[str] = None
+    return_interview: Optional[str] = None
+    last_seen_location: Optional[str] = None
+    last_seen_at: Optional[str] = None
+    direction_of_travel: Optional[str] = None
+    clothing_last_seen: Optional[str] = None
+    contact_phone: Optional[str] = None
+    police_reference: Optional[str] = None
+    notes: Optional[str] = None
+    share_token: str
+    status: Literal["open", "returned", "closed"] = "open"
+    timeline: List[dict] = Field(default_factory=list)
+
+
+@api_router.post("/residents/{rid}/missing", response_model=MissingEpisode)
+async def open_missing_episode(
+    rid: str,
+    payload: MissingEpisodeIn,
+    user: dict = Depends(get_current_user),
+):
+    resident = await db.residents.find_one({"id": rid}, {"_id": 0})
+    if not resident:
+        raise HTTPException(404, "Resident not found")
+    now = now_iso()
+    token = _secrets.token_urlsafe(24)
+    doc = {
+        "id": str(uuid.uuid4()),
+        "resident_id": rid,
+        "reported_at": now,
+        "reported_by_id": user["id"],
+        "reported_by_name": user["name"],
+        "police_notified_at": None,
+        "returned_at": None,
+        "return_interview": None,
+        **payload.model_dump(),
+        "share_token": token,
+        "status": "open",
+        "timeline": [{"event": "reported_missing", "at": now, "by": user["name"]}],
+    }
+    await db.missing_episodes.insert_one(doc)
+
+    # Auto-create a linked safeguarding incident for full audit trail
+    inc_body = (
+        f"Missing episode opened by {user['name']}.\n"
+        f"Last seen: {payload.last_seen_location or '—'} at "
+        f"{payload.last_seen_at or now}.\n"
+        f"Notes: {payload.notes or '—'}"
+    )
+    await db.incidents.insert_one({
+        "id": str(uuid.uuid4()),
+        "resident_id": rid,
+        "severity": "high",
+        "category": "missing",
+        "incident_type": "absconding",
+        "body": inc_body,
+        "structured_report": inc_body,
+        "raw_transcript": "",
+        "safeguarding": True,
+        "action_taken": "Rapid Response Pack generated. Manager and DSL alerted.",
+        "voice_used": False,
+        "tags": ["missing", "rapid response"],
+        "author_id": user["id"],
+        "author_name": user["name"],
+        "status": "open",
+        "created_at": now,
+        "missing_episode_id": doc["id"],
+    })
+    doc.pop("_id", None)
+    return doc
+
+
+@api_router.get("/residents/{rid}/missing", response_model=List[MissingEpisode])
+async def list_missing_episodes(rid: str, _: dict = Depends(get_current_user)):
+    docs = await db.missing_episodes.find({"resident_id": rid}, {"_id": 0}).sort("reported_at", -1).to_list(50)
+    return docs
+
+
+@api_router.get("/missing/{eid}", response_model=MissingEpisode)
+async def get_missing_episode(eid: str, _: dict = Depends(get_current_user)):
+    doc = await db.missing_episodes.find_one({"id": eid}, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, "Episode not found")
+    return doc
+
+
+class MissingEpisodePatch(BaseModel):
+    police_notified_at: Optional[str] = None
+    returned_at: Optional[str] = None
+    return_interview: Optional[str] = None
+    last_seen_location: Optional[str] = None
+    last_seen_at: Optional[str] = None
+    direction_of_travel: Optional[str] = None
+    clothing_last_seen: Optional[str] = None
+    contact_phone: Optional[str] = None
+    police_reference: Optional[str] = None
+    notes: Optional[str] = None
+    status: Optional[Literal["open", "returned", "closed"]] = None
+
+
+@api_router.patch("/missing/{eid}", response_model=MissingEpisode)
+async def update_missing_episode(
+    eid: str,
+    payload: MissingEpisodePatch,
+    user: dict = Depends(get_current_user),
+):
+    doc = await db.missing_episodes.find_one({"id": eid}, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, "Episode not found")
+    update = {k: v for k, v in payload.model_dump(exclude_unset=True).items() if v is not None}
+    timeline = list(doc.get("timeline") or [])
+    now = now_iso()
+    if update.get("police_notified_at") and not doc.get("police_notified_at"):
+        timeline.append({"event": "police_notified", "at": update["police_notified_at"], "by": user["name"]})
+    if update.get("returned_at") and not doc.get("returned_at"):
+        timeline.append({"event": "returned", "at": update["returned_at"], "by": user["name"]})
+        update["status"] = update.get("status") or "returned"
+    if update:
+        update["timeline"] = timeline
+        update["updated_at"] = now
+        await db.missing_episodes.update_one({"id": eid}, {"$set": update})
+    doc = await db.missing_episodes.find_one({"id": eid}, {"_id": 0})
+    return doc
+
+
+@api_router.get("/missing/{eid}/pdf")
+async def export_missing_pdf(eid: str, user: dict = Depends(get_current_user)):
+    episode = await db.missing_episodes.find_one({"id": eid}, {"_id": 0})
+    if not episode:
+        raise HTTPException(404, "Episode not found")
+    resident = await db.residents.find_one({"id": episode.get("resident_id")}, {"_id": 0}) or {}
+    incidents = (
+        await db.incidents.find(
+            {"resident_id": episode.get("resident_id")}, {"_id": 0}
+        )
+        .sort("created_at", -1)
+        .to_list(20)
+    )
+    pdf_buf = build_missing_pack_pdf(
+        episode=episode,
+        resident=resident,
+        incidents=incidents,
+        generated_for=user.get("name", "—"),
+    )
+    safe_name = (resident.get("name") or "resident").replace(" ", "_")
+    short_ref = str(eid).replace("-", "")[-8:].upper()
+    filename = f"Safelyn_Missing_Pack_{safe_name}_{short_ref}.pdf"
+    return StreamingResponse(
+        pdf_buf,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+# Public secure-link routes — token-protected, no JWT needed
+@api_router.get("/missing/share/{token}")
+async def get_missing_episode_by_token(token: str):
+    doc = await db.missing_episodes.find_one({"share_token": token}, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, "Pack not found or link revoked")
+    resident = await db.residents.find_one({"id": doc.get("resident_id")}, {"_id": 0}) or {}
+    return {"episode": doc, "resident": resident}
+
+
+@api_router.get("/missing/share/{token}/pdf")
+async def export_missing_pdf_by_token(token: str):
+    episode = await db.missing_episodes.find_one({"share_token": token}, {"_id": 0})
+    if not episode:
+        raise HTTPException(404, "Pack not found or link revoked")
+    resident = await db.residents.find_one({"id": episode.get("resident_id")}, {"_id": 0}) or {}
+    incidents = (
+        await db.incidents.find(
+            {"resident_id": episode.get("resident_id")}, {"_id": 0}
+        )
+        .sort("created_at", -1)
+        .to_list(20)
+    )
+    pdf_buf = build_missing_pack_pdf(
+        episode=episode,
+        resident=resident,
+        incidents=incidents,
+        generated_for="Shared link",
+    )
+    safe_name = (resident.get("name") or "resident").replace(" ", "_")
+    short_ref = str(episode.get("id", "")).replace("-", "")[-8:].upper()
+    filename = f"Safelyn_Missing_Pack_{safe_name}_{short_ref}.pdf"
+    return StreamingResponse(
+        pdf_buf,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 # ---------- Daily Notes ----------

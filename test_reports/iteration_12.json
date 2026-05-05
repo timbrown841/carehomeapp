@@ -1,0 +1,42 @@
+{
+  "summary": "Iteration 12 — Resident Profile (8-tab) + Safelyn Rapid Response Pack. Backend: 15/15 NEW tests pass (resident GET/PATCH, timeline, POST /residents/{id}/missing creates share_token + auto-linked safeguarding incident, PATCH /missing/{eid} police_notified/returned timeline events, GET /missing/{eid}/pdf returns valid PDF, public unauth GET /missing/share/{token} + /pdf both return 200). Frontend: login, residents list (4 cards with full-card Link), ResidentDetail with all 8 tabs working, risk-tab shows risk-pill-{level} chip + review-overdue-pill (Maddy 2026-02-26) + all 7 risk categories present, missing-pack button visible on header (replaced by active-missing-banner once an open episode exists). One minor testid gap on Residents.jsx list page risk pill.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "Residents.jsx list page",
+        "issue": "Risk pill on each card (HIGH/MED/LOW span) renders visually but lacks data-testid='risk-pill-{level}'. Spec said 'risk pills (HIGH/MED/LOW)' should be present. Currently only ResidentDetail.jsx has the testid (line 103). Add data-testid={`risk-pill-${(r.risk_level||'medium').toLowerCase()}`} to the span around line 92-97 of Residents.jsx so list-page tests can assert the pill.",
+        "selector": "[data-testid^=\"risk-pill-\"] inside [data-testid^=\"resident-card-\"]",
+        "priority": "LOW"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration12.py",
+    "/app/test_reports/pytest/iteration12_results.xml"
+  ],
+  "action_items": [
+    "Add data-testid='risk-pill-{level}' to risk pill span on Residents.jsx list cards (currently only on detail page)",
+    "Optional: when an open missing episode already exists, the page header swaps `open-missing-pack-btn` for `active-missing-banner` (a Link). Tests that always expect the open-button must first ensure no open episode exists for that resident, OR fall back to clicking active-missing-banner. This caused one of my Playwright sub-tests to time out — not a product bug, just a tester gotcha."
+  ],
+  "critical_code_review_comments": [
+    "ResidentDetail.jsx is 1106 lines — exceeds the 700-line guideline. Recommend splitting MissingPackModal, OverviewTab, RiskTab, MedicalTab, etc. into /components/resident/* in the next iteration.",
+    "Backend `_seed_demo_data_if_empty()` correctly auto-rebuilds when residents lack `legal_status` — verified after lifespan startup.",
+    "Public share routes /api/missing/share/{token} and /api/missing/share/{token}/pdf are correctly OUTSIDE auth dependency and return resident summary (incl. medical/emergency_contacts/known_locations) — verified via cookie-cleared request.",
+    "POST /api/residents/{rid}/missing correctly creates a linked safeguarding incident with category=missing, incident_type=absconding, safeguarding=True — appears in /timeline as kind='missing' alongside the incident.",
+    "PATCH /api/missing/{eid}: setting `returned_at` correctly auto-sets status='returned' and appends timeline event — verified.",
+    "renderRich() in /app/frontend/src/lib/markdown.js is now used in LogIncident.jsx for s.body and suggested_action, addressing iteration-11 raw-asterisk bug. Live AI verification was attempted but timed out at 60s in the test session; backend /incidents/structure unit test (test_structure_ok) passes and produces the expected '1) Summary\\n…' format that renderRich is designed to handle."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration12.py (new)"
+  ],
+  "success_rate": {"backend": "100% (15/15 iter-12 tests + previous suites still green)", "frontend": "~92% (login, residents-list, all 8 tabs, risk overdue pill, all 7 risk categories all verified). Live LogIncident markdown bold render not visually re-confirmed (AI timeout) but renderRich is correctly wired."},
+  "test_credentials": "manager@care.local/Manager@123, staff@care.local/Staff@123, admin@care.local/Admin@123 — all verified working",
+  "seed_data_creation": "Created one TEST_ missing episode for Maddy O'Brien via UI + several via API — these populate her timeline. Auto-reseed picked up legal_status field correctly on startup.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "1) When testing the missing-pack flow on Maddy via UI, first PATCH any existing open episode to status='returned' OR pick a different resident — otherwise the page header shows `active-missing-banner` instead of `open-missing-pack-btn`. 2) Public share URL pattern is /missing/share/{token} (frontend) backed by /api/missing/share/{token} (backend, no auth). I verified by clearing cookies+localStorage and visiting share_url — page rendered Maddy's summary without redirecting to /login. 3) Backend tests live at /app/backend/tests/test_iteration12.py — 15 tests, ~4s, can be re-run anytime. 4) The reseed logic clears notes/incidents/missing_episodes/etc. when residents lack legal_status — be aware this WILL wipe TEST_ data on first startup after schema change.",
+  "rca of the issue": "No bugs reproduced. Iteration-11 markdown bug appears resolved by introduction of renderRich() helper that walks tokens like `**bold**` and emits <strong> elements; LogIncident.jsx wraps both s.body and suggested_action through renderRich. Backend /incidents/structure response verified to contain '1)' through '6)' Ofsted sections in test_structure_ok."
+}

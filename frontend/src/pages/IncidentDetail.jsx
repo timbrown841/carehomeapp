@@ -4,6 +4,7 @@ import api, { formatApiError } from "@/lib/api";
 import { downloadIncidentPdf } from "@/lib/pdf";
 import { useAuth } from "@/context/AuthContext";
 import { formatFullTimestamp, recordRef } from "@/lib/format";
+import { renderRich } from "@/lib/markdown";
 import {
   ArrowLeft,
   Download,
@@ -230,7 +231,7 @@ export default function IncidentDetail() {
           className="text-sm text-stone-800 leading-relaxed whitespace-pre-wrap"
           data-testid="detail-structured-report"
         >
-          {incident.structured_report || incident.body}
+          {renderRich(incident.structured_report || incident.body)}
         </div>
       </section>
 

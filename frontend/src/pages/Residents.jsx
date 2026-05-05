@@ -1,9 +1,16 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import api, { formatApiError } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { personaColor, personaInitials } from "@/lib/persona";
-import { Plus, X, User, Loader2 } from "lucide-react";
+import { Plus, X, Loader2, ChevronRight, ShieldAlert } from "lucide-react";
 import { toast } from "sonner";
+
+const RISK_LABEL = {
+  high: { bg: "#B23A48", label: "HIGH" },
+  medium: { bg: "#D4A373", label: "MED" },
+  low: { bg: "#3A5A40", label: "LOW" },
+};
 
 export default function Residents() {
   const { user } = useAuth();
@@ -64,36 +71,60 @@ export default function Residents() {
         )}
         {list.map((r) => {
           const persona = personaColor(r.name);
+          const risk = RISK_LABEL[(r.risk_level || "medium").toLowerCase()] || RISK_LABEL.medium;
           return (
-          <div
+          <Link
             key={r.id}
+            to={`/residents/${r.id}`}
             data-testid={`resident-card-${r.id}`}
-            className="bg-white border-l-4 border-y border-r divider-soft rounded-2xl p-5 hover:shadow-sm transition-shadow"
+            className="group bg-white border-l-4 border-y border-r divider-soft rounded-2xl p-5 hover:shadow-md hover:-translate-y-0.5 transition-all block"
             style={{ borderLeftColor: persona.hex }}
           >
             <div className="flex items-start gap-4">
               <div
-                className="w-12 h-12 rounded-xl flex items-center justify-center font-display font-bold text-base"
+                className="w-12 h-12 rounded-xl flex items-center justify-center font-display font-bold text-base shrink-0"
                 style={{ background: persona.soft, color: persona.on }}
               >
                 {personaInitials(r.name)}
               </div>
               <div className="flex-1 min-w-0">
-                <div className="font-display font-bold text-lg text-stone-900 truncate">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span
+                    className="text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded-full text-white"
+                    style={{ background: risk.bg }}
+                  >
+                    {risk.label}
+                  </span>
+                  {r.legal_status && (
+                    <span className="text-[9px] font-bold uppercase tracking-wider text-stone-500 truncate">
+                      {r.legal_status}
+                    </span>
+                  )}
+                </div>
+                <div className="font-display font-bold text-lg text-stone-900 truncate mt-0.5 group-hover:text-[#1E4D5C] transition-colors">
                   {r.name}
                 </div>
                 <div className="text-xs text-stone-500 space-x-2">
-                  {r.room && <span>Room {r.room}</span>}
+                  {r.preferred_name && r.preferred_name !== r.name && (
+                    <span>"{r.preferred_name}"</span>
+                  )}
                   {r.dob && <span>· DOB {r.dob}</span>}
                 </div>
               </div>
+              <ChevronRight
+                size={16}
+                className="text-stone-300 group-hover:text-[#1E4D5C] transition-colors mt-1 shrink-0"
+              />
             </div>
-            {r.notes && (
-              <p className="text-sm text-stone-700 mt-4 leading-relaxed line-clamp-3">
-                {r.notes}
+            {(r.placement_summary || r.notes) && (
+              <p className="text-sm text-stone-700 mt-4 leading-relaxed line-clamp-2">
+                {r.placement_summary || r.notes}
               </p>
             )}
-          </div>
+            <div className="text-[10px] uppercase tracking-wider text-stone-400 mt-3 inline-flex items-center gap-1">
+              <ShieldAlert size={11} /> Open profile · risk · missing pack
+            </div>
+          </Link>
         );})}
       </div>
 
