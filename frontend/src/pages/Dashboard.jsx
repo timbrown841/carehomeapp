@@ -222,7 +222,7 @@ export default function Dashboard() {
             </div>
             <div
               data-testid="hero-cta-button"
-              className="bg-[#B23A48] group-hover:bg-[#962F3B] rounded-2xl pl-4 pr-5 py-3 flex items-center gap-2.5 shadow-lg shadow-[#B23A48]/30 transition-colors w-full sm:w-auto justify-center"
+              className="hidden lg:flex bg-[#B23A48] group-hover:bg-[#962F3B] rounded-2xl pl-4 pr-5 py-3 items-center gap-2.5 shadow-lg shadow-[#B23A48]/30 transition-colors"
             >
               <Mic size={20} />
               <div className="flex flex-col items-start">
