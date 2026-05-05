@@ -11,6 +11,7 @@ import {
   UserCog,
   ClipboardCheck,
   BadgeCheck,
+  Pill,
   LogOut,
 } from "lucide-react";
 
@@ -19,6 +20,7 @@ const links = [
   { to: "/residents", label: "Residents", icon: Users, testid: "nav-residents" },
   { to: "/notes", label: "Daily Notes", icon: NotebookPen, testid: "nav-notes" },
   { to: "/incidents", label: "Incidents", icon: ShieldAlert, testid: "nav-incidents" },
+  { to: "/medications", label: "Medications", icon: Pill, testid: "nav-medications" },
   { to: "/staff", label: "Staff Management", icon: UserCog, testid: "nav-staff" },
   {
     to: "/supervisions",

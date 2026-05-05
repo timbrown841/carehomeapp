@@ -4,6 +4,8 @@ import api, { formatApiError, API } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { personaColor, personaInitials } from "@/lib/persona";
 import { formatFullTimestamp } from "@/lib/format";
+import MedicationsTab from "@/components/resident/MedicationsTab";
+import BodyMapsTab from "@/components/resident/BodyMapsTab";
 import {
   ArrowLeft,
   AlertTriangle,
@@ -32,6 +34,8 @@ const TABS = [
   { id: "care", label: "Care Plan" },
   { id: "missing", label: "Missing / Philomena" },
   { id: "medical", label: "Medical & Medication" },
+  { id: "medications", label: "MAR / Meds" },
+  { id: "bodymaps", label: "Body Maps" },
   { id: "documents", label: "Documents" },
   { id: "timeline", label: "Timeline" },
 ];
@@ -301,6 +305,8 @@ export default function ResidentDetail() {
           />
         )}
         {tab === "medical" && <MedicalTab resident={resident} />}
+        {tab === "medications" && <MedicationsTab resident={resident} />}
+        {tab === "bodymaps" && <BodyMapsTab resident={resident} />}
         {tab === "documents" && <DocumentsTab resident={resident} />}
         {tab === "timeline" && <TimelineTab items={timeline} />}
       </section>

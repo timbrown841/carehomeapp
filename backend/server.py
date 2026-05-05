@@ -26,6 +26,7 @@ from contextlib import asynccontextmanager
 
 from pdf_builder import build_incident_pdf, build_report_pdf
 from missing_pack_pdf import build_missing_pack_pdf
+from mar_pdf import build_mar_pdf
 from notifications_service import send_email, send_sms, recipient_for
 import secrets as _secrets
 
@@ -57,6 +58,10 @@ async def lifespan(_app: FastAPI):
     await db.login_attempts.create_index("email")
     await db.missing_episodes.create_index([("resident_id", 1), ("reported_at", -1)])
     await db.missing_episodes.create_index("share_token", unique=True, sparse=True)
+    await db.medications.create_index([("resident_id", 1), ("active", -1)])
+    await db.medication_admins.create_index([("medication_id", 1), ("scheduled_at", -1)])
+    await db.medication_admins.create_index([("resident_id", 1), ("scheduled_at", -1)])
+    await db.body_maps.create_index([("resident_id", 1), ("recorded_at", -1)])
 
     admin_email = os.environ.get("ADMIN_EMAIL", "admin@care.local").lower()
     admin_password = os.environ.get("ADMIN_PASSWORD", "Admin@123")
@@ -108,7 +113,13 @@ async def _seed_demo_data_if_empty():
     # If any resident is missing the rich profile fields (e.g. legal_status),
     # treat data as stale demo data and rebuild.
     sample = await db.residents.find_one({}, {"_id": 0, "legal_status": 1})
-    if (await db.residents.count_documents({}) > 0) and sample and sample.get("legal_status"):
+    fully_seeded = (await db.residents.count_documents({}) > 0) and sample and sample.get("legal_status")
+    has_meds = await db.medications.count_documents({}) > 0
+    if fully_seeded and has_meds:
+        return
+    if fully_seeded and not has_meds:
+        # Profiles exist but new modules missing — top up only.
+        await _seed_meds_and_bodymaps()
         return
     if await db.residents.count_documents({}) > 0:
         logger.info("Stale demo residents detected — clearing care collections to reseed full profiles.")
@@ -119,6 +130,9 @@ async def _seed_demo_data_if_empty():
         await db.supervisions.delete_many({})
         await db.reports.delete_many({})
         await db.notifications.delete_many({})
+        await db.medications.delete_many({})
+        await db.medication_admins.delete_many({})
+        await db.body_maps.delete_many({})
     logger.info("Seeding demo data…")
 
     staff_user = await db.users.find_one({"email": "staff@care.local"})
@@ -555,7 +569,146 @@ async def _seed_demo_data_if_empty():
             }
         )
 
+    # ---- Medications & Body Maps ----
+    await _seed_meds_and_bodymaps()
+
     logger.info("Demo data seeded.")
+
+
+async def _seed_meds_and_bodymaps():
+    """Idempotent top-up of medications/body_maps for an existing residents set."""
+    if (await db.medications.count_documents({}) > 0) and (await db.body_maps.count_documents({}) > 0):
+        return
+    residents = await db.residents.find({}, {"_id": 0, "id": 1, "name": 1}).to_list(500)
+    if not residents:
+        return
+    res_by_name = {r["name"]: r["id"] for r in residents}
+    staff_user = await db.users.find_one({"email": "staff@care.local"})
+    manager_user = await db.users.find_one({"email": "manager@care.local"})
+    if not (staff_user and manager_user):
+        return
+    now = datetime.now(timezone.utc)
+
+    med_seed = [
+        {
+            "name": "Jordan Reilly",
+            "med": "Salbutamol Inhaler",
+            "dose": "100mcg, 2 puffs",
+            "route": "Inhaled",
+            "schedule_times": ["08:00", "20:00"],
+            "is_prn": False,
+            "instructions": "Use spacer. Rinse mouth after.",
+            "prescriber": "Dr A. Roberts",
+            "allergy_warning": "Peanut allergy on file.",
+        },
+        {
+            "name": "Jordan Reilly",
+            "med": "Antihistamine",
+            "dose": "10mg",
+            "route": "Oral",
+            "schedule_times": [],
+            "is_prn": True,
+            "indication": "Allergic reaction to peanuts",
+            "instructions": "PRN — give if known peanut exposure or reaction symptoms.",
+            "prescriber": "Dr A. Roberts",
+            "allergy_warning": "PEANUT ALLERGY — administer with EpiPen if anaphylaxis.",
+        },
+        {
+            "name": "Aisha Khan",
+            "med": "Sertraline",
+            "dose": "50mg",
+            "route": "Oral",
+            "schedule_times": ["08:00"],
+            "is_prn": False,
+            "instructions": "Take with food.",
+            "prescriber": "CAMHS — Dr Patel",
+            "requires_witness": True,
+        },
+        {
+            "name": "Maddy O'Brien",
+            "med": "Microgynon 30",
+            "dose": "1 tablet",
+            "route": "Oral",
+            "schedule_times": ["08:00"],
+            "is_prn": False,
+            "instructions": "Combined contraceptive — take same time daily.",
+            "prescriber": "Dr A. Roberts",
+        },
+    ]
+    med_docs_by_resident = {}
+    if await db.medications.count_documents({}) == 0:
+        for ms in med_seed:
+            rid = res_by_name.get(ms["name"])
+            if not rid:
+                continue
+            doc = {
+                "id": str(uuid.uuid4()),
+                "resident_id": rid,
+                "name": ms["med"],
+                "dose": ms["dose"],
+                "route": ms.get("route", "Oral"),
+                "schedule_times": ms.get("schedule_times", []),
+                "is_prn": ms.get("is_prn", False),
+                "indication": ms.get("indication"),
+                "instructions": ms.get("instructions"),
+                "prescriber": ms.get("prescriber"),
+                "start_date": (now - timedelta(days=120)).date().isoformat(),
+                "end_date": None,
+                "expiry_date": (now + timedelta(days=180)).date().isoformat(),
+                "allergy_warning": ms.get("allergy_warning"),
+                "requires_witness": ms.get("requires_witness", False),
+                "active": True,
+                "created_at": (now - timedelta(days=120)).isoformat(),
+                "created_by_name": manager_user["name"],
+            }
+            await db.medications.insert_one(doc)
+            med_docs_by_resident.setdefault(rid, []).append(doc)
+        # Seed yesterday's morning dose for each non-PRN
+        yday = (now - timedelta(days=1)).replace(hour=8, minute=0, second=0, microsecond=0)
+        for rid, meds_list in med_docs_by_resident.items():
+            for m in meds_list:
+                if m["is_prn"]:
+                    continue
+                for t in (m.get("schedule_times") or [])[:1]:
+                    hh, mm = t.split(":")
+                    sched = yday.replace(hour=int(hh), minute=int(mm))
+                    await db.medication_admins.insert_one({
+                        "id": str(uuid.uuid4()),
+                        "medication_id": m["id"],
+                        "resident_id": rid,
+                        "scheduled_at": sched.isoformat(),
+                        "status": "given",
+                        "notes": None,
+                        "dose_given": m["dose"],
+                        "administered_at": (sched + timedelta(minutes=4)).isoformat(),
+                        "administered_by_id": staff_user["id"],
+                        "administered_by_name": staff_user["name"],
+                        "witness_id": None,
+                        "witness_name": None,
+                    })
+
+    if await db.body_maps.count_documents({}) == 0:
+        leo_id = res_by_name.get("Leo Martinez")
+        if leo_id:
+            await db.body_maps.insert_one({
+                "id": str(uuid.uuid4()),
+                "resident_id": leo_id,
+                "incident_id": None,
+                "notes": "Minor scrape from cycling. Self-disclosed; no concern.",
+                "marks": [{
+                    "side": "front",
+                    "region": "Right knee",
+                    "x": 0.55,
+                    "y": 0.72,
+                    "type": "scratch",
+                    "severity": "minor",
+                    "description": "Graze approx 2cm. Cleaned, plaster applied.",
+                    "healing_notes": "Healing well after 2 days.",
+                }],
+                "recorded_at": (now - timedelta(days=2)).isoformat(),
+                "recorded_by_id": staff_user["id"],
+                "recorded_by_name": staff_user["name"],
+            })
 
 app = FastAPI(title="Care Companion API", lifespan=lifespan)
 api_router = APIRouter(prefix="/api")
@@ -1649,6 +1802,515 @@ async def export_report_pdf(rid: str, user: dict = Depends(require_role("manager
             "Cache-Control": "no-store",
         },
     )
+
+
+# ---------- Medication / MAR ----------
+class MedicationIn(BaseModel):
+    name: str
+    dose: str
+    route: Optional[str] = "Oral"
+    schedule_times: List[str] = Field(default_factory=list)  # ["08:00","20:00"]
+    is_prn: bool = False
+    indication: Optional[str] = None  # for PRN
+    instructions: Optional[str] = None
+    prescriber: Optional[str] = None
+    start_date: Optional[str] = None  # YYYY-MM-DD
+    end_date: Optional[str] = None
+    expiry_date: Optional[str] = None
+    allergy_warning: Optional[str] = None
+    requires_witness: bool = False
+    active: bool = True
+
+
+class Medication(MedicationIn):
+    id: str
+    resident_id: str
+    created_at: str
+    created_by_name: Optional[str] = None
+
+
+class MedicationAdminIn(BaseModel):
+    medication_id: str
+    scheduled_at: str  # ISO datetime
+    status: Literal["given", "refused", "missed", "withheld", "self-administered", "not-required"] = "given"
+    notes: Optional[str] = None
+    dose_given: Optional[str] = None
+    witness_id: Optional[str] = None
+    witness_name: Optional[str] = None
+
+
+class MedicationAdmin(BaseModel):
+    id: str
+    medication_id: str
+    resident_id: str
+    scheduled_at: str
+    status: str
+    notes: Optional[str] = None
+    dose_given: Optional[str] = None
+    administered_at: str
+    administered_by_id: str
+    administered_by_name: str
+    witness_id: Optional[str] = None
+    witness_name: Optional[str] = None
+
+
+@api_router.get("/residents/{rid}/medications", response_model=List[Medication])
+async def list_medications(
+    rid: str, active_only: bool = True, _: dict = Depends(get_current_user)
+):
+    q: dict = {"resident_id": rid}
+    if active_only:
+        q["active"] = True
+    docs = await db.medications.find(q, {"_id": 0}).sort("created_at", -1).to_list(200)
+    return docs
+
+
+@api_router.post("/residents/{rid}/medications", response_model=Medication)
+async def create_medication(
+    rid: str,
+    payload: MedicationIn,
+    user: dict = Depends(require_role("manager", "admin")),
+):
+    resident = await db.residents.find_one({"id": rid}, {"_id": 0, "id": 1})
+    if not resident:
+        raise HTTPException(404, "Resident not found")
+    doc = {
+        **payload.model_dump(),
+        "id": str(uuid.uuid4()),
+        "resident_id": rid,
+        "created_at": now_iso(),
+        "created_by_name": user["name"],
+    }
+    await db.medications.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api_router.patch("/medications/{mid}", response_model=Medication)
+async def update_medication(
+    mid: str,
+    payload: MedicationIn,
+    _: dict = Depends(require_role("manager", "admin")),
+):
+    update = payload.model_dump()
+    res = await db.medications.update_one({"id": mid}, {"$set": update})
+    if res.matched_count == 0:
+        raise HTTPException(404, "Medication not found")
+    doc = await db.medications.find_one({"id": mid}, {"_id": 0})
+    return doc
+
+
+@api_router.delete("/medications/{mid}")
+async def delete_medication(mid: str, _: dict = Depends(require_role("manager", "admin"))):
+    # Soft-delete: mark inactive to keep audit trail
+    await db.medications.update_one({"id": mid}, {"$set": {"active": False}})
+    return {"deleted": 1}
+
+
+@api_router.post("/medications/{mid}/administer", response_model=MedicationAdmin)
+async def administer_medication(
+    mid: str,
+    payload: MedicationAdminIn,
+    user: dict = Depends(get_current_user),
+):
+    med = await db.medications.find_one({"id": mid}, {"_id": 0})
+    if not med:
+        raise HTTPException(404, "Medication not found")
+    if med.get("requires_witness") and not payload.witness_id:
+        raise HTTPException(400, "This medication requires a witness signature")
+    doc = {
+        "id": str(uuid.uuid4()),
+        "medication_id": mid,
+        "resident_id": med["resident_id"],
+        "scheduled_at": payload.scheduled_at,
+        "status": payload.status,
+        "notes": payload.notes,
+        "dose_given": payload.dose_given or med.get("dose"),
+        "administered_at": now_iso(),
+        "administered_by_id": user["id"],
+        "administered_by_name": user["name"],
+        "witness_id": payload.witness_id,
+        "witness_name": payload.witness_name,
+    }
+    await db.medication_admins.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+def _date_range(date_str: Optional[str]) -> tuple:
+    """Returns (start_iso, end_iso) for a single YYYY-MM-DD day, UTC."""
+    if not date_str:
+        target = datetime.now(timezone.utc).date()
+    else:
+        target = datetime.strptime(date_str, "%Y-%m-%d").date()
+    start = datetime(target.year, target.month, target.day, tzinfo=timezone.utc)
+    end = start + timedelta(days=1)
+    return start.isoformat(), end.isoformat()
+
+
+@api_router.get("/residents/{rid}/mar")
+async def get_mar(
+    rid: str,
+    date: Optional[str] = None,
+    _: dict = Depends(get_current_user),
+):
+    """Return scheduled doses for a single day with admin records merged."""
+    start_iso, end_iso = _date_range(date)
+    target_date = (date or datetime.now(timezone.utc).strftime("%Y-%m-%d"))
+    meds = await db.medications.find(
+        {"resident_id": rid, "active": True}, {"_id": 0}
+    ).sort("name", 1).to_list(200)
+    admins = await db.medication_admins.find(
+        {"resident_id": rid, "scheduled_at": {"$gte": start_iso, "$lt": end_iso}},
+        {"_id": 0},
+    ).to_list(500)
+    by_med: dict = {}
+    for a in admins:
+        by_med.setdefault(a["medication_id"], []).append(a)
+
+    schedule = []
+    for m in meds:
+        if m.get("is_prn"):
+            # PRN: list all PRN admins for the day under one "row"
+            admins_today = by_med.get(m["id"], [])
+            schedule.append({
+                "medication": m,
+                "kind": "prn",
+                "scheduled_at": None,
+                "admin": None,
+                "prn_admins": admins_today,
+            })
+            continue
+        for t in m.get("schedule_times", []) or []:
+            try:
+                hh, mm = t.split(":")
+                sched_dt = datetime.fromisoformat(start_iso).replace(hour=int(hh), minute=int(mm))
+                sched_iso = sched_dt.isoformat()
+            except Exception:
+                continue
+            admin = next(
+                (a for a in by_med.get(m["id"], []) if a.get("scheduled_at") == sched_iso),
+                None,
+            )
+            schedule.append({
+                "medication": m,
+                "kind": "scheduled",
+                "scheduled_at": sched_iso,
+                "admin": admin,
+                "prn_admins": [],
+            })
+    schedule.sort(key=lambda r: r.get("scheduled_at") or "z")
+    return {"date": target_date, "items": schedule}
+
+
+@api_router.get("/medications/round")
+async def medication_round(
+    date: Optional[str] = None,
+    _: dict = Depends(get_current_user),
+):
+    """Cross-home medication round — every scheduled dose for the day,
+    grouped by time slot, across all residents."""
+    start_iso, end_iso = _date_range(date)
+    target_date = (date or datetime.now(timezone.utc).strftime("%Y-%m-%d"))
+    residents = await db.residents.find({}, {"_id": 0, "id": 1, "name": 1}).to_list(500)
+    name_map = {r["id"]: r["name"] for r in residents}
+    meds = await db.medications.find(
+        {"active": True, "is_prn": False}, {"_id": 0}
+    ).to_list(500)
+    admins = await db.medication_admins.find(
+        {"scheduled_at": {"$gte": start_iso, "$lt": end_iso}}, {"_id": 0}
+    ).to_list(2000)
+    admin_key = {(a["medication_id"], a["scheduled_at"]): a for a in admins}
+
+    rows = []
+    for m in meds:
+        if m["resident_id"] not in name_map:
+            continue
+        for t in m.get("schedule_times", []) or []:
+            try:
+                hh, mm = t.split(":")
+                sched_dt = datetime.fromisoformat(start_iso).replace(hour=int(hh), minute=int(mm))
+                sched_iso = sched_dt.isoformat()
+            except Exception:
+                continue
+            rows.append({
+                "scheduled_at": sched_iso,
+                "time": t,
+                "resident_id": m["resident_id"],
+                "resident_name": name_map.get(m["resident_id"], "—"),
+                "medication": m,
+                "admin": admin_key.get((m["id"], sched_iso)),
+            })
+    rows.sort(key=lambda r: (r["time"], r["resident_name"]))
+    return {"date": target_date, "items": rows}
+
+
+@api_router.get("/residents/{rid}/mar/pdf")
+async def export_mar_pdf(
+    rid: str,
+    from_date: str,
+    to_date: str,
+    user: dict = Depends(get_current_user),
+):
+    """Weekly MAR chart PDF for a resident."""
+    resident = await db.residents.find_one({"id": rid}, {"_id": 0})
+    if not resident:
+        raise HTTPException(404, "Resident not found")
+    meds = await db.medications.find(
+        {"resident_id": rid, "active": True}, {"_id": 0}
+    ).sort("name", 1).to_list(200)
+    admins = await db.medication_admins.find(
+        {"resident_id": rid, "scheduled_at": {"$gte": from_date + "T00:00:00", "$lte": to_date + "T23:59:59"}},
+        {"_id": 0},
+    ).to_list(2000)
+    pdf_buf = build_mar_pdf(
+        resident=resident,
+        medications=meds,
+        admins=admins,
+        from_date=from_date,
+        to_date=to_date,
+        generated_for=user.get("name", "—"),
+    )
+    safe_name = (resident.get("name") or "resident").replace(" ", "_")
+    filename = f"Safelyn_MAR_{safe_name}_{from_date}_{to_date}.pdf"
+    return StreamingResponse(
+        pdf_buf,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+# ---------- Body Maps & Injuries ----------
+class BodyMark(BaseModel):
+    side: Literal["front", "back"] = "front"
+    region: Optional[str] = None  # human-readable area, e.g. "Left forearm"
+    x: float  # 0..1 SVG-relative
+    y: float  # 0..1
+    type: Literal["bruise", "cut", "scratch", "burn", "swelling", "rash", "other"] = "other"
+    severity: Literal["minor", "moderate", "significant"] = "minor"
+    description: Optional[str] = None
+    healing_notes: Optional[str] = None
+
+
+class BodyMapIn(BaseModel):
+    incident_id: Optional[str] = None
+    notes: Optional[str] = None
+    marks: List[BodyMark] = Field(default_factory=list)
+
+
+class BodyMap(BodyMapIn):
+    id: str
+    resident_id: str
+    recorded_at: str
+    recorded_by_id: str
+    recorded_by_name: str
+
+
+@api_router.get("/residents/{rid}/bodymaps", response_model=List[BodyMap])
+async def list_body_maps(rid: str, _: dict = Depends(get_current_user)):
+    docs = await db.body_maps.find({"resident_id": rid}, {"_id": 0}).sort("recorded_at", -1).to_list(100)
+    return docs
+
+
+@api_router.post("/residents/{rid}/bodymaps", response_model=BodyMap)
+async def create_body_map(
+    rid: str,
+    payload: BodyMapIn,
+    user: dict = Depends(get_current_user),
+):
+    resident = await db.residents.find_one({"id": rid}, {"_id": 0, "id": 1})
+    if not resident:
+        raise HTTPException(404, "Resident not found")
+    doc = {
+        **payload.model_dump(),
+        "id": str(uuid.uuid4()),
+        "resident_id": rid,
+        "recorded_at": now_iso(),
+        "recorded_by_id": user["id"],
+        "recorded_by_name": user["name"],
+    }
+    await db.body_maps.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api_router.patch("/bodymaps/{bid}", response_model=BodyMap)
+async def update_body_map(
+    bid: str,
+    payload: BodyMapIn,
+    _: dict = Depends(get_current_user),
+):
+    update = payload.model_dump()
+    res = await db.body_maps.update_one({"id": bid}, {"$set": update})
+    if res.matched_count == 0:
+        raise HTTPException(404, "Body map not found")
+    doc = await db.body_maps.find_one({"id": bid}, {"_id": 0})
+    return doc
+
+
+@api_router.delete("/bodymaps/{bid}")
+async def delete_body_map(bid: str, _: dict = Depends(require_role("manager", "admin"))):
+    res = await db.body_maps.delete_one({"id": bid})
+    return {"deleted": res.deleted_count}
+
+
+# ---------- Ofsted Readiness Score ----------
+@api_router.get("/ofsted/readiness")
+async def ofsted_readiness(_: dict = Depends(get_current_user)):
+    """Aggregate, real-time Ofsted compliance scorecard.
+    Each section returns: score (0-100), label, items (list of human details)."""
+    now = datetime.now(timezone.utc)
+    today = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    today_iso = today.isoformat()
+    yesterday_iso = (now - timedelta(hours=24)).isoformat()
+    week_iso = (now - timedelta(days=7)).isoformat()
+
+    # 1) Medication — % scheduled doses signed in the last 24h
+    med_active = await db.medications.find(
+        {"active": True, "is_prn": False}, {"_id": 0}
+    ).to_list(500)
+    expected_doses = 0
+    signed_doses = 0
+    med_items = []
+    for m in med_active:
+        for t in m.get("schedule_times", []) or []:
+            try:
+                hh, mm = t.split(":")
+                sched_dt = today.replace(hour=int(hh), minute=int(mm))
+                if sched_dt > now:
+                    continue  # not yet due
+                expected_doses += 1
+                sched_iso = sched_dt.isoformat()
+                rec = await db.medication_admins.find_one(
+                    {"medication_id": m["id"], "scheduled_at": sched_iso}, {"_id": 0}
+                )
+                if rec and rec.get("status") in ("given", "refused", "self-administered", "withheld"):
+                    signed_doses += 1
+                else:
+                    med_items.append({
+                        "label": f"{m['name']} {m['dose']} · {t}",
+                        "resident_id": m["resident_id"],
+                    })
+            except Exception:
+                continue
+    med_score = 100 if expected_doses == 0 else round(signed_doses * 100.0 / expected_doses)
+
+    # 2) Risk reviews — % residents with non-overdue review
+    residents = await db.residents.find({}, {"_id": 0}).to_list(500)
+    today_date = now.date().isoformat()
+    rr_overdue = []
+    for r in residents:
+        nxt = r.get("risk_next_review") or ""
+        if not nxt or nxt < today_date:
+            rr_overdue.append({"label": r.get("name", "—"), "resident_id": r["id"], "due": nxt or "Not set"})
+    rr_score = 100 if not residents else round((len(residents) - len(rr_overdue)) * 100.0 / len(residents))
+
+    # 3) Daily notes — % residents with at least one note in last 24h
+    notes_missing = []
+    for r in residents:
+        rec = await db.notes.find_one({"resident_id": r["id"], "created_at": {"$gte": yesterday_iso}})
+        if not rec:
+            notes_missing.append({"label": r.get("name", "—"), "resident_id": r["id"]})
+    notes_score = 100 if not residents else round((len(residents) - len(notes_missing)) * 100.0 / len(residents))
+
+    # 4) Supervisions — % staff supervised in last 30 days
+    staff_users = await db.users.find(
+        {"role": {"$in": ["staff", "manager"]}}, {"_id": 0, "id": 1, "name": 1}
+    ).to_list(500)
+    sup_cutoff = (now - timedelta(days=30)).date().isoformat()
+    sup_overdue = []
+    for u in staff_users:
+        last = await db.supervisions.find_one(
+            {"staff_id": u["id"], "kind": "supervision"}, sort=[("completed_at", -1)]
+        )
+        if not last or (last.get("completed_at") or "") < sup_cutoff:
+            sup_overdue.append({"label": u.get("name", "—"), "staff_id": u["id"]})
+    sup_score = 100 if not staff_users else round((len(staff_users) - len(sup_overdue)) * 100.0 / len(staff_users))
+
+    # 5) Safeguarding — open safeguarding incidents > 48h old (target = 0)
+    sg_overdue_cutoff = (now - timedelta(hours=48)).isoformat()
+    sg_old = await db.incidents.find(
+        {"safeguarding": True, "status": "open", "created_at": {"$lt": sg_overdue_cutoff}},
+        {"_id": 0, "id": 1, "resident_id": 1, "created_at": 1},
+    ).to_list(50)
+    sg_score = 100 if not sg_old else max(0, 100 - len(sg_old) * 25)
+
+    # 6) Missing-from-care — episodes still open (target = 0)
+    open_missing = await db.missing_episodes.find(
+        {"returned_at": None}, {"_id": 0, "id": 1, "resident_id": 1, "reported_at": 1}
+    ).to_list(50)
+    missing_score = 100 if not open_missing else max(0, 100 - len(open_missing) * 50)
+
+    sections = [
+        {
+            "id": "medication",
+            "title": "Medication (MAR)",
+            "score": med_score,
+            "summary": f"{signed_doses}/{expected_doses} doses signed today",
+            "items": med_items[:10],
+            "fix_link": "/medications",
+        },
+        {
+            "id": "risk_reviews",
+            "title": "Risk reviews",
+            "score": rr_score,
+            "summary": f"{len(rr_overdue)} overdue / {len(residents)} residents",
+            "items": rr_overdue[:10],
+            "fix_link": "/residents",
+        },
+        {
+            "id": "daily_notes",
+            "title": "Daily notes (24h)",
+            "score": notes_score,
+            "summary": f"{len(notes_missing)} residents without note in 24h",
+            "items": notes_missing[:10],
+            "fix_link": "/notes",
+        },
+        {
+            "id": "supervisions",
+            "title": "Staff supervisions (30d)",
+            "score": sup_score,
+            "summary": f"{len(sup_overdue)} staff overdue / {len(staff_users)}",
+            "items": sup_overdue[:10],
+            "fix_link": "/supervisions",
+        },
+        {
+            "id": "safeguarding",
+            "title": "Safeguarding open >48h",
+            "score": sg_score,
+            "summary": f"{len(sg_old)} incidents open >48h",
+            "items": [{"label": f"Incident {i.get('id','')[:8].upper()}", "incident_id": i.get("id")} for i in sg_old][:10],
+            "fix_link": "/incidents",
+        },
+        {
+            "id": "missing",
+            "title": "Open missing episodes",
+            "score": missing_score,
+            "summary": f"{len(open_missing)} child(ren) currently missing",
+            "items": [],
+            "fix_link": "/residents",
+        },
+    ]
+
+    overall = round(sum(s["score"] for s in sections) / len(sections))
+    if overall >= 90:
+        rating = {"label": "Outstanding", "tone": "green"}
+    elif overall >= 75:
+        rating = {"label": "Good", "tone": "green"}
+    elif overall >= 60:
+        rating = {"label": "Requires improvement", "tone": "amber"}
+    else:
+        rating = {"label": "Inadequate", "tone": "red"}
+
+    return {
+        "overall": overall,
+        "rating": rating,
+        "generated_at": now_iso(),
+        "sections": sections,
+    }
 
 
 # ---------- Notifications ----------

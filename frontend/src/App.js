@@ -2,7 +2,7 @@ import "@/App.css";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
 import { Toaster } from "@/components/ui/sonner";
-import { UserCog, ClipboardCheck, BadgeCheck } from "lucide-react";
+import { UserCog } from "lucide-react";
 
 import Layout from "@/components/Layout";
 import Login from "@/pages/Login";
@@ -17,6 +17,8 @@ import Reports from "@/pages/Reports";
 import Supervisions from "@/pages/Supervisions";
 import ComingSoon from "@/pages/ComingSoon";
 import MissingShare from "@/pages/MissingShare";
+import MedicationRound from "@/pages/MedicationRound";
+import OfstedReadiness from "@/pages/OfstedReadiness";
 
 function Protected({ children }) {
   const { user, loading } = useAuth();
@@ -69,20 +71,9 @@ function App() {
                   />
                 }
               />
-              <Route
-                path="/supervisions"
-                element={<Supervisions />}
-              />
-              <Route
-                path="/ofsted"
-                element={
-                  <ComingSoon
-                    title="Ofsted Readiness"
-                    description="Inspection-ready checklist, evidence library, and compliance scoring."
-                    icon={BadgeCheck}
-                  />
-                }
-              />
+              <Route path="/supervisions" element={<Supervisions />} />
+              <Route path="/medications" element={<MedicationRound />} />
+              <Route path="/ofsted" element={<OfstedReadiness />} />
               <Route
                 path="/reports"
                 element={

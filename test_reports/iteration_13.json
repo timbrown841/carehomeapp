@@ -1,0 +1,43 @@
+{
+  "summary": "Iteration 13 testing: Medications/MAR, Body Maps, and Ofsted Readiness modules. Backend: 15/15 pytest tests passed (after fixing one MAR PDF rendering bug). Frontend: all critical selectors present, login + nav + Ofsted page (overall=29 INADEQUATE as expected) + Medication round + resident Medications tab + resident Body Maps tab on Leo (existing seed mark visible, click-to-mark workflow opens mark editor) all working.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/medications/round?date=...", "issue": "Returns rows without filtering out witness-required meds for staff; UI uses sign-given without witness which then 400s. Not a backend bug per se - frontend should prompt for witness on Sertraline rows, or backend round response could include 'requires_witness' so UI can branch."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "MedicationRound", "issue": "Clicking sign-given on Sertraline row (witness-required) triggers backend 400 but UI does not surface a witness-picker or error toast. round-status pill never appears. Suggest gating the button or opening a witness modal.", "selector": "[data-testid^='sign-given-']", "priority": "MEDIUM"},
+      {"component": "ResidentDetail / BodyMaps tab on Maddy", "issue": "After opening + Esc-closing Add Medication modal then clicking tab-bodymaps, bodymaps-content count=0. Tab switch may be stuck or depend on modal teardown. On Leo (no prior modal) the same selector works. Possibly modal overlay still trapping clicks. Worth verifying.", "selector": "[data-testid='tab-bodymaps']", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration13.py",
+    "/app/test_reports/pytest/iteration13_results.xml"
+  ],
+  "action_items": [
+    "(REVIEW FIX I APPLIED) /app/backend/mar_pdf.py line 248: STATUS_COLOR.hexval()[2:] returned 'RRGGBB' without '#', causing reportlab to throw 'Invalid color value' for any MAR PDF that includes an admin record. Added '#' prefix. MAR PDF now returns 200 + %PDF-1.4.",
+    "Frontend Medication Round: when user clicks sign-given on a witness-required med, prompt for witness selection rather than silent 400.",
+    "Frontend ResidentDetail: ensure modal close via Escape fully tears down before next tab click — Body Maps tab did not load after Add-Medication modal close on Maddy in Playwright."
+  ],
+  "critical_code_review_comments": [
+    "mar_pdf.py used hexval()[2:] without '#'; would have failed for every resident with at least one administered dose in the MAR window — now patched.",
+    "PATCH /api/medications/{mid} requires the full MedicationIn body (no MedicationPatch); partial updates not supported. Acceptable for MVP but consider for future.",
+    "Backend medication 'administer' uses get_current_user (any role) — fine for staff sign-on-give. Witness check only validates witness_id presence, not that the witness is a different user from the administrator. Consider rejecting if witness_id == administered_by_id.",
+    "Body maps DELETE correctly restricted to manager/admin (verified)."
+  ],
+  "updated_files": [
+    "/app/backend/mar_pdf.py",
+    "/app/backend/tests/test_iteration13.py"
+  ],
+  "success_rate": {"backend": "100% (15/15)", "frontend": "~95% (all data-testid selectors resolved, one edge-case Body Maps tab load on Maddy, and witness round flow needs witness modal)"},
+  "test_credentials": "manager@care.local / Manager@123 ; staff@care.local / Staff@123 ; admin@care.local / Admin@123",
+  "seed_data_creation": "None (relied on existing demo seed: 4 meds incl. Sertraline witness-required, 1 body-map for Leo, 1 prior admin record from yesterday — verified). Tests created TEST_Paracetamol med + a transient body map and cleaned them up via DELETE.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iteration 13 backend fully passing including MAR PDF (after color fix). Ofsted readiness returns expected INADEQUATE/29 in dev. Med round groups by slot, sign-given works for non-witness meds; witness-required Sertraline correctly returns 400 from backend but UI does not surface a witness picker. Body maps full flow works on Leo (existing seed mark visible, click-to-mark editor opens, save button present). On Maddy the Body Maps tab failed to load after closing Add Medication modal via Esc — investigate modal teardown.",
+  "rca of the issue": "MAR PDF 500: reportlab Paragraph parser called with <font color='3a5a40'> (no '#'); hexval() returns '0xRRGGBB' and slice [2:] dropped the leading 0x leaving a bare hex which reportlab's color parser rejects. Fix: prefix '#'. Reproduced via GET /api/residents/{maddy}/mar/pdf?from_date=2026-04-28&to_date=2026-05-05 (window contained yesterday's seeded admin record). Validated 200 + %PDF-1.4 magic bytes after fix."
+}
