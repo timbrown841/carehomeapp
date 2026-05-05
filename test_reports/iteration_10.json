@@ -1,0 +1,37 @@
+{
+  "summary": "Frontend-only iteration 10 polish verified end-to-end. Logged in as manager, validated dashboard rendering, hero CTA, sticky FAB (mobile-only), urgent risk-overview wording, risk-intelligence numbers/trend/recurring-patterns, staff-compliance emphasis, severity badges on recent incidents, trust microcopy, all 7 module cards, and FAB navigation. 37/37 functional checks pass.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Dashboard hero @ ~768px (tablet)", "issues": ["Between sm (640px) and lg (1024px) the hero switches to flex-row but the H2 'Log Incident in 30 seconds' wraps awkwardly next to the red CTA pill. Cosmetic only — not in scope. Consider keeping flex-col until md or making H2 text-2xl until lg."]}
+    ]
+  },
+  "test_report_links": ["/app/test_reports/iteration_10.json"],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Dashboard.jsx is 673 lines — close to the 700-line guideline. RiskTile, ActionCard, SeverityBadge sub-components could be extracted into /components/dashboard/* for maintainability.",
+    "Sticky FAB and the in-page hero 'Log Incident' pill duplicate visual intent on tablet (768–1023px). Consider hiding the hero pill below lg and keeping only the FAB on tablet to avoid dual CTAs in the same screen area.",
+    "FAB at fixed bottom-right collides z-stacking-wise with the preview-only Emergent badge in this environment. Production unaffected, but worth noting that any other future bottom-right toast/snackbar will overlap; reserve safe-area or shift FAB slightly when a snackbar is open."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "skipped (per request)", "frontend": "100% (37/37 functional checks)"},
+  "test_credentials": "manager@care.local / Manager@123 (verified working)",
+  "seed_data_creation": "None — used existing auto-seeded data (4 residents, 4 incidents incl. high-severity + safeguarding, 6 notes, supervisions). high_risk=2, overdue=2, missing=4, supervisions_due=2, appraisals_overdue=3, week_count=4 trend +100%.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Note: many dashboard headings use Tailwind 'uppercase' class. Playwright page.inner_text returns the rendered (uppercased) text, so when asserting source strings like 'Action Required NOW' or 'Recurring patterns detected', use case-insensitive comparison or assert against page.content() raw HTML. Also: in this preview env the 'Made with Emergent' badge sits at bottom-right and can intercept clicks on the mobile sticky FAB; use element.click() via page.evaluate() or force=True with a pre-scroll to bypass.",
+  "verification_details": {
+    "hero_cta": "primary-cta wraps primary-log-incident which wraps hero-cta-button (DOM containment confirmed). Hero text contains 'Log in under 60 seconds'. Link href = /incidents/new, navigates correctly.",
+    "sticky_fab": "Visible at 390px, 768px, 1023px. Hidden at 1024px (lg) and 1440px. Has class 'lg:hidden'. href=/incidents/new. Programmatic click navigates correctly. Text contains 'Log Incident' and 'Under 60 seconds'.",
+    "risk_overview": "high_risk=2 -> 'Action Required NOW' shown. overdue=2 -> 'Watch' shown (amber). missing=4 -> 'Must Complete Today' shown (red).",
+    "risk_intelligence": "week-count rendered at 48px (text-5xl, font-black). Trend shows '↑ 100% vs last week'. Recurring patterns block visible with tags: aggression x1, verbal abuse x1, disclosure x1, self-harm x1, missing x1.",
+    "staff_compliance": "supervisions-due=2 (amber styling, font-black number). appraisals-overdue=3 with stronger red border-l-[#B23A48] and red-tinted background.",
+    "recent_incidents_severity_badges": "Confirmed 3 incidents rendered. Badges: 'MEDIUM' (Behaviour), 'HIGH RISK' + 'Safeguarding' (Aisha disclosure), 'HIGH RISK' + 'Safeguarding' (Maddy absconding). Background colours differ accordingly.",
+    "trust_microcopy": "'Saved instantly · time-stamped automatically' present above recent incidents. 'Auto-signed by author · no backlog' present above recent notes. Verified via raw page HTML (mixed case preserved).",
+    "module_cards": "All 7 cards visible: residents, notes, incidents, staff, supervisions, reports, ofsted.",
+    "mobile_390": "No horizontal scroll (scrollWidth==clientWidth==390). Trust strip stacks (grid-cols-1). Hero stacks below text (flex-col). FAB visible at bottom-right.",
+    "navigation_flows": "Login -> dashboard works. primary-log-incident -> /incidents/new works. FAB -> /incidents/new works (via JS click; in prod the Emergent badge overlay won't be present)."
+  }
+}
