@@ -4,6 +4,7 @@ import api from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { formatFullTimestamp } from "@/lib/format";
 import LogIncidentFAB from "@/components/LogIncidentFAB";
+import AttentionNow from "@/components/AttentionNow";
 import {
   Users,
   NotebookPen,
@@ -276,6 +277,9 @@ export default function Dashboard() {
           Here's your current risk and activity overview.
         </p>
       </header>
+
+      {/* Live attention strip — pulled from Ofsted readiness */}
+      <AttentionNow />
 
       {/* Risk Overview */}
       <section data-testid="risk-overview">

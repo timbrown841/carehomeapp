@@ -6,6 +6,8 @@ import { personaColor, personaInitials } from "@/lib/persona";
 import { formatFullTimestamp } from "@/lib/format";
 import MedicationsTab from "@/components/resident/MedicationsTab";
 import BodyMapsTab from "@/components/resident/BodyMapsTab";
+import HealthTab from "@/components/resident/HealthTab";
+import EducationTab from "@/components/resident/EducationTab";
 import {
   ArrowLeft,
   AlertTriangle,
@@ -35,6 +37,8 @@ const TABS = [
   { id: "missing", label: "Missing / Philomena" },
   { id: "medical", label: "Medical & Medication" },
   { id: "medications", label: "MAR / Meds" },
+  { id: "health", label: "Health & Wellbeing" },
+  { id: "education", label: "Education / PEP" },
   { id: "bodymaps", label: "Body Maps" },
   { id: "documents", label: "Documents" },
   { id: "timeline", label: "Timeline" },
@@ -306,6 +310,8 @@ export default function ResidentDetail() {
         )}
         {tab === "medical" && <MedicalTab resident={resident} />}
         {tab === "medications" && <MedicationsTab resident={resident} />}
+        {tab === "health" && <HealthTab resident={resident} />}
+        {tab === "education" && <EducationTab resident={resident} />}
         {tab === "bodymaps" && <BodyMapsTab resident={resident} />}
         {tab === "documents" && <DocumentsTab resident={resident} />}
         {tab === "timeline" && <TimelineTab items={timeline} />}

@@ -62,6 +62,10 @@ async def lifespan(_app: FastAPI):
     await db.medication_admins.create_index([("medication_id", 1), ("scheduled_at", -1)])
     await db.medication_admins.create_index([("resident_id", 1), ("scheduled_at", -1)])
     await db.body_maps.create_index([("resident_id", 1), ("recorded_at", -1)])
+    await db.health_appointments.create_index([("resident_id", 1), ("date", -1)])
+    await db.health_observations.create_index([("resident_id", 1), ("recorded_at", -1)])
+    await db.immunisations.create_index([("resident_id", 1), ("date_given", -1)])
+    await db.education_records.create_index("resident_id", unique=True, sparse=True)
 
     admin_email = os.environ.get("ADMIN_EMAIL", "admin@care.local").lower()
     admin_password = os.environ.get("ADMIN_PASSWORD", "Admin@123")
@@ -115,9 +119,11 @@ async def _seed_demo_data_if_empty():
     sample = await db.residents.find_one({}, {"_id": 0, "legal_status": 1})
     fully_seeded = (await db.residents.count_documents({}) > 0) and sample and sample.get("legal_status")
     has_meds = await db.medications.count_documents({}) > 0
-    if fully_seeded and has_meds:
+    has_health = await db.health_appointments.count_documents({}) > 0
+    has_edu = await db.education_records.count_documents({}) > 0
+    if fully_seeded and has_meds and has_health and has_edu:
         return
-    if fully_seeded and not has_meds:
+    if fully_seeded:
         # Profiles exist but new modules missing — top up only.
         await _seed_meds_and_bodymaps()
         return
@@ -133,6 +139,10 @@ async def _seed_demo_data_if_empty():
         await db.medications.delete_many({})
         await db.medication_admins.delete_many({})
         await db.body_maps.delete_many({})
+        await db.health_appointments.delete_many({})
+        await db.health_observations.delete_many({})
+        await db.immunisations.delete_many({})
+        await db.education_records.delete_many({})
     logger.info("Seeding demo data…")
 
     staff_user = await db.users.find_one({"email": "staff@care.local"})
@@ -576,8 +586,12 @@ async def _seed_demo_data_if_empty():
 
 
 async def _seed_meds_and_bodymaps():
-    """Idempotent top-up of medications/body_maps for an existing residents set."""
-    if (await db.medications.count_documents({}) > 0) and (await db.body_maps.count_documents({}) > 0):
+    """Idempotent top-up of medications/body_maps/health/education for an existing residents set."""
+    have_meds = await db.medications.count_documents({}) > 0
+    have_bm = await db.body_maps.count_documents({}) > 0
+    have_health = await db.health_appointments.count_documents({}) > 0
+    have_edu = await db.education_records.count_documents({}) > 0
+    if have_meds and have_bm and have_health and have_edu:
         return
     residents = await db.residents.find({}, {"_id": 0, "id": 1, "name": 1}).to_list(500)
     if not residents:
@@ -709,6 +723,190 @@ async def _seed_meds_and_bodymaps():
                 "recorded_by_id": staff_user["id"],
                 "recorded_by_name": staff_user["name"],
             })
+
+    # ---- Health & Wellbeing seed ----
+    if await db.health_appointments.count_documents({}) == 0:
+        appt_seed = [
+            ("Jordan Reilly", "gp", "Annual asthma review", 30, "10:30",
+             "Northern Family Practice", "Dr A. Roberts"),
+            ("Aisha Khan", "camhs", "CAMHS therapy session", 7, "15:00",
+             "CAMHS Withington", "Dr Patel"),
+            ("Aisha Khan", "lac_nurse", "LAC health assessment", -10, "11:00",
+             "LAC Nurse — Sarah Cole", "Sarah Cole"),
+            ("Maddy O'Brien", "dental", "Routine check-up", 12, "09:30",
+             "Bright Smiles Dental", "Dr Lee"),
+            ("Maddy O'Brien", "gp", "LAC review", 60, "14:00",
+             "Northern Family Practice", "Dr A. Roberts"),
+            ("Leo Martinez", "optician", "Eye test", 45, "10:00",
+             "Specsavers Salford", "Mr Khan"),
+        ]
+        for (name, kind, title, day_offset, time, loc, with_whom) in appt_seed:
+            rid = res_by_name.get(name)
+            if not rid:
+                continue
+            d = (now + timedelta(days=day_offset)).date().isoformat()
+            await db.health_appointments.insert_one({
+                "id": str(uuid.uuid4()),
+                "resident_id": rid,
+                "kind": kind,
+                "title": title,
+                "date": d,
+                "time": time,
+                "location": loc,
+                "with_whom": with_whom,
+                "status": "attended" if day_offset < 0 else "scheduled",
+                "notes": None,
+                "follow_up": None,
+                "created_at": (now - timedelta(days=14)).isoformat(),
+                "created_by_name": manager_user["name"],
+            })
+
+    if await db.health_observations.count_documents({}) == 0:
+        obs_seed = [
+            ("Jordan Reilly", "weight", "48", "kg", 30),
+            ("Jordan Reilly", "height", "158", "cm", 30),
+            ("Jordan Reilly", "peak_flow", "320", "L/min", 7),
+            ("Aisha Khan", "weight", "55", "kg", 14),
+            ("Maddy O'Brien", "weight", "61", "kg", 14),
+        ]
+        for (name, kind, value, unit, days_ago) in obs_seed:
+            rid = res_by_name.get(name)
+            if not rid:
+                continue
+            await db.health_observations.insert_one({
+                "id": str(uuid.uuid4()),
+                "resident_id": rid,
+                "kind": kind,
+                "value": value,
+                "unit": unit,
+                "recorded_on": (now - timedelta(days=days_ago)).date().isoformat(),
+                "recorded_at": (now - timedelta(days=days_ago)).isoformat(),
+                "recorded_by_name": staff_user["name"],
+                "notes": None,
+            })
+
+    if await db.immunisations.count_documents({}) == 0:
+        immu_seed = [
+            ("Jordan Reilly", "MenACWY booster", -300, 1500),
+            ("Aisha Khan", "HPV (course)", -180, None),
+            ("Maddy O'Brien", "Td/IPV (3-in-1 teenage booster)", -800, -30),  # overdue
+            ("Leo Martinez", "Annual flu", -90, 275),
+        ]
+        for (name, vaccine, days_given, days_next) in immu_seed:
+            rid = res_by_name.get(name)
+            if not rid:
+                continue
+            await db.immunisations.insert_one({
+                "id": str(uuid.uuid4()),
+                "resident_id": rid,
+                "vaccine": vaccine,
+                "date_given": (now + timedelta(days=days_given)).date().isoformat(),
+                "next_due": (now + timedelta(days=days_next)).date().isoformat() if days_next is not None else None,
+                "given_by": "School nurse" if "HPV" in vaccine else "GP",
+                "batch": None,
+                "notes": None,
+                "created_at": (now + timedelta(days=days_given)).isoformat(),
+            })
+
+    # ---- Education / PEP seed ----
+    if await db.education_records.count_documents({}) == 0:
+        edu_seed = [
+            {
+                "name": "Jordan Reilly",
+                "school": "St Joseph's High School",
+                "school_contact": "0161 555 0210",
+                "year_group": "Year 9",
+                "senco": "Mrs K. Hart",
+                "has_ehcp": False,
+                "pep_date": (now - timedelta(days=80)).date().isoformat(),
+                "next_pep_date": (now + timedelta(days=10)).date().isoformat(),
+                "designated_teacher": "Mr T. Williams",
+                "attendance_pct": 94.2,
+                "target_grades": "Pass in core subjects; bronze D of E.",
+                "current_grades": "On track in English & PE; behind in Maths.",
+                "additional_support": "Reading-catch-up programme. Quiet study area.",
+                "notes": "Loves football and art. Needs predictability before contact days.",
+                "exclusions": [],
+                "achievements": [
+                    {"date": (now - timedelta(days=40)).date().isoformat(), "title": "Football team — Player of the match", "notes": None},
+                    {"date": (now - timedelta(days=120)).date().isoformat(), "title": "Art display selected for school exhibition", "notes": None},
+                ],
+            },
+            {
+                "name": "Aisha Khan",
+                "school": "Manchester Academy",
+                "school_contact": "0161 555 0220",
+                "year_group": "Year 10",
+                "senco": "Ms B. Owens",
+                "has_ehcp": False,
+                "pep_date": (now - timedelta(days=20)).date().isoformat(),
+                "next_pep_date": (now + timedelta(days=70)).date().isoformat(),
+                "designated_teacher": "Ms F. Reid",
+                "attendance_pct": 97.1,
+                "target_grades": "Predicted A* English, A* Biology.",
+                "current_grades": "Top set across sciences; outstanding ELSA reports.",
+                "additional_support": "School counsellor weekly. Quiet space pre-exams.",
+                "notes": "Strong academic profile; watch for low-mood after letterbox contact.",
+                "exclusions": [],
+                "achievements": [
+                    {"date": (now - timedelta(days=60)).date().isoformat(), "title": "Top of year in Biology mock", "notes": None},
+                ],
+            },
+            {
+                "name": "Leo Martinez",
+                "school": "Salford Boys' High",
+                "school_contact": "0161 555 0230",
+                "year_group": "Year 8",
+                "senco": "Mr R. Cooper",
+                "has_ehcp": False,
+                "pep_date": (now - timedelta(days=110)).date().isoformat(),
+                "next_pep_date": (now - timedelta(days=20)).date().isoformat(),  # overdue
+                "designated_teacher": "Mrs J. Singh",
+                "attendance_pct": 88.5,
+                "target_grades": "Achieving expected level in core subjects.",
+                "current_grades": "Behaviour notes around frustration during groupwork.",
+                "additional_support": "Behaviour-mentor weekly.",
+                "notes": "Cycling helps regulate. Recently arrived placement.",
+                "exclusions": [
+                    {
+                        "date": (now - timedelta(days=18)).date().isoformat(),
+                        "reason": "Verbal altercation with peer; refused to follow staff direction.",
+                        "days": 1,
+                        "type": "fixed_term",
+                    }
+                ],
+                "achievements": [],
+            },
+            {
+                "name": "Maddy O'Brien",
+                "school": "Trafford College — H&SC L2",
+                "school_contact": "0161 555 0240",
+                "year_group": "Year 12 / College Y1",
+                "senco": "—",
+                "has_ehcp": False,
+                "pep_date": (now - timedelta(days=50)).date().isoformat(),
+                "next_pep_date": (now + timedelta(days=40)).date().isoformat(),
+                "designated_teacher": "Lou Carter (Personal Adviser)",
+                "attendance_pct": 91.8,
+                "target_grades": "Pass L2 Health & Social Care.",
+                "current_grades": "Strong placement-portfolio scores.",
+                "additional_support": "Travel pass; college mentor weekly.",
+                "notes": "Approaching independence; pathway plan in progress.",
+                "exclusions": [],
+                "achievements": [
+                    {"date": (now - timedelta(days=70)).date().isoformat(), "title": "Distinction in placement portfolio module", "notes": None},
+                ],
+            },
+        ]
+        for e in edu_seed:
+            rid = res_by_name.get(e.pop("name"))
+            if not rid:
+                continue
+            e["resident_id"] = rid
+            e["created_at"] = (now - timedelta(days=120)).isoformat()
+            e["updated_at"] = now.isoformat()
+            e["updated_by_name"] = manager_user["name"]
+            await db.education_records.insert_one(e)
 
 app = FastAPI(title="Care Companion API", lifespan=lifespan)
 api_router = APIRouter(prefix="/api")
@@ -2155,6 +2353,262 @@ async def update_body_map(
 async def delete_body_map(bid: str, _: dict = Depends(require_role("manager", "admin"))):
     res = await db.body_maps.delete_one({"id": bid})
     return {"deleted": res.deleted_count}
+
+
+# ---------- Health & Wellbeing ----------
+APPT_KIND = Literal[
+    "gp", "dental", "optician", "camhs", "lac_nurse", "immunisation",
+    "specialist", "hospital", "physio", "other"
+]
+APPT_STATUS = Literal["scheduled", "attended", "missed", "cancelled", "rescheduled"]
+
+
+class HealthAppointmentIn(BaseModel):
+    kind: APPT_KIND = "gp"
+    title: str
+    date: str  # YYYY-MM-DD
+    time: Optional[str] = None  # HH:MM
+    location: Optional[str] = None
+    with_whom: Optional[str] = None
+    status: APPT_STATUS = "scheduled"
+    notes: Optional[str] = None
+    follow_up: Optional[str] = None
+
+
+class HealthAppointment(HealthAppointmentIn):
+    id: str
+    resident_id: str
+    created_at: str
+    created_by_name: Optional[str] = None
+
+
+class HealthObservationIn(BaseModel):
+    kind: Literal["weight", "height", "bmi", "temp", "bp", "peak_flow", "blood_sugar", "pulse", "other"]
+    value: str
+    unit: Optional[str] = None
+    recorded_on: Optional[str] = None  # YYYY-MM-DD
+    notes: Optional[str] = None
+
+
+class HealthObservation(HealthObservationIn):
+    id: str
+    resident_id: str
+    recorded_at: str
+    recorded_by_name: str
+
+
+class ImmunisationIn(BaseModel):
+    vaccine: str
+    date_given: str  # YYYY-MM-DD
+    next_due: Optional[str] = None
+    given_by: Optional[str] = None
+    batch: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class Immunisation(ImmunisationIn):
+    id: str
+    resident_id: str
+    created_at: str
+
+
+@api_router.get("/residents/{rid}/health")
+async def health_bundle(rid: str, _: dict = Depends(get_current_user)):
+    """Combined health bundle: appointments, observations, immunisations + alerts."""
+    today = datetime.now(timezone.utc).date().isoformat()
+    appts = await db.health_appointments.find({"resident_id": rid}, {"_id": 0}).sort("date", -1).to_list(200)
+    obs = await db.health_observations.find({"resident_id": rid}, {"_id": 0}).sort("recorded_at", -1).to_list(200)
+    immus = await db.immunisations.find({"resident_id": rid}, {"_id": 0}).sort("date_given", -1).to_list(200)
+
+    upcoming = [a for a in appts if a.get("date") >= today and a.get("status") == "scheduled"]
+    overdue_immu = [i for i in immus if i.get("next_due") and i["next_due"] < today]
+    return {
+        "appointments": appts,
+        "observations": obs,
+        "immunisations": immus,
+        "upcoming_appointments": upcoming[:5],
+        "overdue_immunisations": overdue_immu,
+    }
+
+
+@api_router.post("/residents/{rid}/health/appointments", response_model=HealthAppointment)
+async def create_appointment(
+    rid: str, payload: HealthAppointmentIn, user: dict = Depends(get_current_user)
+):
+    if not await db.residents.find_one({"id": rid}, {"_id": 0, "id": 1}):
+        raise HTTPException(404, "Resident not found")
+    doc = {
+        **payload.model_dump(),
+        "id": str(uuid.uuid4()),
+        "resident_id": rid,
+        "created_at": now_iso(),
+        "created_by_name": user["name"],
+    }
+    await db.health_appointments.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api_router.patch("/health/appointments/{aid}", response_model=HealthAppointment)
+async def update_appointment(
+    aid: str, payload: HealthAppointmentIn, _: dict = Depends(get_current_user)
+):
+    update = payload.model_dump()
+    res = await db.health_appointments.update_one({"id": aid}, {"$set": update})
+    if res.matched_count == 0:
+        raise HTTPException(404, "Appointment not found")
+    doc = await db.health_appointments.find_one({"id": aid}, {"_id": 0})
+    return doc
+
+
+@api_router.delete("/health/appointments/{aid}")
+async def delete_appointment(aid: str, _: dict = Depends(require_role("manager", "admin"))):
+    res = await db.health_appointments.delete_one({"id": aid})
+    return {"deleted": res.deleted_count}
+
+
+@api_router.post("/residents/{rid}/health/observations", response_model=HealthObservation)
+async def create_observation(
+    rid: str, payload: HealthObservationIn, user: dict = Depends(get_current_user)
+):
+    if not await db.residents.find_one({"id": rid}, {"_id": 0, "id": 1}):
+        raise HTTPException(404, "Resident not found")
+    doc = {
+        **payload.model_dump(),
+        "id": str(uuid.uuid4()),
+        "resident_id": rid,
+        "recorded_at": now_iso(),
+        "recorded_by_name": user["name"],
+    }
+    await db.health_observations.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api_router.delete("/health/observations/{oid}")
+async def delete_observation(oid: str, _: dict = Depends(get_current_user)):
+    res = await db.health_observations.delete_one({"id": oid})
+    return {"deleted": res.deleted_count}
+
+
+@api_router.post("/residents/{rid}/health/immunisations", response_model=Immunisation)
+async def create_immunisation(
+    rid: str, payload: ImmunisationIn, _: dict = Depends(get_current_user)
+):
+    if not await db.residents.find_one({"id": rid}, {"_id": 0, "id": 1}):
+        raise HTTPException(404, "Resident not found")
+    doc = {
+        **payload.model_dump(),
+        "id": str(uuid.uuid4()),
+        "resident_id": rid,
+        "created_at": now_iso(),
+    }
+    await db.immunisations.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api_router.delete("/health/immunisations/{iid}")
+async def delete_immunisation(iid: str, _: dict = Depends(require_role("manager", "admin"))):
+    res = await db.immunisations.delete_one({"id": iid})
+    return {"deleted": res.deleted_count}
+
+
+# ---------- Education / PEP ----------
+class Exclusion(BaseModel):
+    date: str  # YYYY-MM-DD
+    reason: str
+    days: Optional[int] = None
+    type: Literal["fixed_term", "permanent", "internal"] = "fixed_term"
+
+
+class Achievement(BaseModel):
+    date: str
+    title: str
+    notes: Optional[str] = None
+
+
+class EducationIn(BaseModel):
+    school: Optional[str] = None
+    school_contact: Optional[str] = None
+    year_group: Optional[str] = None
+    senco: Optional[str] = None
+    has_ehcp: Optional[bool] = None
+    pep_date: Optional[str] = None
+    next_pep_date: Optional[str] = None
+    designated_teacher: Optional[str] = None
+    attendance_pct: Optional[float] = None
+    target_grades: Optional[str] = None
+    current_grades: Optional[str] = None
+    additional_support: Optional[str] = None
+    notes: Optional[str] = None
+    exclusions: List[Exclusion] = Field(default_factory=list)
+    achievements: List[Achievement] = Field(default_factory=list)
+
+
+@api_router.get("/residents/{rid}/education")
+async def get_education(rid: str, _: dict = Depends(get_current_user)):
+    if not await db.residents.find_one({"id": rid}, {"_id": 0, "id": 1}):
+        raise HTTPException(404, "Resident not found")
+    doc = await db.education_records.find_one({"resident_id": rid}, {"_id": 0}) or {
+        "resident_id": rid,
+        "exclusions": [],
+        "achievements": [],
+    }
+    return doc
+
+
+@api_router.put("/residents/{rid}/education")
+async def upsert_education(
+    rid: str, payload: EducationIn, user: dict = Depends(get_current_user)
+):
+    if not await db.residents.find_one({"id": rid}, {"_id": 0, "id": 1}):
+        raise HTTPException(404, "Resident not found")
+    update = payload.model_dump()
+    update.update({
+        "resident_id": rid,
+        "updated_at": now_iso(),
+        "updated_by_name": user["name"],
+    })
+    await db.education_records.update_one(
+        {"resident_id": rid},
+        {"$set": update, "$setOnInsert": {"created_at": now_iso()}},
+        upsert=True,
+    )
+    doc = await db.education_records.find_one({"resident_id": rid}, {"_id": 0})
+    return doc
+
+
+@api_router.post("/residents/{rid}/education/exclusions")
+async def add_exclusion(
+    rid: str, payload: Exclusion, _: dict = Depends(get_current_user)
+):
+    await db.education_records.update_one(
+        {"resident_id": rid},
+        {
+            "$push": {"exclusions": payload.model_dump()},
+            "$setOnInsert": {"resident_id": rid, "achievements": [], "created_at": now_iso()},
+        },
+        upsert=True,
+    )
+    doc = await db.education_records.find_one({"resident_id": rid}, {"_id": 0})
+    return doc
+
+
+@api_router.post("/residents/{rid}/education/achievements")
+async def add_achievement(
+    rid: str, payload: Achievement, _: dict = Depends(get_current_user)
+):
+    await db.education_records.update_one(
+        {"resident_id": rid},
+        {
+            "$push": {"achievements": payload.model_dump()},
+            "$setOnInsert": {"resident_id": rid, "exclusions": [], "created_at": now_iso()},
+        },
+        upsert=True,
+    )
+    doc = await db.education_records.find_one({"resident_id": rid}, {"_id": 0})
+    return doc
 
 
 # ---------- Ofsted Readiness Score ----------
