@@ -40,6 +40,8 @@ export default function MedicationsTab({ resident }) {
   const [date, setDate] = useState(todayIso());
   const [busy, setBusy] = useState(null);
   const [showAdd, setShowAdd] = useState(false);
+  const [witnessFor, setWitnessFor] = useState(null);
+  const [witnessName, setWitnessName] = useState("");
   const canManage = user?.role === "manager" || user?.role === "admin";
 
   const load = async () => {
@@ -358,6 +360,55 @@ export default function MedicationsTab({ resident }) {
             load();
           }}
         />
+      )}
+
+      {witnessFor && (
+        <div
+          className="fixed inset-0 bg-stone-900/45 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+          onClick={() => setWitnessFor(null)}
+          data-testid="witness-modal"
+        >
+          <div
+            className="bg-white rounded-2xl max-w-md w-full p-5 shadow-xl border divider-soft space-y-3"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="text-[10px] font-bold uppercase tracking-wider text-[#D4A373]">
+              Witness signature required
+            </div>
+            <h3 className="font-display font-bold text-lg text-stone-900">
+              {witnessFor.medication.name} · {witnessFor.medication.dose}
+            </h3>
+            <p className="text-sm text-stone-600">
+              A second staff member must witness this dose.
+            </p>
+            <input
+              autoFocus
+              data-testid="witness-name-input"
+              placeholder="Witness staff name"
+              value={witnessName}
+              onChange={(e) => setWitnessName(e.target.value)}
+              className="w-full bg-stone-50 border divider-soft rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-[#D4A373]"
+            />
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setWitnessFor(null)}
+                className="flex-1 bg-white hover:bg-stone-50 text-stone-700 font-semibold rounded-xl px-4 py-2.5 text-sm border divider-soft"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={!witnessName.trim()}
+                onClick={() => sign(witnessFor, "given", witnessName.trim())}
+                data-testid="witness-confirm-btn"
+                className="flex-1 bg-[#3A5A40] hover:bg-[#2C4A33] disabled:opacity-50 text-white font-bold rounded-xl px-4 py-2.5 text-sm"
+              >
+                Sign as given
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

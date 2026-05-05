@@ -42,7 +42,7 @@ A simple and fast care management app for children's homes and supported living.
 - Supervisions module + compliance counters; mocked DSL/manager notifications.
 - Auto-reseeded demo dataset on backend startup with realistic residents/incidents/notes.
 - **Markdown rendering fix** for AI reports — `renderRich()` helper now bolds `**…**` markers in LogIncident & IncidentDetail (resolves iteration-11 bug).
-- **Comprehensive Resident Profile page** with 8 tabs (Overview, Background & Referral, Risk Assessment, Care Plan, Missing/Philomena, Medical & Medication, Documents, Timeline). RAG risk pill, overdue review warning, professional contacts, emergency contacts.
+- **Comprehensive Resident Profile page** with 10 tabs (Overview, Background & Referral, Risk Assessment, Care Plan, Missing/Philomena, Medical & Medication, MAR/Meds, Body Maps, Documents, Timeline). RAG risk pill, overdue review warning, professional contacts, emergency contacts.
 - **Safelyn Rapid Response Pack** for missing-from-care:
   - One-tap "Child Missing" button on resident profile opens modal capturing last-seen detail.
   - Auto-creates a high-severity safeguarding incident on the resident timeline.
@@ -51,26 +51,41 @@ A simple and fast care management app for children's homes and supported living.
   - Quick actions: Call 999, Notify Manager, Notify DSL, Download PDF.
   - Episode timeline tracking: reported missing, police notified, returned (one-tap loggers).
 - Backend: extended `Resident` model with 30+ optional profile fields, new `missing_episodes` collection with token-secured public sharing.
+- **Medication / MAR module** (iter-13):
+  - Resident MAR tab with daily schedule, one-tap GIVE / REFUSED / WITHHELD, PRN log, allergy banner, witness modal for witness-required meds, weekly MAR PDF (landscape A4 grid with status legend).
+  - Cross-home `/medications` round page grouping all due doses by time slot.
+  - Witness-required flag enforced on backend; accepts witness_name (free-text) for staff who can't see the user list.
+- **Body Maps module** (iter-13):
+  - Front + back anatomical SVG silhouettes; tap-to-mark; per-mark type/severity/region/description; healing notes.
+  - Resident profile tab listing all body-map records chronologically.
+  - Demo seed: Leo Martinez right-knee scratch.
+- **Ofsted Readiness scorecard** (iter-13):
+  - Replaces previous placeholder. Live aggregate 0-100 score donut + 6 sub-sections (medication, risk reviews, daily notes, supervisions, safeguarding response, missing-from-care).
+  - Each section shows top issues + "Fix this" deep link. Auto-updates with current state.
 
-## Backlog
-### P0
-- Edit/delete UX in UI (currently API-only for some entities).
-- Inline edit of resident profile fields (PATCH endpoint exists; UI form pending).
-- Document upload + version history (placeholder section in profile).
+## Backlog (next-up after the trio)
+### P0 — User-confirmed sequential plan ("everything ClearCare has, but better"):
+1. **Health & Wellbeing** — appointments (GP/dental/optician), weights/heights, immunisations, NHS allergies, LAC nurse reviews
+2. **Education / PEP tracking** — school, attendance %, PEP dates, exclusions, achievements
+3. **Staff Rotas & Training** — shift planner, on-shift now panel, training matrix with expiry RAG (DBS, First Aid, Safeguarding, Medication-trained)
+4. **Statutory Visits & LAC Reviews** — IRO visits, social-worker visits, LAC review schedule with overdue alerts
+5. **Pocket Money & Personal Allowance** — running balance, sign-out, ledger, monthly statement
+6. **Document Library** — upload PDFs, tag to resident/staff, version history, expiry reminders
+7. **Communications / Handover Log** — shift handover with voice, read-receipts
+8. **Audit Log** — every edit/delete/login captured; filterable for inspections
+9. **Vehicle / Activities Log** — mileage, activity sign-off, photos
 
-### P1
-- CSV export of incidents/notes for inspections.
-- Real Email/SMS alerts (currently MOCKED via `notifications_service.py`) — Twilio + Resend.
-- User management UI (admin).
-- Photo upload for residents (placeholder card already in Missing Pack PDF).
-- Refactor `ResidentDetail.jsx` (1100+ lines) into `/components/resident/*` sub-components.
-- Return-interview capture flow on missing episode close.
-
-### P2
-- Trend charts (incidents per resident over time).
-- Customisable note categories per home.
-- Audit log of edits.
-- Police reference auto-validation.
+### Other backlog
+- Inline edit of resident profile fields (PATCH endpoint already wired)
+- Document upload + version history (Documents tab is currently a placeholder)
+- Real Email/SMS alerts via Twilio + Resend (currently MOCKED)
+- Refactor `ResidentDetail.jsx` (~1100 lines) into more `/components/resident/*` files
+- Photo upload + thumbnails for the Missing Pack PDF
+- Return-interview capture on closing a missing episode
+- CSV export of incidents/notes for inspections
+- Admin User Management UI
+- Incident trend charts per resident
+- Witness picker — replace free-text witness with real staff selection (uses /auth/users; staff-role read access required)
 
 ## Test Credentials
 See `/app/memory/test_credentials.md`.

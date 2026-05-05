@@ -1916,7 +1916,7 @@ async def administer_medication(
     med = await db.medications.find_one({"id": mid}, {"_id": 0})
     if not med:
         raise HTTPException(404, "Medication not found")
-    if med.get("requires_witness") and not payload.witness_id:
+    if med.get("requires_witness") and not (payload.witness_id or payload.witness_name):
         raise HTTPException(400, "This medication requires a witness signature")
     doc = {
         "id": str(uuid.uuid4()),
