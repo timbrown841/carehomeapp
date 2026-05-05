@@ -1,0 +1,52 @@
+{
+  "summary": "Iteration 11 Log Incident polish — frontend-only verification. 8/9 acceptance criteria PASS. ONE CRITICAL BUG: structured-report bold section titles do NOT render because parseStructured() regex does not match the AI's actual output format. The AI returns '1) Summary\\n<body>' (title on its own line, no colon), but the regex requires '1) Title: <body>'. Net effect: structured-preview renders 6 plain paragraphs with no bold dark-teal section titles — directly violating the iteration spec ('verify section titles render as <div class=\"font-display font-bold ...\">').",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "LogIncident.jsx parseStructured()",
+        "issue": "Regex /^(\\d+\\))\\s*([^:\\n]+):\\s*([\\s\\S]*)$/ requires a colon between title and body, but the live /api/incidents/structure response delivers titles WITHOUT a trailing colon (e.g. '1) Summary\\nLeo Martinez became frustrated...'). All 6 sections fall into the else-branch (num:null, title:null) so NONE of the dark-teal bold titles ('Summary','Antecedent / Context','Behaviour / Incident','Consequence / Outcome','Action Taken by Staff','Risk & Safeguarding Notes') render. The structured preview becomes a wall of plain text with only the leading number visible inside the body.",
+        "selector": "[data-testid='structured-sections'] > div .font-display.font-bold",
+        "priority": "HIGH"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": ["/app/test_reports/iteration_11.json"],
+  "action_items": [
+    "Fix parseStructured() in /app/frontend/src/pages/LogIncident.jsx so it ALSO matches the colonless format the backend AI actually returns. Suggested regex: /^(\\d+\\))\\s*([^\\n:]+?)[:\\n]\\s*([\\s\\S]*)$/  (i.e. allow either ':' OR newline as the title delimiter). Re-test by dictating the Leo dinner transcript and confirming 6 dark-teal bold titles render.",
+    "OR alternatively tighten the AI prompt in /app/backend/server.py incidents/structure endpoint so the LLM is forced to emit '1) Summary: <body>' with a literal colon — but the regex fix is simpler/safer.",
+    "Optional: add a unit test for parseStructured() covering BOTH '1) Summary: body' and '1) Summary\\nbody' formats so future prompt drift can't silently regress this."
+  ],
+  "critical_code_review_comments": [
+    "parseStructured() in LogIncident.jsx uses a hand-rolled regex that's tightly coupled to a single LLM output format. Recommend: parse robustly by detecting any line starting with /^\\d+\\)/ as a new section, treating the rest of that line (with optional trailing colon stripped) as the title, and the following lines until the next numbered marker as the body.",
+    "LogIncident.jsx is now 666 lines — getting close to the 700-line guideline. Consider extracting <VoiceHero/>, <TrustStrip/>, <StructuredPreview/>, and <SafeguardingFlagRow/> into /components/incident/* once future iterations land.",
+    "Voice hero looks great on desktop and mobile, mic 96x96 centred, no horizontal overflow at 390px. Save bar is sticky and full-width. All other testids (voice-hero, log-trust-strip, transcript-input, structure-ai-btn, save-incident-btn, safeguarding-flag-row, structured-preview, structured-sections) are present and behave as specified."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "skipped (per request)", "frontend": "89% (8/9 spec items — bold section titles failing)"},
+  "test_credentials": "staff@care.local / Staff@123 (verified working)",
+  "seed_data_creation": "None — used existing seeded resident Leo Martinez (id ff1c8aa4-04d3-45e3-95aa-135400d7b339).",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Two important behaviours noticed when driving this page from Playwright: (1) The sticky save bar sits at the bottom of the viewport with z-stack high enough that it can intercept clicks on the resident-pill row when the page is short — always scroll the resident button into view OR use eval_on_selector('...', 'el => el.click()') instead of page.click. The first iteration of my test missed the resident click because the button was beneath the sticky bar. (2) AI structuring takes ~6-12s, but the structured-preview only renders if structuredSections.length > 0 — so if the regex parse fails AND every section has num:null/title:null, the preview WILL still render (because parseStructured returns a list of body-only blocks), but no bold titles. Worth checking title.innerText not just block count.",
+  "rca of the issue": {
+    "bug": "Structured AI report renders no bold dark-teal section titles.",
+    "reproduction": "1) Login as staff@care.local. 2) Go to /incidents/new. 3) Pick Leo Martinez. 4) Paste 'Leo got frustrated at dinner over menu changes. Pushed plate, swore, stormed off. We gave space, calmed him, he apologised.' 5) Click 'Structure with AI'. 6) Wait ~10s. 7) Inspect [data-testid='structured-sections'] children — every block lacks a .font-display.font-bold heading.",
+    "root_cause": "parseStructured() regex /^(\\d+\\))\\s*([^:\\n]+):\\s*([\\s\\S]*)$/ requires a literal ':' between title and body. The backend AI actually returns titles on their own line WITHOUT a colon, e.g. '1) Summary\\nLeo became frustrated...'. The regex therefore fails on every section and the function falls through to the {num:null,title:null,body:block} else-branch.",
+    "verified_via": "Direct call to POST /api/incidents/structure shows structured_report = '1) Summary\\n<body>\\n\\n2) Antecedent / Context\\n<body>\\n\\n... 6) Risk & Safeguarding Notes\\n<body>'. Frontend DOM inspection confirms zero .font-display.font-bold elements inside [data-testid='structured-sections'].",
+    "mitigation": "Replace the regex with /^(\\d+\\))\\s*([^\\n:]+?)\\s*[:\\n]\\s*([\\s\\S]*)$/ (allow newline OR colon as separator), OR split on /^\\d+\\)/m and parse the head-line as title."
+  },
+  "verified_pass_items": {
+    "page_renders": "log-incident-page testid present.",
+    "all_required_testids_visible": "voice-hero, log-trust-strip, voice-record-btn (inside voice-hero), transcript-input, structure-ai-btn, safeguarding-flag-row (only when type!=safeguarding), save-incident-btn — all present.",
+    "voice_hero_dominant": "Contains 'Tap and speak to log incident' and 'Primary input' label. Mic button (size=xl) measured 96x96px, centred horizontally inside the gradient hero card.",
+    "trust_strip": "3 items render: 'Under 60 seconds', 'Saved instantly', 'Time-stamped automatically'.",
+    "save_button": "Text contains BOTH 'Log incident' AND 'Save instantly with timestamp' (subtext). Class includes bg-[#B23A48] (red) and py-5 (large). Disabled until resident selected.",
+    "safeguarding_toggle": "When type=behaviour, clicking safeguarding-flag-row toggles flag; class transitions from no ring to 'ring-2 ring-[#B23A48]/15' and a 'FLAGGED' badge appears.",
+    "auto_flagged_on_safeguarding_type": "When type-safeguarding clicked, safeguarding-flag-row is replaced by a static notice 'Auto-flagged for safeguarding'.",
+    "save_flow": "Save → SaveReceipt (testid incident-save-receipt) renders + 3 buttons (save-receipt-download-pdf, log-another-btn, goto-incidents-btn). All visible and clickable. Sticky save bar visible at bottom on 390px mobile.",
+    "mobile_390px": "Voice hero stacks vertically, mic visible centred, sticky save full-width, no horizontal overflow (scrollWidth==clientWidth==390)."
+  }
+}
