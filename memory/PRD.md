@@ -35,23 +35,42 @@ A simple and fast care management app for children's homes and supported living.
 - Responsive, organic-earthy themed UI (Manrope/DM Sans, NO purple).
 - Tested: 17/17 backend pytest + Playwright e2e at 100%.
 
+## Implemented (2026-05-05)
+- Branded as **Safelyn Systems** with full design tokens, server-side PDFs (QR + audit hash) for incidents and reports.
+- Voice-first Log Incident screen; AI structuring with section-numbered output.
+- Sticky Log Incident FAB and action-driven Risk Overview on Dashboard.
+- Supervisions module + compliance counters; mocked DSL/manager notifications.
+- Auto-reseeded demo dataset on backend startup with realistic residents/incidents/notes.
+- **Markdown rendering fix** for AI reports — `renderRich()` helper now bolds `**…**` markers in LogIncident & IncidentDetail (resolves iteration-11 bug).
+- **Comprehensive Resident Profile page** with 8 tabs (Overview, Background & Referral, Risk Assessment, Care Plan, Missing/Philomena, Medical & Medication, Documents, Timeline). RAG risk pill, overdue review warning, professional contacts, emergency contacts.
+- **Safelyn Rapid Response Pack** for missing-from-care:
+  - One-tap "Child Missing" button on resident profile opens modal capturing last-seen detail.
+  - Auto-creates a high-severity safeguarding incident on the resident timeline.
+  - Generates a police-ready PDF (`/api/missing/{id}/pdf`) with photo placeholder, physical description, known places/associates/family/triggers, risk summary, medical alerts, recent incidents and emergency contacts.
+  - Secure, no-auth share link `/missing/share/{token}` for police/social workers/managers — both JSON + PDF.
+  - Quick actions: Call 999, Notify Manager, Notify DSL, Download PDF.
+  - Episode timeline tracking: reported missing, police notified, returned (one-tap loggers).
+- Backend: extended `Resident` model with 30+ optional profile fields, new `missing_episodes` collection with token-secured public sharing.
+
 ## Backlog
 ### P0
 - Edit/delete UX in UI (currently API-only for some entities).
-- Resident detail page with timeline (notes + incidents).
+- Inline edit of resident profile fields (PATCH endpoint exists; UI form pending).
+- Document upload + version history (placeholder section in profile).
 
 ### P1
 - CSV export of incidents/notes for inspections.
-- Manager email/SMS alert on new safeguarding flag.
-- User management UI (admin) — currently only seed accounts.
-- Photo upload for residents.
+- Real Email/SMS alerts (currently MOCKED via `notifications_service.py`) — Twilio + Resend.
+- User management UI (admin).
+- Photo upload for residents (placeholder card already in Missing Pack PDF).
+- Refactor `ResidentDetail.jsx` (1100+ lines) into `/components/resident/*` sub-components.
+- Return-interview capture flow on missing episode close.
 
 ### P2
 - Trend charts (incidents per resident over time).
 - Customisable note categories per home.
 - Audit log of edits.
-- Migrate FastAPI on_event → lifespan context manager.
-- Brute-force login lockout (5 fails / 15 min).
+- Police reference auto-validation.
 
 ## Test Credentials
 See `/app/memory/test_credentials.md`.

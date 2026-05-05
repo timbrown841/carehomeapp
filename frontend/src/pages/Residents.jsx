@@ -90,6 +90,7 @@ export default function Residents() {
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
                   <span
+                    data-testid={`risk-pill-${(r.risk_level || "medium").toLowerCase()}`}
                     className="text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded-full text-white"
                     style={{ background: risk.bg }}
                   >
