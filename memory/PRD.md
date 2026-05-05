@@ -65,7 +65,31 @@ A simple and fast care management app for children's homes and supported living.
 
 ## Backlog (next-up after the trio)
 ### P0 — User-confirmed sequential plan ("everything ClearCare has, but better"):
-1. **Health & Wellbeing** — appointments (GP/dental/optician), weights/heights, immunisations, NHS allergies, LAC nurse reviews
+1. ✅ ~~Health & Wellbeing~~ (iter-14)
+2. ✅ ~~Education / PEP tracking~~ (iter-14)
+3. **Staff Rotas & Training** — shift planner, on-shift now panel, training matrix with expiry RAG (DBS, First Aid, Safeguarding, Medication-trained)
+4. **Statutory Visits & LAC Reviews** — IRO visits, social-worker visits, LAC review schedule with overdue alerts
+5. **Pocket Money & Personal Allowance** — running balance, sign-out, ledger, monthly statement
+6. **Document Library** — upload PDFs, tag to resident/staff, version history, expiry reminders
+7. **Communications / Handover Log** — shift handover with voice, read-receipts
+8. **Audit Log** — every edit/delete/login captured; filterable for inspections
+9. **Vehicle / Activities Log** — mileage, activity sign-off, photos
+
+### Other backlog
+- Inline edit of resident profile fields (PATCH endpoint already wired)
+- Document upload + version history (Documents tab is currently a placeholder)
+- Real Email/SMS alerts via Twilio + Resend (currently MOCKED)
+- Refactor `ResidentDetail.jsx` (~1100 lines) into more `/components/resident/*` files
+- Photo upload + thumbnails for the Missing Pack PDF
+- Return-interview capture on closing a missing episode
+- CSV export of incidents/notes for inspections
+- Admin User Management UI
+- Incident trend charts per resident
+- Witness picker — replace free-text witness with real staff selection (uses /auth/users; staff-role read access required)
+
+## Test Credentials
+See `/app/memory/test_credentials.md`.
+nurse reviews
 2. **Education / PEP tracking** — school, attendance %, PEP dates, exclusions, achievements
 3. **Staff Rotas & Training** — shift planner, on-shift now panel, training matrix with expiry RAG (DBS, First Aid, Safeguarding, Medication-trained)
 4. **Statutory Visits & LAC Reviews** — IRO visits, social-worker visits, LAC review schedule with overdue alerts
