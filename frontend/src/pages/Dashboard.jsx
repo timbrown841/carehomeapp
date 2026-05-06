@@ -5,6 +5,7 @@ import { useAuth } from "@/context/AuthContext";
 import { formatFullTimestamp } from "@/lib/format";
 import LogIncidentFAB from "@/components/LogIncidentFAB";
 import AttentionNow from "@/components/AttentionNow";
+import { QuickActions, UrgencyWidgets } from "@/components/dashboard/QuickWidgets";
 import {
   Users,
   NotebookPen,
@@ -283,6 +284,12 @@ export default function Dashboard() {
 
       {/* Live attention strip — pulled from Ofsted readiness */}
       <AttentionNow />
+
+      {/* Urgency widgets — operational at-a-glance */}
+      <UrgencyWidgets />
+
+      {/* Quick actions */}
+      <QuickActions />
 
       {/* Risk Overview */}
       <section data-testid="risk-overview">

@@ -1,7 +1,6 @@
-import { NavLink, Outlet, useNavigate } from "react-router-dom";
+import { Outlet, NavLink, useLocation } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
-import Logo, { WordMark } from "@/components/Logo";
-import NotificationBell from "@/components/NotificationBell";
+import { useState } from "react";
 import {
   LayoutDashboard,
   Users,
@@ -12,106 +11,165 @@ import {
   ClipboardCheck,
   BadgeCheck,
   Pill,
+  CalendarCheck,
   LogOut,
+  Menu,
+  X,
 } from "lucide-react";
+import Logo from "@/components/Logo";
+import NotificationBell from "@/components/NotificationBell";
 
-const links = [
-  { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true, testid: "nav-dashboard" },
-  { to: "/residents", label: "Residents", icon: Users, testid: "nav-residents" },
-  { to: "/notes", label: "Daily Notes", icon: NotebookPen, testid: "nav-notes" },
-  { to: "/incidents", label: "Incidents", icon: ShieldAlert, testid: "nav-incidents" },
-  { to: "/medications", label: "Medications", icon: Pill, testid: "nav-medications" },
-  { to: "/staff", label: "Staff Management", icon: UserCog, testid: "nav-staff" },
+const groups = [
   {
-    to: "/supervisions",
-    label: "Supervisions",
-    icon: ClipboardCheck,
-    testid: "nav-supervisions",
+    label: "Overview",
+    items: [
+      { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true, testid: "nav-dashboard" },
+    ],
   },
   {
-    to: "/reports",
-    label: "Reports",
-    icon: FileText,
-    testid: "nav-reports",
-    roles: ["manager", "admin"],
+    label: "Care",
+    items: [
+      { to: "/residents", label: "Residents", icon: Users, testid: "nav-residents" },
+      { to: "/notes", label: "Daily Notes", icon: NotebookPen, testid: "nav-notes" },
+      { to: "/incidents", label: "Incidents", icon: ShieldAlert, testid: "nav-incidents" },
+      { to: "/medications", label: "Medications", icon: Pill, testid: "nav-medications" },
+      { to: "/visits", label: "Statutory Visits", icon: CalendarCheck, testid: "nav-visits" },
+    ],
   },
-  { to: "/ofsted", label: "Ofsted Readiness", icon: BadgeCheck, testid: "nav-ofsted" },
+  {
+    label: "Compliance",
+    items: [
+      { to: "/supervisions", label: "Supervisions", icon: ClipboardCheck, testid: "nav-supervisions" },
+      { to: "/ofsted", label: "Ofsted Readiness", icon: BadgeCheck, testid: "nav-ofsted" },
+      { to: "/reports", label: "Reports", icon: FileText, testid: "nav-reports", roles: ["manager", "admin"] },
+    ],
+  },
+  {
+    label: "Team",
+    items: [
+      { to: "/staff", label: "Staff & Training", icon: UserCog, testid: "nav-staff" },
+    ],
+  },
 ];
+
+function NavItem({ link, onClick }) {
+  const Icon = link.icon;
+  return (
+    <NavLink
+      end={link.end}
+      to={link.to}
+      data-testid={link.testid}
+      onClick={onClick}
+      className={({ isActive }) =>
+        `group flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13px] font-medium transition-all duration-150 ${
+          isActive
+            ? "bg-[#0e3b4a] text-white shadow-sm"
+            : "text-[#2f3038] hover:bg-[#0e3b4a]/8 hover:text-[#0e3b4a]"
+        }`
+      }
+    >
+      <Icon size={16} className="shrink-0" />
+      <span className="truncate">{link.label}</span>
+    </NavLink>
+  );
+}
 
 export default function Layout() {
   const { user, logout } = useAuth();
-  const nav = useNavigate();
+  const location = useLocation();
+  const [mobileOpen, setMobileOpen] = useState(false);
 
-  const handleLogout = () => {
-    logout();
-    nav("/login");
-  };
+  const close = () => setMobileOpen(false);
 
   return (
-    <div className="min-h-screen flex flex-col md:flex-row bg-canvas">
-      {/* Sidebar */}
-      <aside className="md:w-64 md:fixed md:inset-y-0 md:left-0 flex md:flex-col bg-paper border-b md:border-b-0 md:border-r divider-soft px-4 md:px-5 py-3 md:py-7 z-10">
-        <div className="flex items-center gap-3 mb-0 md:mb-8">
-          <Logo size={40} />
-          <div className="hidden md:block">
-            <WordMark size="md" />
-          </div>
-          <div className="ml-auto md:hidden">
-            <NotificationBell testid="notification-bell-mobile" />
-          </div>
-        </div>
-
-        <nav className="flex md:flex-col gap-1 ml-auto md:ml-0 overflow-x-auto md:overflow-visible">
-          {links
-            .filter((l) => !l.roles || l.roles.includes(user?.role))
-            .map((l) => (
-              <NavLink
-                key={l.to}
-                to={l.to}
-                end={l.end}
-                data-testid={l.testid}
-                className={({ isActive }) =>
-                  `flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium whitespace-nowrap transition-colors ${
-                    isActive
-                      ? "bg-[#1E4D5C] text-white"
-                      : "text-stone-700 hover:bg-stone-100"
-                  }`
-                }
-              >
-                <l.icon size={17} />
-                <span>{l.label}</span>
-              </NavLink>
-            ))}
-        </nav>
-
-        <div className="mt-auto pt-6 hidden md:block">
-          <div className="rounded-xl bg-stone-50 border divider-soft p-3.5 mb-3">
-            <div className="text-[10px] uppercase tracking-wider text-stone-500 mb-1">
-              Signed in as
-            </div>
-            <div className="font-medium text-stone-900 text-sm truncate">
-              {user?.name}
-            </div>
-            <div className="text-xs text-stone-500 capitalize">{user?.role}</div>
-          </div>
+    <div className="min-h-screen bg-canvas">
+      {/* Mobile top bar */}
+      <header className="lg:hidden sticky top-0 z-30 bg-white border-b divider-soft px-4 py-3 flex items-center justify-between">
+        <Logo />
+        <div className="flex items-center gap-2">
+          <NotificationBell />
           <button
-            data-testid="logout-btn"
-            onClick={handleLogout}
-            className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium text-stone-700 hover:bg-stone-100 border divider-soft"
+            type="button"
+            onClick={() => setMobileOpen(!mobileOpen)}
+            className="p-2 rounded-lg hover:bg-stone-100"
+            aria-label="Menu"
           >
-            <LogOut size={16} /> Sign out
+            {mobileOpen ? <X size={20} /> : <Menu size={20} />}
           </button>
         </div>
-      </aside>
+      </header>
 
-      <main className="flex-1 md:ml-64">
-        <div className="max-w-6xl mx-auto px-4 sm:px-8 py-6 sm:py-10">
-          <div className="hidden md:flex items-center justify-end mb-4">
-            <NotificationBell testid="notification-bell-desktop" />
+      <div className="flex">
+        {/* Sidebar */}
+        <aside
+          className={`${
+            mobileOpen ? "block" : "hidden"
+          } lg:block lg:w-64 fixed lg:sticky top-0 left-0 z-20 lg:z-auto h-screen lg:h-screen bg-white border-r divider-soft overflow-y-auto`}
+          data-testid="sidebar"
+        >
+          <div className="px-5 py-5 border-b divider-soft hidden lg:flex items-center justify-between">
+            <Logo />
+            <NotificationBell />
           </div>
-          <Outlet />
-        </div>
-      </main>
+          <nav className="p-3 space-y-4">
+            {groups.map((g) => {
+              const items = g.items.filter(
+                (l) => !l.roles || l.roles.includes(user?.role)
+              );
+              if (items.length === 0) return null;
+              return (
+                <div key={g.label}>
+                  <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#8a8d95] px-3 mb-1.5">
+                    {g.label}
+                  </div>
+                  <div className="space-y-0.5">
+                    {items.map((l) => (
+                      <NavItem key={l.to} link={l} onClick={close} />
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </nav>
+          <div className="p-3 mt-auto border-t divider-soft sticky bottom-0 bg-white">
+            <div
+              className="flex items-center gap-2.5 px-3 py-2 rounded-lg bg-stone-50"
+              data-testid="user-card"
+            >
+              <div className="w-8 h-8 rounded-full bg-[#0e3b4a] text-white text-[11px] font-semibold flex items-center justify-center shrink-0">
+                {(user?.name || "—")
+                  .split(" ")
+                  .map((s) => s[0])
+                  .join("")
+                  .slice(0, 2)
+                  .toUpperCase()}
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="text-[13px] font-semibold text-[#0F1115] truncate">
+                  {user?.name || "—"}
+                </div>
+                <div className="text-[10px] uppercase tracking-wider text-[#8a8d95]">
+                  {user?.role}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={logout}
+                data-testid="logout-btn"
+                className="text-[#5d6068] hover:text-[#A8273A] p-1.5 rounded-md hover:bg-white transition-colors"
+                title="Sign out"
+              >
+                <LogOut size={14} />
+              </button>
+            </div>
+          </div>
+        </aside>
+
+        {/* Main */}
+        <main className="flex-1 min-w-0 p-4 sm:p-6 lg:p-8 max-w-[1400px] mx-auto w-full">
+          <Outlet key={location.pathname} />
+        </main>
+      </div>
     </div>
   );
 }

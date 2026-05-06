@@ -18,6 +18,7 @@ import MissingShare from "@/pages/MissingShare";
 import MedicationRound from "@/pages/MedicationRound";
 import OfstedReadiness from "@/pages/OfstedReadiness";
 import Staff from "@/pages/Staff";
+import Visits from "@/pages/Visits";
 
 function Protected({ children }) {
   const { user, loading } = useAuth();
@@ -66,6 +67,7 @@ function App() {
               />
               <Route path="/supervisions" element={<Supervisions />} />
               <Route path="/medications" element={<MedicationRound />} />
+              <Route path="/visits" element={<Visits />} />
               <Route path="/ofsted" element={<OfstedReadiness />} />
               <Route
                 path="/reports"

@@ -69,6 +69,8 @@ async def lifespan(_app: FastAPI):
     await db.education_records.create_index("resident_id", unique=True, sparse=True)
     await db.shifts.create_index([("start_at", 1), ("end_at", 1)])
     await db.trainings.create_index([("staff_id", 1), ("expires_on", 1)])
+    await db.statutory_visits.create_index([("resident_id", 1), ("scheduled_for", -1)])
+    await db.statutory_visits.create_index("status")
 
     admin_email = os.environ.get("ADMIN_EMAIL", "admin@care.local").lower()
     admin_password = os.environ.get("ADMIN_PASSWORD", "Admin@123")
@@ -126,7 +128,8 @@ async def _seed_demo_data_if_empty():
     has_edu = await db.education_records.count_documents({}) > 0
     has_shifts = await db.shifts.count_documents({}) > 0
     has_train = await db.trainings.count_documents({}) > 0
-    if fully_seeded and has_meds and has_health and has_edu and has_shifts and has_train:
+    has_visits = await db.statutory_visits.count_documents({}) > 0
+    if fully_seeded and has_meds and has_health and has_edu and has_shifts and has_train and has_visits:
         return
     if fully_seeded:
         # Profiles exist but new modules missing — top up only.
@@ -600,7 +603,8 @@ async def _seed_meds_and_bodymaps():
     have_edu = await db.education_records.count_documents({}) > 0
     have_shifts = await db.shifts.count_documents({}) > 0
     have_train = await db.trainings.count_documents({}) > 0
-    if have_meds and have_bm and have_health and have_edu and have_shifts and have_train:
+    have_visits = await db.statutory_visits.count_documents({}) > 0
+    if have_meds and have_bm and have_health and have_edu and have_shifts and have_train and have_visits:
         return
     residents = await db.residents.find({}, {"_id": 0, "id": 1, "name": 1}).to_list(500)
     if not residents:
@@ -988,6 +992,44 @@ async def _seed_meds_and_bodymaps():
                     "notes": None,
                     "created_at": (now - timedelta(days=days_ago)).isoformat(),
                 })
+
+    # ---- Statutory Visits seed ----
+    if not have_visits:
+        visit_seed = [
+            ("Jordan Reilly", "lac_review", -45, 90, "Pri Patel", "Social Worker", "completed"),
+            ("Jordan Reilly", "sw_visit", 5, None, "Pri Patel", "Social Worker", "scheduled"),
+            ("Aisha Khan", "lac_review", 12, None, "Marcus Wright", "Social Worker", "scheduled"),
+            ("Aisha Khan", "iro_visit", -10, 80, "James Connell", "Independent Reviewing Officer", "completed"),
+            ("Aisha Khan", "sw_visit", -3, None, "Marcus Wright", "Social Worker", "missed"),  # missed
+            ("Maddy O'Brien", "lac_review", 30, None, "Daniel Owusu", "Social Worker", "scheduled"),
+            ("Maddy O'Brien", "iro_visit", -2, None, "James Connell", "Independent Reviewing Officer", "scheduled"),  # overdue
+            ("Leo Martinez", "sw_visit", 7, None, "Helena Brown", "Social Worker", "scheduled"),
+            (None, "regulation_44", 14, None, "External Visitor — D. Hughes", "Regulation 44 Visitor", "scheduled"),
+            (None, "regulation_44", -28, 60, "External Visitor — D. Hughes", "Regulation 44 Visitor", "completed"),
+        ]
+        for (name, kind, day_offset, next_offset, attendee, role, status) in visit_seed:
+            rid = res_by_name.get(name) if name else None
+            scheduled = (now + timedelta(days=day_offset)).date().isoformat()
+            doc = {
+                "id": str(uuid.uuid4()),
+                "resident_id": rid,
+                "kind": kind,
+                "title": kind.replace("_", " ").title() + (f" — {name}" if name else " — Home-wide"),
+                "scheduled_for": scheduled,
+                "time": "14:00" if kind != "regulation_44" else "10:00",
+                "completed_on": scheduled if status == "completed" else None,
+                "attended_by": attendee if status == "completed" else None,
+                "visitor_role": role,
+                "location": "Home" if kind != "lac_review" else "Local Authority",
+                "status": status,
+                "next_due": (now + timedelta(days=next_offset)).date().isoformat() if next_offset else None,
+                "notes": "Auto-seeded demo visit." if status == "completed" else None,
+                "follow_up": None,
+                "created_at": (now - timedelta(days=30)).isoformat(),
+                "created_by_name": manager_user["name"],
+            }
+            await db.statutory_visits.insert_one(doc)
+
 
 app = FastAPI(title="Care Companion API", lifespan=lifespan)
 api_router = APIRouter(prefix="/api")
@@ -3048,6 +3090,208 @@ async def create_training(payload: TrainingIn, _: dict = Depends(require_role("m
 async def delete_training(tid: str, _: dict = Depends(require_role("manager", "admin"))):
     res = await db.trainings.delete_one({"id": tid})
     return {"deleted": res.deleted_count}
+
+
+# ---------- Statutory Visits & LAC Reviews ----------
+VISIT_KIND = Literal[
+    "lac_review", "iro_visit", "sw_visit", "regulation_44",
+    "regulation_45", "ofsted_visit", "other"
+]
+VISIT_STATUS = Literal["scheduled", "completed", "missed", "cancelled", "rescheduled"]
+
+
+class StatutoryVisitIn(BaseModel):
+    resident_id: Optional[str] = None  # None = home-wide visit (e.g. Reg 44)
+    kind: VISIT_KIND = "lac_review"
+    title: Optional[str] = None
+    scheduled_for: str  # YYYY-MM-DD
+    time: Optional[str] = None
+    completed_on: Optional[str] = None
+    attended_by: Optional[str] = None
+    visitor_role: Optional[str] = None  # "IRO", "Social Worker", "Regulation 44 Visitor"
+    location: Optional[str] = None
+    status: VISIT_STATUS = "scheduled"
+    next_due: Optional[str] = None
+    notes: Optional[str] = None
+    follow_up: Optional[str] = None
+
+
+class StatutoryVisit(StatutoryVisitIn):
+    id: str
+    created_at: str
+    created_by_name: Optional[str] = None
+
+
+@api_router.get("/visits", response_model=List[StatutoryVisit])
+async def list_visits(
+    resident_id: Optional[str] = None,
+    upcoming: bool = False,
+    overdue: bool = False,
+    _: dict = Depends(get_current_user),
+):
+    today = datetime.now(timezone.utc).date().isoformat()
+    q: dict = {}
+    if resident_id:
+        q["resident_id"] = resident_id
+    if upcoming:
+        q["scheduled_for"] = {"$gte": today}
+        q["status"] = "scheduled"
+    if overdue:
+        q["scheduled_for"] = {"$lt": today}
+        q["status"] = "scheduled"
+    docs = await db.statutory_visits.find(q, {"_id": 0}).sort("scheduled_for", 1).to_list(500)
+    return docs
+
+
+@api_router.post("/visits", response_model=StatutoryVisit)
+async def create_visit(payload: StatutoryVisitIn, user: dict = Depends(get_current_user)):
+    if payload.resident_id and not await db.residents.find_one(
+        {"id": payload.resident_id}, {"_id": 0, "id": 1}
+    ):
+        raise HTTPException(404, "Resident not found")
+    doc = {
+        **payload.model_dump(),
+        "id": str(uuid.uuid4()),
+        "created_at": now_iso(),
+        "created_by_name": user["name"],
+    }
+    await db.statutory_visits.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api_router.patch("/visits/{vid}", response_model=StatutoryVisit)
+async def update_visit(vid: str, payload: StatutoryVisitIn, _: dict = Depends(get_current_user)):
+    update = payload.model_dump(exclude_unset=True)
+    res = await db.statutory_visits.update_one({"id": vid}, {"$set": update})
+    if res.matched_count == 0:
+        raise HTTPException(404, "Visit not found")
+    doc = await db.statutory_visits.find_one({"id": vid}, {"_id": 0})
+    return doc
+
+
+@api_router.delete("/visits/{vid}")
+async def delete_visit(vid: str, _: dict = Depends(require_role("manager", "admin"))):
+    res = await db.statutory_visits.delete_one({"id": vid})
+    return {"deleted": res.deleted_count}
+
+
+@api_router.get("/dashboard/urgency")
+async def dashboard_urgency(_: dict = Depends(get_current_user)):
+    """Compact widget data for the new dashboard urgency bar."""
+    now = datetime.now(timezone.utc)
+    today_iso_d = now.date().isoformat()
+    last24 = (now - timedelta(hours=24)).isoformat()
+    cutoff_review = today_iso_d
+
+    # Overdue risk reviews
+    residents = await db.residents.find({}, {"_id": 0}).to_list(500)
+    risk_overdue = [
+        r for r in residents
+        if (r.get("risk_next_review") or "") and r["risk_next_review"] < cutoff_review
+    ]
+
+    # Missed medication doses (scheduled but not signed) in last 24h
+    meds = await db.medications.find({"active": True, "is_prn": False}, {"_id": 0}).to_list(500)
+    missed = 0
+    for m in meds:
+        for t in m.get("schedule_times", []) or []:
+            try:
+                hh, mn = t.split(":")
+                sched = now.replace(hour=int(hh), minute=int(mn), second=0, microsecond=0)
+                if sched > now or sched < (now - timedelta(hours=24)):
+                    continue
+                rec = await db.medication_admins.find_one(
+                    {"medication_id": m["id"], "scheduled_at": sched.isoformat()}, {"_id": 0}
+                )
+                if not rec:
+                    missed += 1
+            except Exception:
+                pass
+
+    # Open safeguarding incidents
+    open_safeguarding = await db.incidents.count_documents(
+        {"safeguarding": True, "status": "open"}
+    )
+
+    # Open missing episodes
+    open_missing = await db.missing_episodes.count_documents({"returned_at": None})
+
+    # Overdue statutory visits
+    overdue_visits = await db.statutory_visits.count_documents(
+        {"scheduled_for": {"$lt": today_iso_d}, "status": "scheduled"}
+    )
+
+    # Upcoming visits next 14 days
+    fortnight = (now + timedelta(days=14)).date().isoformat()
+    upcoming_visits = await db.statutory_visits.count_documents(
+        {"scheduled_for": {"$gte": today_iso_d, "$lte": fortnight}, "status": "scheduled"}
+    )
+
+    return {
+        "risk_reviews_overdue": len(risk_overdue),
+        "missed_doses_24h": missed,
+        "open_safeguarding": open_safeguarding,
+        "open_missing": open_missing,
+        "overdue_visits": overdue_visits,
+        "upcoming_visits": upcoming_visits,
+    }
+
+
+@api_router.get("/residents/{rid}/badges")
+async def resident_badges(rid: str, _: dict = Depends(get_current_user)):
+    """Human-readable priority badges for a resident card."""
+    r = await db.residents.find_one({"id": rid}, {"_id": 0})
+    if not r:
+        raise HTTPException(404, "Resident not found")
+    today_d = datetime.now(timezone.utc).date().isoformat()
+    badges = []
+
+    risk = (r.get("risk_level") or "").lower()
+    if risk == "high":
+        badges.append({"label": "High Risk", "tone": "red"})
+
+    if r.get("risk_next_review") and r["risk_next_review"] < today_d:
+        badges.append({"label": "Risk Review Overdue", "tone": "red"})
+
+    risks = r.get("risks") or {}
+    if str(risks.get("absconding") or "").lower().startswith(("high", "active", "moderate")):
+        badges.append({"label": "Missing Risk", "tone": "amber"})
+    if str(risks.get("self_harm") or "").lower().startswith(("high", "active")):
+        badges.append({"label": "Self-Harm Risk", "tone": "red"})
+    if str(risks.get("substance") or "").lower() not in ("none", "none known", "", "—"):
+        badges.append({"label": "Substance Use", "tone": "amber"})
+
+    # Active missing episode
+    open_ep = await db.missing_episodes.find_one({"resident_id": rid, "returned_at": None})
+    if open_ep:
+        badges.append({"label": "Currently Missing", "tone": "red"})
+
+    # Med-related
+    if (r.get("medical") or {}).get("allergies") and (r.get("medical") or {}).get("allergies") not in ("None", "None known", "—"):
+        badges.append({"label": "Allergy on File", "tone": "amber"})
+
+    # Recent self-harm or violent incident in last 7d
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+    recent_sg = await db.incidents.count_documents(
+        {"resident_id": rid, "safeguarding": True, "created_at": {"$gte": cutoff}}
+    )
+    if recent_sg:
+        badges.append({"label": "Recent Safeguarding", "tone": "red"})
+
+    # Overdue PEP
+    edu = await db.education_records.find_one({"resident_id": rid}, {"_id": 0})
+    if edu and edu.get("next_pep_date") and edu["next_pep_date"] < today_d:
+        badges.append({"label": "PEP Overdue", "tone": "amber"})
+
+    # Overdue immunisations
+    overdue_immu = await db.immunisations.count_documents(
+        {"resident_id": rid, "next_due": {"$lt": today_d}}
+    )
+    if overdue_immu:
+        badges.append({"label": "Immunisation Overdue", "tone": "amber"})
+
+    return {"badges": badges}
 
 
 # ---------- Notifications ----------
