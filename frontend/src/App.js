@@ -17,9 +17,12 @@ import Supervisions from "@/pages/Supervisions";
 import MissingShare from "@/pages/MissingShare";
 import MedicationRound from "@/pages/MedicationRound";
 import OfstedReadiness from "@/pages/OfstedReadiness";
-import Staff from "@/pages/Staff";
+import Staff, { TrainingPage } from "@/pages/Staff";
 import Visits from "@/pages/Visits";
 import PocketMoney from "@/pages/PocketMoney";
+import PettyCashPage from "@/pages/PettyCashPage";
+import Handover from "@/pages/Handover";
+import SaferRecruitment from "@/pages/SaferRecruitment";
 
 function Protected({ children }) {
   const { user, loading } = useAuth();
@@ -62,10 +65,11 @@ function App() {
               <Route path="/incidents" element={<Incidents />} />
               <Route path="/incidents/new" element={<LogIncident />} />
               <Route path="/incidents/:id" element={<IncidentDetail />} />
-              <Route
-                path="/staff"
-                element={<Staff />}
-              />
+              <Route path="/staff" element={<Staff />} />
+              <Route path="/training" element={<TrainingPage />} />
+              <Route path="/handover" element={<Handover />} />
+              <Route path="/hr" element={<SaferRecruitment />} />
+              <Route path="/petty-cash" element={<PettyCashPage />} />
               <Route path="/supervisions" element={<Supervisions />} />
               <Route path="/medications" element={<MedicationRound />} />
               <Route path="/visits" element={<Visits />} />

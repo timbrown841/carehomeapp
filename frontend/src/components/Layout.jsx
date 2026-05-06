@@ -13,6 +13,10 @@ import {
   Pill,
   CalendarCheck,
   Wallet,
+  HandCoins,
+  ClipboardList,
+  GraduationCap,
+  ShieldCheck,
   LogOut,
   Menu,
   X,
@@ -35,21 +39,45 @@ const groups = [
       { to: "/incidents", label: "Incidents", icon: ShieldAlert, testid: "nav-incidents" },
       { to: "/medications", label: "Medications", icon: Pill, testid: "nav-medications" },
       { to: "/visits", label: "Statutory Visits", icon: CalendarCheck, testid: "nav-visits" },
+    ],
+  },
+  {
+    label: "Shift Handover",
+    items: [
+      { to: "/handover", label: "Shift Handover", icon: ClipboardList, testid: "nav-handover" },
+    ],
+  },
+  {
+    label: "Staff Operations",
+    items: [
+      { to: "/staff", label: "Rota & Shifts", icon: UserCog, testid: "nav-staff" },
+    ],
+  },
+  {
+    label: "Training & Development",
+    items: [
+      { to: "/training", label: "Training Matrix", icon: GraduationCap, testid: "nav-training" },
+      { to: "/supervisions", label: "Supervisions", icon: ClipboardCheck, testid: "nav-supervisions" },
+    ],
+  },
+  {
+    label: "Safer Recruitment & HR",
+    items: [
+      { to: "/hr", label: "Safer Recruitment", icon: ShieldCheck, testid: "nav-hr", roles: ["manager", "admin"] },
+    ],
+  },
+  {
+    label: "Finance",
+    items: [
       { to: "/pocket-money", label: "Pocket Money", icon: Wallet, testid: "nav-pocket-money" },
+      { to: "/petty-cash", label: "Petty Cash", icon: HandCoins, testid: "nav-petty-cash" },
     ],
   },
   {
     label: "Compliance",
     items: [
-      { to: "/supervisions", label: "Supervisions", icon: ClipboardCheck, testid: "nav-supervisions" },
       { to: "/ofsted", label: "Ofsted Readiness", icon: BadgeCheck, testid: "nav-ofsted" },
       { to: "/reports", label: "Reports", icon: FileText, testid: "nav-reports", roles: ["manager", "admin"] },
-    ],
-  },
-  {
-    label: "Team",
-    items: [
-      { to: "/staff", label: "Staff & Training", icon: UserCog, testid: "nav-staff" },
     ],
   },
 ];

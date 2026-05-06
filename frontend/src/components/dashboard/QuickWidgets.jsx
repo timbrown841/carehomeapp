@@ -6,7 +6,7 @@ import {
   Pill,
   CalendarCheck,
   NotebookPen,
-  UserPlus,
+  ClipboardList,
   ArrowRight,
   AlertTriangle,
   AlertOctagon,
@@ -19,10 +19,10 @@ import {
 export function QuickActions() {
   const actions = [
     { label: "Log Incident", to: "/incidents/new", icon: Mic, accent: "#A8273A", testid: "qa-incident", primary: true },
+    { label: "Shift Handover", to: "/handover", icon: ClipboardList, accent: "#0e3b4a", testid: "qa-handover" },
     { label: "Medication Round", to: "/medications", icon: Pill, accent: "#0e3b4a", testid: "qa-medication" },
     { label: "Schedule Visit", to: "/visits", icon: CalendarCheck, accent: "#0e3b4a", testid: "qa-visit" },
     { label: "Care Note", to: "/notes", icon: NotebookPen, accent: "#2F6A3A", testid: "qa-note" },
-    { label: "Add Resident", to: "/residents", icon: UserPlus, accent: "#2F6A3A", testid: "qa-resident" },
   ];
   return (
     <section data-testid="quick-actions" className="space-y-2">

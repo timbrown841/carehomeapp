@@ -15,7 +15,6 @@ import {
   Calendar,
 } from "lucide-react";
 import { toast } from "sonner";
-import PettyCash from "@/components/staff/PettyCash";
 
 const inputCls =
   "w-full bg-white border divider-soft rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#0e3b4a]";
@@ -39,48 +38,43 @@ const STATUS_TONE = {
 
 export default function Staff() {
   const { user } = useAuth();
-  const [tab, setTab] = useState("rota");
   const canManage = user?.role === "manager" || user?.role === "admin";
   return (
     <div className="space-y-5 max-w-6xl mx-auto" data-testid="staff-page">
       <header>
         <div className="text-xs font-semibold uppercase tracking-[0.14em] text-[#0e3b4a]">
-          People & Compliance
+          Staff Operations
         </div>
         <h1 className="font-display font-semibold text-3xl tracking-tight text-[#0F1115] mt-1.5" style={{ letterSpacing: "-0.02em" }}>
-          Staff Rotas & Training
+          Rota & Shifts
         </h1>
         <p className="text-[#5d6068] mt-1.5 text-[15px]">
-          See who's on shift right now, plan the week ahead, and keep every certificate current.
+          Who's on shift right now and the upcoming week's rota. Training, recruitment and finance now have their own dedicated sections.
         </p>
       </header>
 
-      <nav
-        className="flex gap-1 border-b divider-soft"
-        data-testid="staff-tabs"
-      >
-        {[
-          { id: "rota", label: "Rota & On-shift now" },
-          { id: "training", label: "Training matrix" },
-          { id: "petty", label: "Petty Cash & Handover" },
-        ].map((t) => (
-          <button
-            key={t.id}
-            type="button"
-            data-testid={`staff-tab-${t.id}`}
-            onClick={() => setTab(t.id)}
-            className={`px-3.5 py-2.5 text-sm font-semibold whitespace-nowrap border-b-2 -mb-px transition-colors ${
-              tab === t.id ? "border-[#0e3b4a] text-[#0e3b4a]" : "border-transparent text-[#5d6068] hover:text-[#0F1115]"
-            }`}
-          >
-            {t.label}
-          </button>
-        ))}
-      </nav>
+      <RotaPanel canManage={canManage} />
+    </div>
+  );
+}
 
-      {tab === "rota" && <RotaPanel canManage={canManage} />}
-      {tab === "training" && <TrainingMatrix canManage={canManage} />}
-      {tab === "petty" && <PettyCash />}
+export function TrainingPage() {
+  const { user } = useAuth();
+  const canManage = user?.role === "manager" || user?.role === "admin";
+  return (
+    <div className="space-y-5 max-w-6xl mx-auto" data-testid="training-page">
+      <header>
+        <div className="text-xs font-semibold uppercase tracking-[0.14em] text-[#0e3b4a]">
+          Training & Development
+        </div>
+        <h1 className="font-display font-semibold text-3xl tracking-tight text-[#0F1115] mt-1.5" style={{ letterSpacing: "-0.02em" }}>
+          Training matrix
+        </h1>
+        <p className="text-[#5d6068] mt-1.5 text-[15px]">
+          Mandatory training, expiry dates and certificates. Managers see the full team matrix; support workers see their own training only.
+        </p>
+      </header>
+      <TrainingMatrix canManage={canManage} />
     </div>
   );
 }

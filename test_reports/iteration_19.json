@@ -1,0 +1,45 @@
+{
+  "summary": "Iteration 19 (Phase A IA restructure + Phase C Shift Handover) — 17/17 backend pytest pass; frontend manager session verified across all 8 sidebar groups, /handover list+detail (13 sections, flagged red border, locked & unlocked-till badges), /staff Rota-only, /training, /petty-cash, /hr placeholder.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {
+        "flow": "Handover list → detail navigation",
+        "issue": "Clicking a handover-row renders the detail view but does not change the URL — page stays at /handover instead of /handover/{id}. Detail UI is fully functional (sections, sign-in trail, flagged badges, locked/unlocked-till pills all render). Impact: refreshing or sharing a deep link returns to the list. Confirm whether this is intentional (single-page state-driven detail) or whether a /handover/:id route was intended (route map in App.js mentions /handover only).",
+        "affected_selectors": ["[data-testid^=\"handover-row\"]"]
+      }
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration19.py",
+    "/app/test_reports/pytest/iteration19_results.xml"
+  ],
+  "action_items": [
+    "Decide whether /handover detail should have its own route /handover/:id (deep-link-able) vs. the current state-driven inline render. If route is desired, add Route in App.js and Link/useNavigate in the row click handler.",
+    "Note: handover seed only fires when collection is empty — once a tester signs in the awaiting_incoming seed (UI or test), the demo state is gone forever until DB reset. Consider an idempotent reseed (delete TEST/demo prefix + reinsert) similar to other seeds, or expose an admin 'reset demo handovers' endpoint.",
+    "Phase B permissions deferred — staff currently sees nav-hr / Reports hidden via roles array, which is correct for THIS iteration. Flag for next iter."
+  ],
+  "critical_code_review_comments": [
+    "server.py is now ~4490 lines. Handover endpoints (3958-4202) + Petty Cash (3839-3955) + Pocket Money (3484-3838) are 3 standalone bounded contexts; each is a clean candidate for /app/backend/routers/{handover,petty_cash,pocket_money}.py. Adding tests will get harder until this split happens.",
+    "_is_editable() returns True during the unlock window even after sign-in is already done — meaning if the manager unlocks, edits, and then the unlock window expires without anyone re-signing, the edits remain in-place inside an audit-locked record. Consider writing an audit_log entry on every PATCH while status==locked + unlocked_until set, capturing diff + manager name, so the immutable-after-lock invariant has a tamper trail.",
+    "sign_in_handover() flag-notification block uses a bare try/except: pass — silently swallowing failures means a flagged handover could lock with no manager alert and no log. Log the exception or surface a 500.",
+    "Handover seed gates on 'is the collection empty' — 1.5 lines below another similar gate at line 134 (fully_seeded check). Once the awaiting_incoming demo gets signed-in, demo data drifts permanently. This bit my own test (had to soften assertion to 'at least one locked + at least one flagged' instead of expecting awaiting_incoming).",
+    "create_handover() derives outgoing_initials with ''.join(p[0] for p in user['name'].split())[:3].upper() — for a one-word username this yields a single letter; UI seeds it as 'MGR'/'AS' (3 chars). Consider padding or letting the UI's default win unconditionally.",
+    "POST /handovers/{id}/sign-in has no idempotency / replay guard — if the request retries on network blip it'll 409 second time (good), but no way to verify which side won. Consider returning 200 + already-locked snapshot on idempotent retry."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration19.py"
+  ],
+  "success_rate": {"backend": "100% (17/17)", "frontend": "100% on observed flows"},
+  "test_credentials": "manager@care.local / Manager@123 ; staff@care.local / Staff@123 ; admin@care.local / Admin@123",
+  "seed_data_creation": "Tests created TEST_iter19-prefixed draft handovers and ran them through full lifecycle (sign-out → sign-in → unlock → patch → delete). Every handover created in this run was DELETEd in the same test's finally block. 0 leaked test handovers remain. Side effect: the seeded 'awaiting_incoming' demo handover (the one with 2 flags) was already signed-in before this test ran (presumably during prior frontend manual testing) — its status is now 'locked' with unlocked_until set ~2026-05-07 01:52. This is the only persistent drift; both demo handovers are still visible in the list with correct shape. Detail screenshot saved at /app/.screenshots/handover_after_row_click.png shows the locked+unlocked seed with all 13 sections and flagged red border on Safeguarding + Petty cash discrepancies.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend regression: pytest /app/backend/tests/test_iteration19.py with REACT_APP_BACKEND_URL set. 17 tests cover: 13-section meta + ID set, list w/ status filter, create draft (13 empty sections, auto initials, draft status), GET full doc, PATCH updates body+flagged_count, PATCH on locked → 409, sign-out requires initials (400) + transitions to awaiting_incoming, sign-in requires awaiting state (409) + initials (400) + locks + persists locked_at, sign-in with flagged section is observable via flagged_count > 0 (delivery_log insert is fire-and-forget; not directly asserted but state confirms), unlock staff 403, unlock when not locked 409, unlock sets ~24h window + post-unlock PATCH succeeds, delete staff 403, full lifecycle end-to-end. Frontend manager session manually verified: 8 sidebar groups in correct order, all data-testid present (nav-handover, nav-staff, nav-training, nav-hr, nav-pocket-money, nav-petty-cash, qa-handover), /handover list shows 2 rows with Locked + 2-flagged badges, click row renders detail (Locked · Afternoon · 2026-05-06 · 2 FLAGGED FOR MANAGER · UNLOCKED TILL 2026-05-07 01:52, all 13 collapsible section cards, FILLED + FLAGGED pills on Safeguarding and Petty cash, red left border on flagged sections, Delete button visible because manager and unlock window active). /staff page is Rota-only (0 role=tab elements; 'Petty Cash' text only appears in left-nav). /training, /petty-cash standalone, /hr placeholder with 4 coming-up tiles all confirmed. Single observation: row click does NOT push /handover/{id} — detail is inline state (URL stays at /handover). Sign-out/Sign-in modal flow not exercised end-to-end via UI in this run (state was already locked-with-unlock-window so those buttons hidden) — main agent or a staff-role session can verify by creating a fresh draft via 'Start handover' button and walking the flow.",
+  "rca of the issue": "No bugs. Two non-blocking observations: (1) /handover detail is rendered as an inline state view, not via a /handover/:id route — refreshing the detail page returns the user to the list. May be intentional. (2) Initial demo seed for awaiting_incoming handover gets permanently consumed once any tester runs the sign-in flow on it — recommend an idempotent reseed."
+}

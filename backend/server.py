@@ -130,7 +130,8 @@ async def _seed_demo_data_if_empty():
     has_train = await db.trainings.count_documents({}) > 0
     has_visits = await db.statutory_visits.count_documents({}) > 0
     has_pm = await db.pocket_money_accounts.count_documents({}) > 0
-    if fully_seeded and has_meds and has_health and has_edu and has_shifts and has_train and has_visits and has_pm:
+    has_handover = await db.handovers.count_documents({}) > 0
+    if fully_seeded and has_meds and has_health and has_edu and has_shifts and has_train and has_visits and has_pm and has_handover:
         return
     if fully_seeded:
         # Profiles exist but new modules missing — top up only.
@@ -606,7 +607,8 @@ async def _seed_meds_and_bodymaps():
     have_train = await db.trainings.count_documents({}) > 0
     have_visits = await db.statutory_visits.count_documents({}) > 0
     have_pm = await db.pocket_money_accounts.count_documents({}) > 0
-    if have_meds and have_bm and have_health and have_edu and have_shifts and have_train and have_visits and have_pm:
+    have_handover = await db.handovers.count_documents({}) > 0
+    if have_meds and have_bm and have_health and have_edu and have_shifts and have_train and have_visits and have_pm and have_handover:
         return
     residents = await db.residents.find({}, {"_id": 0, "id": 1, "name": 1}).to_list(500)
     if not residents:
@@ -1216,6 +1218,78 @@ async def _seed_meds_and_bodymaps():
             {"id": "home"},
             {"$set": {"balance": running, "updated_at": now.isoformat()}},
         )
+
+    # ---- Handovers seed ----
+    if not await db.handovers.find_one({}):
+        HANDOVER_KEYS = [
+            "key_incidents", "missing_updates", "safeguarding", "medication_updates",
+            "appointments", "behaviour_concerns", "visitors_contact", "maintenance_property",
+            "vehicle_issues", "petty_cash_discrepancies", "reminders", "staff_observations",
+            "shift_summary",
+        ]
+        # 1. Locked handover from yesterday morning
+        sec1 = {k: {"body": "", "flagged": False} for k in HANDOVER_KEYS}
+        sec1["key_incidents"]["body"] = "Maddy returned from a missed appointment at 11:00 — calm, no concerns. Logged on her timeline."
+        sec1["medication_updates"]["body"] = "All AM doses signed. CD count verified — matches ledger."
+        sec1["appointments"]["body"] = "Aisha — dentist 14:30 today. Leo — speech therapy Friday 10:00."
+        sec1["shift_summary"]["body"] = "Settled morning. Breakfast routine smooth. Maddy's appointment to follow up."
+        sec1["reminders"]["body"] = "Order more sanitary supplies — running low."
+        ho1_id = str(uuid.uuid4())
+        sign1 = (now - timedelta(hours=24)).isoformat()
+        await db.handovers.insert_one({
+            "id": ho1_id,
+            "shift": "morning",
+            "shift_date": (now - timedelta(days=1)).date().isoformat(),
+            "started_at": (now - timedelta(hours=33)).isoformat(),
+            "ended_at": (now - timedelta(hours=25)).isoformat(),
+            "sections": sec1,
+            "outgoing_initials": "AS",
+            "incoming_initials": "DT",
+            "status": "locked",
+            "outgoing_user_name": staff_user["name"],
+            "incoming_user_name": "Daniel Owusu",
+            "outgoing_signed_at": (now - timedelta(hours=25)).isoformat(),
+            "incoming_signed_at": sign1,
+            "locked_at": sign1,
+            "unlocked_until": None,
+            "unlocked_by": None,
+            "flagged_count": 0,
+            "created_at": (now - timedelta(hours=33)).isoformat(),
+            "created_by_name": staff_user["name"],
+        })
+        # 2. Awaiting incoming sign-in (just submitted)
+        sec2 = {k: {"body": "", "flagged": False} for k in HANDOVER_KEYS}
+        sec2["safeguarding"] = {
+            "body": "Aisha disclosed concern about a peer at college. Brief notes taken. DSL informed. Needs follow-up next shift.",
+            "flagged": True,
+        }
+        sec2["behaviour_concerns"]["body"] = "Maddy escalated at 19:30 — de-escalated within 5 mins. No restraint."
+        sec2["medication_updates"]["body"] = "Evening doses signed. PRN pain relief given to Jordan (×1)."
+        sec2["petty_cash_discrepancies"]["body"] = "Float verified at handover £80.00 vs. running £74.00 — £6.00 surplus. Likely Friday's £6 unrecorded sandwich return — under investigation."
+        sec2["petty_cash_discrepancies"]["flagged"] = True
+        sec2["shift_summary"]["body"] = "Busy evening. Two flagged items — please action on AM shift."
+        ho2_id = str(uuid.uuid4())
+        await db.handovers.insert_one({
+            "id": ho2_id,
+            "shift": "afternoon",
+            "shift_date": now.date().isoformat(),
+            "started_at": (now - timedelta(hours=8)).isoformat(),
+            "ended_at": (now - timedelta(minutes=15)).isoformat(),
+            "sections": sec2,
+            "outgoing_initials": "AS",
+            "incoming_initials": None,
+            "status": "awaiting_incoming",
+            "outgoing_user_name": staff_user["name"],
+            "incoming_user_name": None,
+            "outgoing_signed_at": (now - timedelta(minutes=15)).isoformat(),
+            "incoming_signed_at": None,
+            "locked_at": None,
+            "unlocked_until": None,
+            "unlocked_by": None,
+            "flagged_count": 2,
+            "created_at": (now - timedelta(hours=8)).isoformat(),
+            "created_by_name": staff_user["name"],
+        })
 
 
 app = FastAPI(title="Care Companion API", lifespan=lifespan)
@@ -3880,6 +3954,251 @@ async def petty_cash_delete(tx_id: str, _: dict = Depends(require_role("manager"
     await db.home_petty_cash_tx.delete_one({"id": tx_id})
     return {"deleted": 1}
 
+
+# ---------- Shift Handover ----------
+HANDOVER_SHIFT = Literal["morning", "afternoon", "night", "sleep_in", "long_day", "other"]
+HANDOVER_STATUS = Literal["draft", "awaiting_incoming", "locked"]
+
+HANDOVER_SECTIONS_META = [
+    {"id": "key_incidents", "label": "Key incidents / events", "hint": "What happened on this shift that the next team needs to know?"},
+    {"id": "missing_updates", "label": "Missing from care updates", "hint": "Active episodes, returns, return interviews."},
+    {"id": "safeguarding", "label": "Safeguarding concerns", "hint": "Any disclosures, professional concerns, escalations."},
+    {"id": "medication_updates", "label": "Medication updates", "hint": "Refusals, PRN doses, controlled drug counts, missed doses."},
+    {"id": "appointments", "label": "Appointments today/tomorrow", "hint": "GP, dentist, court, social worker, IRO."},
+    {"id": "behaviour_concerns", "label": "Behaviour concerns", "hint": "Triggers observed, de-escalation used, restraint events."},
+    {"id": "visitors_contact", "label": "Visitors / family contact", "hint": "Family contact, professional visits, phone calls."},
+    {"id": "maintenance_property", "label": "Maintenance / property issues", "hint": "Damaged items, repairs needed, contractor visits."},
+    {"id": "vehicle_issues", "label": "Vehicle issues", "hint": "Mileage, fuel, defects, MOT, insurance."},
+    {"id": "petty_cash_discrepancies", "label": "Petty cash discrepancies", "hint": "Auto-flagged from the petty cash module — confirm or explain."},
+    {"id": "reminders", "label": "Important reminders", "hint": "Tasks the next shift must not forget."},
+    {"id": "staff_observations", "label": "Staff observations", "hint": "Patterns, concerns, things to watch."},
+    {"id": "shift_summary", "label": "Shift summary", "hint": "One-paragraph overview of how the shift went."},
+]
+
+
+class HandoverSectionContent(BaseModel):
+    body: str = ""
+    flagged: bool = False
+
+
+class HandoverIn(BaseModel):
+    shift: HANDOVER_SHIFT = "morning"
+    shift_date: str  # YYYY-MM-DD
+    started_at: Optional[str] = None
+    ended_at: Optional[str] = None
+    sections: Dict[str, HandoverSectionContent] = {}
+    outgoing_initials: Optional[str] = None
+    incoming_initials: Optional[str] = None
+
+
+class Handover(HandoverIn):
+    id: str
+    status: HANDOVER_STATUS = "draft"
+    outgoing_user_name: Optional[str] = None
+    incoming_user_name: Optional[str] = None
+    outgoing_signed_at: Optional[str] = None
+    incoming_signed_at: Optional[str] = None
+    locked_at: Optional[str] = None
+    unlocked_until: Optional[str] = None
+    unlocked_by: Optional[str] = None
+    flagged_count: int = 0
+    created_at: str
+    created_by_name: Optional[str] = None
+
+
+def _empty_handover_sections() -> Dict[str, dict]:
+    return {s["id"]: {"body": "", "flagged": False} for s in HANDOVER_SECTIONS_META}
+
+
+def _is_editable(handover: dict) -> bool:
+    """A handover is editable if status is draft, OR locked but within unlocked_until window."""
+    status = handover.get("status", "draft")
+    if status in ("draft", "awaiting_incoming"):
+        return True
+    if status == "locked":
+        unl = handover.get("unlocked_until")
+        if unl:
+            try:
+                return datetime.fromisoformat(unl) > datetime.now(timezone.utc)
+            except Exception:
+                return False
+    return False
+
+
+@api_router.get("/handovers/sections")
+async def handover_sections_meta(_: dict = Depends(get_current_user)):
+    return {"sections": HANDOVER_SECTIONS_META}
+
+
+@api_router.get("/handovers", response_model=List[Handover])
+async def list_handovers(
+    status: Optional[HANDOVER_STATUS] = None,
+    days: int = 30,
+    _: dict = Depends(get_current_user),
+):
+    q: dict = {}
+    if status:
+        q["status"] = status
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    q["created_at"] = {"$gte": cutoff}
+    docs = await db.handovers.find(q, {"_id": 0}).sort("created_at", -1).to_list(200)
+    return docs
+
+
+@api_router.post("/handovers", response_model=Handover)
+async def create_handover(payload: HandoverIn, user: dict = Depends(get_current_user)):
+    sections = {**_empty_handover_sections()}
+    for k, v in (payload.sections or {}).items():
+        if k in sections:
+            sections[k] = v.model_dump() if hasattr(v, "model_dump") else dict(v)
+    flagged = sum(1 for s in sections.values() if s.get("flagged"))
+    doc = {
+        **payload.model_dump(),
+        "id": str(uuid.uuid4()),
+        "sections": sections,
+        "status": "draft",
+        "outgoing_user_name": user["name"],
+        "outgoing_initials": payload.outgoing_initials or "".join(p[0] for p in user["name"].split())[:3].upper(),
+        "incoming_user_name": None,
+        "outgoing_signed_at": None,
+        "incoming_signed_at": None,
+        "locked_at": None,
+        "unlocked_until": None,
+        "unlocked_by": None,
+        "flagged_count": flagged,
+        "created_at": now_iso(),
+        "created_by_name": user["name"],
+    }
+    await db.handovers.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api_router.get("/handovers/{hid}", response_model=Handover)
+async def get_handover(hid: str, _: dict = Depends(get_current_user)):
+    doc = await db.handovers.find_one({"id": hid}, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, "Handover not found")
+    return doc
+
+
+@api_router.patch("/handovers/{hid}", response_model=Handover)
+async def update_handover(
+    hid: str, payload: HandoverIn, _: dict = Depends(get_current_user)
+):
+    cur = await db.handovers.find_one({"id": hid}, {"_id": 0})
+    if not cur:
+        raise HTTPException(404, "Handover not found")
+    if not _is_editable(cur):
+        raise HTTPException(409, "Handover is locked. Ask a manager to unlock it.")
+    update = payload.model_dump(exclude_unset=True)
+    if "sections" in update:
+        existing = cur.get("sections") or _empty_handover_sections()
+        for k, v in update["sections"].items():
+            if k in existing:
+                existing[k] = v.model_dump() if hasattr(v, "model_dump") else v
+        update["sections"] = existing
+        update["flagged_count"] = sum(1 for s in existing.values() if s.get("flagged"))
+    await db.handovers.update_one({"id": hid}, {"$set": update})
+    return await db.handovers.find_one({"id": hid}, {"_id": 0})
+
+
+@api_router.post("/handovers/{hid}/sign-out", response_model=Handover)
+async def sign_out_handover(
+    hid: str, payload: dict, user: dict = Depends(get_current_user)
+):
+    """Outgoing staff signs out — marks the handover as awaiting the incoming staff."""
+    cur = await db.handovers.find_one({"id": hid}, {"_id": 0})
+    if not cur:
+        raise HTTPException(404, "Handover not found")
+    if cur.get("status") not in ("draft",) and not _is_editable(cur):
+        raise HTTPException(409, "Handover already submitted or locked.")
+    initials = (payload.get("initials") or "").strip()
+    if not initials:
+        raise HTTPException(400, "Outgoing staff initials required")
+    await db.handovers.update_one(
+        {"id": hid},
+        {"$set": {
+            "status": "awaiting_incoming",
+            "outgoing_initials": initials,
+            "outgoing_user_name": cur.get("outgoing_user_name") or user["name"],
+            "outgoing_signed_at": now_iso(),
+            "ended_at": cur.get("ended_at") or now_iso(),
+        }},
+    )
+    return await db.handovers.find_one({"id": hid}, {"_id": 0})
+
+
+@api_router.post("/handovers/{hid}/sign-in", response_model=Handover)
+async def sign_in_handover(
+    hid: str, payload: dict, user: dict = Depends(get_current_user)
+):
+    """Incoming staff signs in — locks the handover. Manager notification fires if any flagged."""
+    cur = await db.handovers.find_one({"id": hid}, {"_id": 0})
+    if not cur:
+        raise HTTPException(404, "Handover not found")
+    if cur.get("status") != "awaiting_incoming":
+        raise HTTPException(409, "Handover is not awaiting incoming staff sign-in.")
+    initials = (payload.get("initials") or "").strip()
+    if not initials:
+        raise HTTPException(400, "Incoming staff initials required")
+    locked_at = now_iso()
+    await db.handovers.update_one(
+        {"id": hid},
+        {"$set": {
+            "status": "locked",
+            "incoming_initials": initials,
+            "incoming_user_name": user["name"],
+            "incoming_signed_at": locked_at,
+            "locked_at": locked_at,
+            "unlocked_until": None,
+        }},
+    )
+    # Manager notification (mocked) when any section is flagged
+    flagged_count = int(cur.get("flagged_count") or 0)
+    if flagged_count > 0:
+        try:
+            await db.delivery_log.insert_one({
+                "id": str(uuid.uuid4()),
+                "kind": "handover_flag",
+                "channel": "email",
+                "to_role": "manager",
+                "subject": f"Handover ({cur.get('shift', 'shift')} · {cur.get('shift_date')}) — {flagged_count} flagged section{'s' if flagged_count > 1 else ''}",
+                "body": f"Outgoing: {cur.get('outgoing_user_name')} (init {cur.get('outgoing_initials')}) → Incoming: {user['name']} (init {initials}). {flagged_count} section(s) flagged for manager attention.",
+                "status": "queued",
+                "created_at": now_iso(),
+                "handover_id": hid,
+            })
+        except Exception:
+            pass
+    return await db.handovers.find_one({"id": hid}, {"_id": 0})
+
+
+@api_router.post("/handovers/{hid}/unlock", response_model=Handover)
+async def unlock_handover(
+    hid: str, user: dict = Depends(require_role("manager", "admin"))
+):
+    """Manager re-opens a locked handover for a 24-hour correction window."""
+    cur = await db.handovers.find_one({"id": hid}, {"_id": 0})
+    if not cur:
+        raise HTTPException(404, "Handover not found")
+    if cur.get("status") != "locked":
+        raise HTTPException(409, "Handover is not locked")
+    unlock_until = (datetime.now(timezone.utc) + timedelta(hours=24)).isoformat()
+    await db.handovers.update_one(
+        {"id": hid},
+        {"$set": {
+            "unlocked_until": unlock_until,
+            "unlocked_by": user["name"],
+        }},
+    )
+    return await db.handovers.find_one({"id": hid}, {"_id": 0})
+
+
+@api_router.delete("/handovers/{hid}")
+async def delete_handover(hid: str, _: dict = Depends(require_role("manager", "admin"))):
+    res = await db.handovers.delete_one({"id": hid})
+    return {"deleted": res.deleted_count}
 
 
 # ---------- Notifications ----------
