@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useParams, useNavigate } from "react-router-dom";
 import api, { formatApiError } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import {
@@ -48,7 +49,8 @@ function initials(name) {
 
 export default function Handover() {
   const { user } = useAuth();
-  const [view, setView] = useState({ kind: "list" }); // {kind:"list"} | {kind:"detail",id}
+  const { id: routeId } = useParams();
+  const nav = useNavigate();
   const [list, setList] = useState([]);
   const [sectionsMeta, setSectionsMeta] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -71,13 +73,13 @@ export default function Handover() {
     load();
   }, []);
 
-  if (view.kind === "detail") {
+  if (routeId) {
     return (
       <HandoverDetail
-        id={view.id}
+        id={routeId}
         sectionsMeta={sectionsMeta}
         onBack={() => {
-          setView({ kind: "list" });
+          nav("/handover");
           load();
         }}
       />
@@ -130,7 +132,7 @@ export default function Handover() {
             <HandoverRow
               key={h.id}
               h={h}
-              onOpen={() => setView({ kind: "detail", id: h.id })}
+              onOpen={() => nav(`/handover/${h.id}`)}
             />
           ))}
         </ul>
@@ -142,7 +144,7 @@ export default function Handover() {
           onClose={() => setShowCreate(false)}
           onCreated={(h) => {
             setShowCreate(false);
-            setView({ kind: "detail", id: h.id });
+            nav(`/handover/${h.id}`);
           }}
         />
       )}

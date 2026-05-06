@@ -4169,8 +4169,8 @@ async def sign_in_handover(
                 "created_at": now_iso(),
                 "handover_id": hid,
             })
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Failed to record handover-flag delivery_log for %s: %s", hid, e)
     return await db.handovers.find_one({"id": hid}, {"_id": 0})
 
 

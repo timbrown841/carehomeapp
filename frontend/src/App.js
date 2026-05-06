@@ -68,6 +68,7 @@ function App() {
               <Route path="/staff" element={<Staff />} />
               <Route path="/training" element={<TrainingPage />} />
               <Route path="/handover" element={<Handover />} />
+              <Route path="/handover/:id" element={<Handover />} />
               <Route path="/hr" element={<SaferRecruitment />} />
               <Route path="/petty-cash" element={<PettyCashPage />} />
               <Route path="/supervisions" element={<Supervisions />} />
