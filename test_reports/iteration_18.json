@@ -1,0 +1,37 @@
+{
+  "summary": "Iteration 18 (multi-category Pocket Money + home-wide Petty Cash) — 21/21 backend pytest pass; frontend manager + staff sessions verified for category grid, calculator preview, Petty Cash tab, role gating.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Resident finance tab (Add transaction modal)", "issues": ["Console hydration warning: '<span> cannot be a child of <option>'. The Category <select> renders <option> with a <span> child somewhere in PocketMoneyTab.jsx. Functional but emits a React hydration warning on every page load."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration18.py",
+    "/app/test_reports/pytest/iteration18_results.xml"
+  ],
+  "action_items": [
+    "Remove <span> children from <option> elements in PocketMoneyTab.jsx Add-transaction modal (search the <select> rendering categories); use plain text labels instead to silence the React DOM-nesting warning."
+  ],
+  "critical_code_review_comments": [
+    "server.py is 4170 lines now — pocket-money (3484-3763) and petty-cash (3765-3881) endpoints are good candidates to extract into routers/pocket_money.py and routers/petty_cash.py for maintainability.",
+    "Petty cash 'adjustment' kind allows manager to alter balance without the dual-signature audit trail handovers require. Consider requiring manager-only role on POST when kind=='adjustment' (currently any authenticated user can post one).",
+    "pm_add_transaction reads the account doc, mutates a local dict, then writes back ($set on category_balances+total_balance). Under concurrent writes balance can desync. Use $inc on the keyed sub-field plus return-document, or a per-resident lock — same concern flagged in iter-17.",
+    "Handover with kind='handover' stores delta=0 by design but the discrepancy is the audit signal. Consider also persisting prev_balance on the tx so reports can reconstruct without traversing all earlier txs."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration18.py"
+  ],
+  "success_rate": {"backend": "100% (21/21)", "frontend": "100% on observed flows"},
+  "test_credentials": "manager@care.local / Manager@123 ; staff@care.local / Staff@123 ; admin@care.local / Admin@123",
+  "seed_data_creation": "TEST_iter18-prefixed pocket-money txs were created and immediately reversed/deleted in test_in_adds_out_subtracts and RBAC tests. Petty cash test created two TEST_iter18 handovers (one off by +£0.50 and a restore handover back to £80) plus 1 spend (cleaned). Final petty cash balance restored to seeded £80.00; ledger contains 2 extra TEST_iter18 handover rows (visible in screenshot); these can be cleared by reseed or DELETE by manager. No resident balances changed.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend regression: pytest /app/backend/tests/test_iteration18.py with REACT_APP_BACKEND_URL set. 21 tests cover: 17-category metadata, overview totals (Maddy weekly=£12, total £1517.60, trust £1200+ verified), per-resident detail shape, amount<=0 (400/422), invalid category 'foo' (400/422), in/out math + persistence + DELETE reversal, staff CAN create tx but CANNOT PATCH account or DELETE tx (403), PDF (default + invalid month), petty-cash state shape, seeded AS->DT last handover, both-initials required for handover (400 either missing), deposit/spend math + delete reversal, handover SETS balance to verified amount and logs discrepancy, staff DELETE petty 403. Frontend manually verified: cross-home /pocket-money shows £2314.40 total / £34.50 weekly / 17 cats label, all 4 residents with total+pocket+savings columns. Resident detail (Aisha) shows 17 category tiles in grid, IN/OUT colour-coded, search + filter dropdown, monthly statement button, ~12 transactions with category+staff+yp+receipt indicators. Add transaction modal: IN/OUT toggle, amount field, live calculator ('Pocket Money balance was £58.00 / -out -£X / New balance / Total balance after'), reason+initials+receipt fields. /staff page has Petty Cash & Handover as 3rd tab with Current Float £80.00, Last Handover AS->DT, Activity 8 ledger entries; manager sees Record spend + Top up float + Shift handover; staff role sees ONLY Record spend + Shift handover (Top up float correctly hidden). Staff finance tab on resident page does NOT show 'Adjust weekly amount' (RBAC OK). Discrepancy badges visible on handover rows (e.g. +£6.00 discrepancy on seeded handover, -£0.50 / +£0.50 on TEST handovers). One non-blocking React DOM warning observed: '<span> cannot be a child of <option>' in the category <select>.",
+  "rca of the issue": "No bugs. Single non-blocking issue: <span> child inside <option> element in PocketMoneyTab category select triggers React hydration warning. Fix: ensure <option> children are plain strings only."
+}

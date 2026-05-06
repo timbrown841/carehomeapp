@@ -29,15 +29,13 @@ export default function PocketMoney() {
   }, []);
 
   const totals = useMemo(() => {
-    let pocket = 0,
-      savings = 0,
+    let total = 0,
       weekly = 0;
     for (const r of rows) {
-      pocket += Number(r.pocket_balance || 0);
-      savings += Number(r.savings_balance || 0);
+      total += Number(r.total_balance || 0);
       weekly += Number(r.weekly_allowance || 0);
     }
-    return { pocket, savings, weekly };
+    return { total, weekly };
   }, [rows]);
 
   return (
@@ -53,14 +51,14 @@ export default function PocketMoney() {
           Pocket money & personal allowance
         </h1>
         <p className="text-[#5d6068] mt-1.5 text-[15px]">
-          Live balances and last activity for every young person. Open a profile to record a transaction or download a monthly statement.
+          Live balances and last activity for every young person. Open a profile to see all 17 finance categories or download a monthly statement.
         </p>
       </header>
 
       <div className="grid sm:grid-cols-3 gap-3">
-        <Stat icon={Wallet} tone="#0e3b4a" label="Total pocket on hand" value={fmt(totals.pocket)} testid="pm-total-pocket" />
-        <Stat icon={PiggyBank} tone="#2F6A3A" label="Total savings" value={fmt(totals.savings)} testid="pm-total-savings" />
-        <Stat icon={Coins} tone="#B8772F" label="Weekly allowance (combined)" value={fmt(totals.weekly)} testid="pm-total-weekly" sub={`${rows.length} young ${rows.length === 1 ? "person" : "people"}`} />
+        <Stat icon={Wallet} tone="#0e3b4a" label="Total finance held" value={fmt(totals.total)} testid="pm-total-finance" />
+        <Stat icon={PiggyBank} tone="#2F6A3A" label="Weekly allowance (combined)" value={fmt(totals.weekly)} testid="pm-total-weekly" sub={`${rows.length} young ${rows.length === 1 ? "person" : "people"}`} />
+        <Stat icon={Coins} tone="#B8772F" label="Categories per resident" value="17" testid="pm-cat-count" sub="Pocket, savings, clothing, trust, transport, gifts and more" />
       </div>
 
       {loading ? (
@@ -77,6 +75,7 @@ export default function PocketMoney() {
             <thead className="bg-stone-50 border-b divider-soft">
               <tr className="text-[10px] font-bold uppercase tracking-wider text-[#5d6068]">
                 <th className="text-left px-4 py-2.5">Young person</th>
+                <th className="text-right px-4 py-2.5">Total</th>
                 <th className="text-right px-4 py-2.5">Pocket</th>
                 <th className="text-right px-4 py-2.5">Savings</th>
                 <th className="text-right px-4 py-2.5">Weekly</th>
@@ -98,9 +97,12 @@ export default function PocketMoney() {
                       </div>
                     </td>
                     <td className="px-4 py-3 text-right tabular-nums font-bold text-[#0e3b4a]">
+                      {fmt(r.total_balance, cur)}
+                    </td>
+                    <td className="px-4 py-3 text-right tabular-nums text-[#0F1115]">
                       {fmt(r.pocket_balance, cur)}
                     </td>
-                    <td className="px-4 py-3 text-right tabular-nums font-bold text-[#2F6A3A]">
+                    <td className="px-4 py-3 text-right tabular-nums text-[#2F6A3A]">
                       {fmt(r.savings_balance, cur)}
                     </td>
                     <td className="px-4 py-3 text-right tabular-nums">{fmt(r.weekly_allowance, cur)}</td>

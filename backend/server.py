@@ -11,7 +11,7 @@ import logging
 import bcrypt
 import jwt
 from datetime import datetime, timezone, timedelta
-from typing import List, Optional, Literal
+from typing import List, Optional, Literal, Dict
 
 from fastapi import FastAPI, APIRouter, Depends, HTTPException, Request, UploadFile, File, Form
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -1032,117 +1032,190 @@ async def _seed_meds_and_bodymaps():
             }
             await db.statutory_visits.insert_one(doc)
 
-    # ---- Pocket Money seed ----
+    # ---- Pocket Money seed (multi-category finance ledger) ----
     if not have_pm:
+        FIN_CATS = [
+            "pocket", "personal_spending", "savings", "trust_leaving_care", "subsistence",
+            "clothing", "incentives", "deductions", "staff_purchases", "external_income",
+            "education_activity", "transport", "mobile_phone", "emergency", "gifts",
+            "health_personal_care", "fines",
+        ]
+        # (name, weekly, opening_balances{category:amount}, transactions[(days_ago, category, direction, amount, reason, yp_init, receipt)])
         pm_seed = [
-            # (name, weekly_allowance, opening_pocket, opening_savings, transactions [(days_ago, account, kind, amount, label, yp_initials)])
-            ("Jordan Reilly", 7.50, 22.50, 50.00, [
-                (28, "pocket", "allowance", 7.50, "Weekly allowance · w/c Mar", "JR"),
-                (24, "pocket", "spend", 3.00, "Sports drink + crisps", "JR"),
-                (21, "pocket", "allowance", 7.50, "Weekly allowance", "JR"),
-                (18, "pocket", "spend", 5.50, "Football kit accessory", "JR"),
-                (14, "pocket", "savings_in", 5.00, "Saving for new boots", "JR"),
-                (10, "pocket", "allowance", 7.50, "Weekly allowance", "JR"),
-                (4, "pocket", "spend", 4.20, "Cinema ticket", "JR"),
-                (3, "pocket", "allowance", 7.50, "Weekly allowance", "JR"),
+            ("Jordan Reilly", 7.50, {
+                "pocket": 22.50, "savings": 50.00, "clothing": 80.00, "trust_leaving_care": 0.0,
+            }, [
+                (28, "pocket", "in", 7.50, "Weekly allowance · w/c Mar", "JR", False),
+                (24, "pocket", "out", 3.00, "Sports drink + crisps", "JR", False),
+                (21, "pocket", "in", 7.50, "Weekly allowance", "JR", False),
+                (18, "transport", "out", 5.50, "Bus pass top-up", "JR", True),
+                (16, "incentives", "in", 5.00, "Reward · helped with chores", "JR", False),
+                (14, "savings", "in", 5.00, "Saving for new boots", "JR", False),
+                (12, "education_activity", "out", 8.00, "Football club fees", "JR", True),
+                (10, "pocket", "in", 7.50, "Weekly allowance", "JR", False),
+                (8, "subsistence", "out", 4.20, "Lunch out (away day)", "JR", True),
+                (4, "pocket", "out", 4.20, "Cinema ticket", "JR", False),
+                (3, "pocket", "in", 7.50, "Weekly allowance", "JR", False),
             ]),
-            ("Aisha Khan", 10.00, 18.00, 120.00, [
-                (29, "pocket", "allowance", 10.00, "Weekly allowance", "AK"),
-                (26, "pocket", "spend", 6.50, "Stationery / school supplies", "AK"),
-                (22, "pocket", "allowance", 10.00, "Weekly allowance", "AK"),
-                (19, "pocket", "spend", 12.00, "Birthday gift for friend", "AK"),
-                (15, "pocket", "allowance", 10.00, "Weekly allowance", "AK"),
-                (8, "pocket", "savings_in", 10.00, "Long-term savings transfer", "AK"),
-                (5, "pocket", "allowance", 10.00, "Weekly allowance", "AK"),
-                (2, "pocket", "spend", 4.00, "Bus fare top-up", "AK"),
+            ("Aisha Khan", 10.00, {
+                "pocket": 18.00, "savings": 120.00, "clothing": 60.00, "trust_leaving_care": 250.00,
+                "education_activity": 35.00,
+            }, [
+                (29, "pocket", "in", 10.00, "Weekly allowance", "AK", False),
+                (26, "education_activity", "out", 6.50, "Stationery / school supplies", "AK", True),
+                (23, "external_income", "in", 25.00, "Family contribution", "AK", False),
+                (22, "pocket", "in", 10.00, "Weekly allowance", "AK", False),
+                (19, "gifts", "out", 12.00, "Birthday gift for friend", "AK", True),
+                (16, "mobile_phone", "out", 10.00, "Phone top-up", "AK", True),
+                (15, "pocket", "in", 10.00, "Weekly allowance", "AK", False),
+                (12, "health_personal_care", "out", 18.00, "Haircut", "AK", True),
+                (10, "incentives", "in", 5.00, "Reward · school attendance", "AK", False),
+                (8, "savings", "in", 10.00, "Long-term savings transfer", "AK", False),
+                (5, "pocket", "in", 10.00, "Weekly allowance", "AK", False),
+                (2, "transport", "out", 4.00, "Bus fare top-up", "AK", False),
             ]),
-            ("Maddy O'Brien", 12.00, 35.00, 80.00, [
-                (27, "pocket", "allowance", 12.00, "Weekly allowance", "MO"),
-                (25, "pocket", "spend", 8.40, "Hairdresser tip + travel", "MO"),
-                (20, "pocket", "allowance", 12.00, "Weekly allowance", "MO"),
-                (16, "pocket", "spend", 9.00, "Phone top-up", "MO"),
-                (12, "pocket", "allowance", 12.00, "Weekly allowance", "MO"),
-                (9, "pocket", "deposit", 20.00, "Birthday money from mum", "MO"),
-                (6, "pocket", "spend", 14.50, "Lunch with friends in town", "MO"),
-                (3, "pocket", "allowance", 12.00, "Weekly allowance", "MO"),
+            ("Maddy O'Brien", 12.00, {
+                "pocket": 35.00, "savings": 80.00, "trust_leaving_care": 1200.00,
+                "clothing": 100.00, "personal_spending": 20.00,
+            }, [
+                (27, "pocket", "in", 12.00, "Weekly allowance", "MO", False),
+                (25, "health_personal_care", "out", 8.40, "Hairdresser tip + travel", "MO", True),
+                (22, "external_income", "in", 80.00, "Care leaver bursary", "MO", False),
+                (20, "pocket", "in", 12.00, "Weekly allowance", "MO", False),
+                (17, "education_activity", "out", 22.00, "College trip — Manchester", "MO", True),
+                (16, "mobile_phone", "out", 9.00, "Phone top-up", "MO", True),
+                (14, "deductions", "out", 5.00, "Sanction · damaged property (per policy)", "MO", False),
+                (12, "pocket", "in", 12.00, "Weekly allowance", "MO", False),
+                (9, "gifts", "in", 20.00, "Birthday money from mum", "MO", False),
+                (7, "subsistence", "out", 6.50, "Toiletries", "MO", True),
+                (6, "personal_spending", "out", 14.50, "Lunch with friends in town", "MO", False),
+                (3, "pocket", "in", 12.00, "Weekly allowance", "MO", False),
             ]),
-            ("Leo Martinez", 5.00, 12.50, 25.00, [
-                (28, "pocket", "allowance", 5.00, "Weekly allowance", "LM"),
-                (24, "pocket", "spend", 1.80, "Pokemon cards", "LM"),
-                (21, "pocket", "allowance", 5.00, "Weekly allowance", "LM"),
-                (16, "pocket", "spend", 3.20, "Comic + sweets", "LM"),
-                (14, "pocket", "allowance", 5.00, "Weekly allowance", "LM"),
-                (7, "pocket", "allowance", 5.00, "Weekly allowance", "LM"),
-                (4, "pocket", "spend", 2.50, "Ice cream at park", "LM"),
+            ("Leo Martinez", 5.00, {
+                "pocket": 12.50, "savings": 25.00, "clothing": 45.00, "trust_leaving_care": 0.0,
+                "education_activity": 12.00,
+            }, [
+                (28, "pocket", "in", 5.00, "Weekly allowance", "LM", False),
+                (24, "pocket", "out", 1.80, "Pokemon cards", "LM", False),
+                (21, "pocket", "in", 5.00, "Weekly allowance", "LM", False),
+                (18, "education_activity", "out", 4.00, "School trip lunch", "LM", True),
+                (16, "incentives", "in", 3.00, "Reward · brushing teeth chart", "LM", False),
+                (14, "pocket", "in", 5.00, "Weekly allowance", "LM", False),
+                (12, "subsistence", "out", 2.50, "Snack on outing", "LM", False),
+                (7, "pocket", "in", 5.00, "Weekly allowance", "LM", False),
+                (5, "gifts", "in", 10.00, "Aunt's visit gift", "LM", False),
+                (4, "pocket", "out", 2.50, "Ice cream at park", "LM", False),
             ]),
         ]
-        for (name, weekly, open_pocket, open_savings, txs) in pm_seed:
+        for (name, weekly, opening_balances, txs) in pm_seed:
             rid = res_by_name.get(name)
             if not rid:
                 continue
-            pocket = float(open_pocket)
-            savings = float(open_savings)
-            last_allowance = None
+            cb = {c: 0.0 for c in FIN_CATS}
+            for c, v in opening_balances.items():
+                cb[c] = round(float(v), 2)
+            total = round(sum(cb.values()), 2)
             account_doc = {
                 "resident_id": rid,
                 "weekly_allowance": float(weekly),
-                "pocket_balance": pocket,
-                "savings_balance": savings,
                 "currency": "GBP",
                 "note": None,
+                "category_balances": cb,
+                "total_balance": total,
                 "last_allowance_paid": None,
                 "updated_at": now.isoformat(),
             }
             await db.pocket_money_accounts.insert_one(account_doc)
-            sign_map = {
-                "allowance": +1, "deposit": +1, "savings_out": +1,
-                "spend": -1, "withdrawal": -1, "savings_in": -1,
-                "adjustment": +1,
-            }
-            for (days_ago, acct, kind, amt, label_text, yp_init) in txs:
-                d = round(sign_map.get(kind, +1) * float(amt), 2)
-                if kind == "savings_in":
-                    pocket = round(pocket - float(amt), 2)
-                    savings = round(savings + float(amt), 2)
-                    bal_after = savings if acct == "savings" else pocket
-                elif kind == "savings_out":
-                    pocket = round(pocket + float(amt), 2)
-                    savings = round(savings - float(amt), 2)
-                    bal_after = savings if acct == "savings" else pocket
-                elif acct == "savings":
-                    savings = round(savings + d, 2)
-                    bal_after = savings
-                else:
-                    pocket = round(pocket + d, 2)
-                    bal_after = pocket
+            last_allowance = None
+            for (days_ago, cat, direction, amt, reason, yp_init, receipt) in txs:
+                sign = +1 if direction == "in" else -1
+                d = round(sign * float(amt), 2)
+                cb[cat] = round(float(cb.get(cat, 0.0)) + d, 2)
+                total = round(sum(cb.values()), 2)
                 ts = (now - timedelta(days=days_ago, hours=2)).isoformat()
                 tx_doc = {
                     "id": str(uuid.uuid4()),
                     "resident_id": rid,
-                    "account": acct,
-                    "kind": kind,
+                    "category": cat,
+                    "direction": direction,
                     "amount": float(amt),
-                    "label": label_text,
+                    "reason": reason,
+                    "signed_by_staff_initials": "AS",
                     "signed_by_yp_initials": yp_init,
-                    "receipt_attached": kind == "spend" and float(amt) >= 5,
+                    "receipt_attached": bool(receipt),
                     "notes": None,
                     "delta": d,
-                    "balance_after": bal_after,
+                    "balance_after_category": cb[cat],
+                    "balance_after_total": total,
                     "created_at": ts,
                     "created_by_name": staff_user["name"],
                 }
                 await db.pocket_money_tx.insert_one(tx_doc)
-                if kind == "allowance":
+                if cat == "pocket" and direction == "in" and reason.lower().startswith("weekly allowance"):
                     last_allowance = (now - timedelta(days=days_ago)).date().isoformat()
             await db.pocket_money_accounts.update_one(
                 {"resident_id": rid},
                 {"$set": {
-                    "pocket_balance": pocket,
-                    "savings_balance": savings,
+                    "category_balances": cb,
+                    "total_balance": total,
                     "last_allowance_paid": last_allowance,
                     "updated_at": now.isoformat(),
                 }},
             )
+
+    # ---- Petty Cash (home-wide) seed ----
+    if not await db.home_petty_cash.find_one({"id": "home"}):
+        await db.home_petty_cash.insert_one({
+            "id": "home",
+            "balance": 80.00,
+            "currency": "GBP",
+            "last_handover_at": (now - timedelta(hours=8)).isoformat(),
+            "last_handover_outgoing": "AS",
+            "last_handover_incoming": "DT",
+            "updated_at": (now - timedelta(hours=8)).isoformat(),
+        })
+        # Seed a few petty cash transactions
+        seed_petty = [
+            (5, "deposit", "in", 100.00, "Float top-up from manager", "SM", None, 0.0),
+            (4, "spend", "out", 6.50, "Sandwiches for activity day", "AS", None, 0.0),
+            (3, "spend", "out", 12.00, "Diesel · home minibus", "AS", None, 0.0),
+            (2, "spend", "out", 4.50, "Emergency school stationery (Leo)", "AS", None, 0.0),
+            (1, "spend", "out", 3.00, "Bus fares · YP appointment", "AS", None, 0.0),
+            (0, "handover", "check", 80.00, "Shift handover · evening", "AS", "DT", 6.00),
+        ]
+        running = 0.0
+        for (days_ago, kind, direction, amt, reason, out_init, in_init, _disc_seed) in seed_petty:
+            ts = (now - timedelta(days=days_ago, hours=8)).isoformat()
+            if kind == "handover":
+                discrepancy = round(float(amt) - running, 2)
+                running = round(float(amt), 2)
+                delta = 0.0
+            else:
+                if direction == "in":
+                    delta = round(float(amt), 2)
+                else:
+                    delta = round(-float(amt), 2)
+                running = round(running + delta, 2)
+                discrepancy = 0.0
+            await db.home_petty_cash_tx.insert_one({
+                "id": str(uuid.uuid4()),
+                "kind": kind,
+                "direction": direction,
+                "amount": float(amt),
+                "reason": reason,
+                "signed_by_outgoing_initials": out_init,
+                "signed_by_incoming_initials": in_init,
+                "notes": None,
+                "delta": delta,
+                "balance_after": running,
+                "discrepancy": discrepancy,
+                "created_at": ts,
+                "created_by_name": staff_user["name"],
+            })
+        await db.home_petty_cash.update_one(
+            {"id": "home"},
+            {"$set": {"balance": running, "updated_at": now.isoformat()}},
+        )
 
 
 app = FastAPI(title="Care Companion API", lifespan=lifespan)
@@ -3409,31 +3482,71 @@ async def resident_badges(rid: str, _: dict = Depends(get_current_user)):
 
 
 # ---------- Pocket Money & Personal Allowance ----------
-PMTX_KIND = Literal[
-    "allowance", "spend", "deposit", "withdrawal", "savings_in", "savings_out", "adjustment"
+FINANCE_CATEGORY = Literal[
+    "pocket",
+    "personal_spending",
+    "savings",
+    "trust_leaving_care",
+    "subsistence",
+    "clothing",
+    "incentives",
+    "deductions",
+    "staff_purchases",
+    "external_income",
+    "education_activity",
+    "transport",
+    "mobile_phone",
+    "emergency",
+    "gifts",
+    "health_personal_care",
+    "fines",
 ]
-PM_ACCOUNT = Literal["pocket", "savings"]
+
+FIN_DIRECTION = Literal["in", "out"]
+
+FINANCE_CATEGORY_META = [
+    {"id": "pocket", "label": "Pocket Money", "subtitle": "Weekly allowance", "tone": "#0e3b4a", "default_direction": "out"},
+    {"id": "personal_spending", "label": "Personal Spending", "subtitle": "Discretionary", "tone": "#0e3b4a", "default_direction": "out"},
+    {"id": "savings", "label": "Savings", "subtitle": "Long-term savings", "tone": "#2F6A3A", "default_direction": "in"},
+    {"id": "trust_leaving_care", "label": "Trust / Leaving Care", "subtitle": "Held in trust", "tone": "#3F4F8C", "default_direction": "in"},
+    {"id": "subsistence", "label": "Subsistence", "subtitle": "Food, toiletries, travel", "tone": "#5B6E58", "default_direction": "out"},
+    {"id": "clothing", "label": "Clothing", "subtitle": "Seasonal & special", "tone": "#A5556B", "default_direction": "out"},
+    {"id": "incentives", "label": "Incentives / Rewards", "subtitle": "Achievement-based", "tone": "#2F6A3A", "default_direction": "in"},
+    {"id": "deductions", "label": "Deductions / Sanctions", "subtitle": "Per policy only", "tone": "#A8273A", "default_direction": "out"},
+    {"id": "staff_purchases", "label": "Staff Purchases", "subtitle": "On behalf of YP", "tone": "#5d6068", "default_direction": "out"},
+    {"id": "external_income", "label": "External Income", "subtitle": "Benefits, wages, family", "tone": "#2F6A3A", "default_direction": "in"},
+    {"id": "education_activity", "label": "Education / Activity", "subtitle": "Trips, clubs, school", "tone": "#0e3b4a", "default_direction": "out"},
+    {"id": "transport", "label": "Transport / Travel", "subtitle": "Bus, train, taxi", "tone": "#0e3b4a", "default_direction": "out"},
+    {"id": "mobile_phone", "label": "Mobile / Comms", "subtitle": "Top-up, plan", "tone": "#0e3b4a", "default_direction": "out"},
+    {"id": "emergency", "label": "Emergency Funds", "subtitle": "Reserve", "tone": "#B8772F", "default_direction": "out"},
+    {"id": "gifts", "label": "Gifts", "subtitle": "Birthday, Christmas, cultural", "tone": "#A5556B", "default_direction": "out"},
+    {"id": "health_personal_care", "label": "Health & Personal Care", "subtitle": "Hair, hygiene", "tone": "#2F6A3A", "default_direction": "out"},
+    {"id": "fines", "label": "Fines / Restitution", "subtitle": "Per policy only", "tone": "#A8273A", "default_direction": "out"},
+]
+
+_FIN_CATEGORY_IDS = [c["id"] for c in FINANCE_CATEGORY_META]
 
 
 class PocketMoneyAccountIn(BaseModel):
     weekly_allowance: float = 5.0
-    pocket_balance: float = 0.0
-    savings_balance: float = 0.0
     currency: str = "GBP"
     note: Optional[str] = None
 
 
 class PocketMoneyAccount(PocketMoneyAccountIn):
     resident_id: str
-    last_allowance_paid: Optional[str] = None  # ISO date
+    total_balance: float = 0.0
+    category_balances: Dict[str, float] = {}
+    last_allowance_paid: Optional[str] = None
     updated_at: Optional[str] = None
 
 
 class PocketMoneyTxIn(BaseModel):
-    account: PM_ACCOUNT = "pocket"
-    kind: PMTX_KIND = "spend"
-    amount: float  # always positive — direction determined by `kind`
-    label: str
+    category: FINANCE_CATEGORY = "pocket"
+    direction: FIN_DIRECTION = "out"
+    amount: float
+    reason: str
+    signed_by_staff_initials: Optional[str] = None
     signed_by_yp_initials: Optional[str] = None
     receipt_attached: bool = False
     notes: Optional[str] = None
@@ -3442,21 +3555,15 @@ class PocketMoneyTxIn(BaseModel):
 class PocketMoneyTx(PocketMoneyTxIn):
     id: str
     resident_id: str
-    delta: float  # signed effect on balance
-    balance_after: float
+    delta: float
+    balance_after_category: float
+    balance_after_total: float
     created_at: str
     created_by_name: Optional[str] = None
 
 
-_PM_KIND_DELTA = {
-    "allowance": +1,
-    "deposit": +1,
-    "savings_out": +1,  # money OUT of savings INTO pocket
-    "spend": -1,
-    "withdrawal": -1,
-    "savings_in": -1,  # money INTO savings OUT of pocket
-    "adjustment": +1,  # signed in `amount`? we keep positive amount; managers can record reversal as another adjustment with `amount` mismatched? Use `notes`. Default + and let staff use 'withdrawal' for negative
-}
+def _empty_category_balances() -> Dict[str, float]:
+    return {c: 0.0 for c in _FIN_CATEGORY_IDS}
 
 
 async def _ensure_pm_account(resident_id: str) -> dict:
@@ -3465,51 +3572,79 @@ async def _ensure_pm_account(resident_id: str) -> dict:
         acct = {
             "resident_id": resident_id,
             "weekly_allowance": 5.0,
-            "pocket_balance": 0.0,
-            "savings_balance": 0.0,
             "currency": "GBP",
             "note": None,
+            "category_balances": _empty_category_balances(),
+            "total_balance": 0.0,
             "last_allowance_paid": None,
             "updated_at": now_iso(),
         }
         await db.pocket_money_accounts.insert_one(acct)
         acct.pop("_id", None)
+    else:
+        # Self-heal: ensure all categories present in account doc (e.g. after schema upgrade)
+        cb = acct.get("category_balances") or {}
+        changed = False
+        for c in _FIN_CATEGORY_IDS:
+            if c not in cb:
+                cb[c] = 0.0
+                changed = True
+        if changed:
+            acct["category_balances"] = cb
+            acct["total_balance"] = round(sum(cb.values()), 2)
+            await db.pocket_money_accounts.update_one(
+                {"resident_id": resident_id},
+                {"$set": {"category_balances": cb, "total_balance": acct["total_balance"]}},
+            )
     return acct
+
+
+@api_router.get("/pocket-money/categories")
+async def pm_categories(_: dict = Depends(get_current_user)):
+    """Static metadata for finance categories — used by the frontend ledger UI."""
+    return {"categories": FINANCE_CATEGORY_META}
 
 
 @api_router.get("/pocket-money", response_model=List[dict])
 async def pm_overview(_: dict = Depends(get_current_user)):
-    """Cross-home pocket money overview: every resident with their balances + last tx date."""
-    residents = await db.residents.find({}, {"_id": 0, "id": 1, "name": 1, "preferred_name": 1, "room": 1}).sort("name", 1).to_list(500)
+    """Cross-home pocket money overview: every resident with totals + last tx."""
+    residents = await db.residents.find(
+        {}, {"_id": 0, "id": 1, "name": 1, "preferred_name": 1, "room": 1}
+    ).sort("name", 1).to_list(500)
     out = []
     for r in residents:
         acct = await _ensure_pm_account(r["id"])
         last_tx = await db.pocket_money_tx.find_one(
             {"resident_id": r["id"]}, {"_id": 0}, sort=[("created_at", -1)]
         )
+        cb = acct.get("category_balances") or {}
         out.append({
             "resident_id": r["id"],
             "name": r["name"],
             "preferred_name": r.get("preferred_name"),
             "room": r.get("room"),
             "weekly_allowance": acct["weekly_allowance"],
-            "pocket_balance": acct["pocket_balance"],
-            "savings_balance": acct["savings_balance"],
             "currency": acct.get("currency", "GBP"),
+            "total_balance": round(sum(cb.values()), 2),
+            "pocket_balance": round(float(cb.get("pocket", 0.0)), 2),
+            "savings_balance": round(float(cb.get("savings", 0.0)), 2),
             "last_allowance_paid": acct.get("last_allowance_paid"),
             "last_tx_date": (last_tx or {}).get("created_at"),
-            "last_tx_label": (last_tx or {}).get("label"),
+            "last_tx_label": (last_tx or {}).get("reason"),
+            "last_tx_category": (last_tx or {}).get("category"),
         })
     return out
 
 
 @api_router.get("/pocket-money/{rid}")
-async def pm_for_resident(rid: str, limit: int = 100, _: dict = Depends(get_current_user)):
+async def pm_for_resident(rid: str, limit: int = 200, _: dict = Depends(get_current_user)):
     if not await db.residents.find_one({"id": rid}, {"_id": 0, "id": 1}):
         raise HTTPException(404, "Resident not found")
     acct = await _ensure_pm_account(rid)
-    txs = await db.pocket_money_tx.find({"resident_id": rid}, {"_id": 0}).sort("created_at", -1).to_list(limit)
-    return {"account": acct, "transactions": txs}
+    txs = await db.pocket_money_tx.find(
+        {"resident_id": rid}, {"_id": 0}
+    ).sort("created_at", -1).to_list(limit)
+    return {"account": acct, "transactions": txs, "categories": FINANCE_CATEGORY_META}
 
 
 @api_router.patch("/pocket-money/{rid}/account", response_model=PocketMoneyAccount)
@@ -3536,36 +3671,23 @@ async def pm_add_transaction(
         raise HTTPException(404, "Resident not found")
     if payload.amount <= 0:
         raise HTTPException(400, "Amount must be greater than zero")
+    if payload.category not in _FIN_CATEGORY_IDS:
+        raise HTTPException(400, "Invalid category")
     acct = await _ensure_pm_account(rid)
+    cb = dict(acct.get("category_balances") or _empty_category_balances())
 
-    sign = _PM_KIND_DELTA.get(payload.kind, +1)
+    sign = +1 if payload.direction == "in" else -1
     delta = round(sign * float(payload.amount), 2)
+    cb[payload.category] = round(float(cb.get(payload.category, 0.0)) + delta, 2)
+    total = round(sum(cb.values()), 2)
 
-    # savings_in/out are special: they affect BOTH ledgers (pocket -delta, savings +delta or vice versa)
-    pocket_balance = float(acct.get("pocket_balance", 0.0))
-    savings_balance = float(acct.get("savings_balance", 0.0))
-    if payload.kind == "savings_in":  # move from pocket to savings
-        pocket_balance = round(pocket_balance - float(payload.amount), 2)
-        savings_balance = round(savings_balance + float(payload.amount), 2)
-        balance_after = savings_balance if payload.account == "savings" else pocket_balance
-    elif payload.kind == "savings_out":  # move from savings to pocket
-        pocket_balance = round(pocket_balance + float(payload.amount), 2)
-        savings_balance = round(savings_balance - float(payload.amount), 2)
-        balance_after = savings_balance if payload.account == "savings" else pocket_balance
-    elif payload.account == "savings":
-        savings_balance = round(savings_balance + delta, 2)
-        balance_after = savings_balance
-    else:
-        pocket_balance = round(pocket_balance + delta, 2)
-        balance_after = pocket_balance
-
-    tx_id = str(uuid.uuid4())
     tx_doc = {
         **payload.model_dump(),
-        "id": tx_id,
+        "id": str(uuid.uuid4()),
         "resident_id": rid,
         "delta": delta,
-        "balance_after": balance_after,
+        "balance_after_category": cb[payload.category],
+        "balance_after_total": total,
         "created_at": now_iso(),
         "created_by_name": user["name"],
     }
@@ -3573,41 +3695,31 @@ async def pm_add_transaction(
     tx_doc.pop("_id", None)
 
     set_doc = {
-        "pocket_balance": pocket_balance,
-        "savings_balance": savings_balance,
+        "category_balances": cb,
+        "total_balance": total,
         "updated_at": now_iso(),
     }
-    if payload.kind == "allowance":
+    if payload.category == "pocket" and payload.direction == "in" and (payload.reason or "").lower().startswith("weekly allowance"):
         set_doc["last_allowance_paid"] = datetime.now(timezone.utc).date().isoformat()
     await db.pocket_money_accounts.update_one({"resident_id": rid}, {"$set": set_doc})
-
     return tx_doc
 
 
 @api_router.delete("/pocket-money/transactions/{tx_id}")
 async def pm_delete_transaction(tx_id: str, _: dict = Depends(require_role("manager", "admin"))):
-    """Reverse and delete a transaction. Adjusts running balances accordingly."""
+    """Reverse and delete a transaction."""
     tx = await db.pocket_money_tx.find_one({"id": tx_id}, {"_id": 0})
     if not tx:
         raise HTTPException(404, "Transaction not found")
     rid = tx["resident_id"]
     acct = await _ensure_pm_account(rid)
-    pocket = float(acct.get("pocket_balance", 0.0))
-    savings = float(acct.get("savings_balance", 0.0))
-    amt = float(tx["amount"])
-    if tx["kind"] == "savings_in":
-        pocket = round(pocket + amt, 2)
-        savings = round(savings - amt, 2)
-    elif tx["kind"] == "savings_out":
-        pocket = round(pocket - amt, 2)
-        savings = round(savings + amt, 2)
-    elif tx.get("account") == "savings":
-        savings = round(savings - float(tx["delta"]), 2)
-    else:
-        pocket = round(pocket - float(tx["delta"]), 2)
+    cb = dict(acct.get("category_balances") or _empty_category_balances())
+    cat = tx.get("category", "pocket")
+    cb[cat] = round(float(cb.get(cat, 0.0)) - float(tx.get("delta", 0.0)), 2)
+    total = round(sum(cb.values()), 2)
     await db.pocket_money_accounts.update_one(
         {"resident_id": rid},
-        {"$set": {"pocket_balance": pocket, "savings_balance": savings, "updated_at": now_iso()}},
+        {"$set": {"category_balances": cb, "total_balance": total, "updated_at": now_iso()}},
     )
     await db.pocket_money_tx.delete_one({"id": tx_id})
     return {"deleted": 1}
@@ -3615,7 +3727,7 @@ async def pm_delete_transaction(tx_id: str, _: dict = Depends(require_role("mana
 
 @api_router.get("/pocket-money/{rid}/statement.pdf")
 async def pm_statement_pdf(rid: str, month: Optional[str] = None, _: dict = Depends(get_current_user)):
-    """Monthly statement PDF. `month` = YYYY-MM (defaults to current month)."""
+    """Monthly statement PDF (multi-category)."""
     resident = await db.residents.find_one({"id": rid}, {"_id": 0})
     if not resident:
         raise HTTPException(404, "Resident not found")
@@ -3625,10 +3737,7 @@ async def pm_statement_pdf(rid: str, month: Optional[str] = None, _: dict = Depe
     try:
         y, m = map(int, month.split("-"))
         month_start = datetime(y, m, 1, tzinfo=timezone.utc)
-        if m == 12:
-            next_month = datetime(y + 1, 1, 1, tzinfo=timezone.utc)
-        else:
-            next_month = datetime(y, m + 1, 1, tzinfo=timezone.utc)
+        next_month = datetime(y + 1, 1, 1, tzinfo=timezone.utc) if m == 12 else datetime(y, m + 1, 1, tzinfo=timezone.utc)
     except Exception:
         raise HTTPException(400, "month must be YYYY-MM")
 
@@ -3638,19 +3747,139 @@ async def pm_statement_pdf(rid: str, month: Optional[str] = None, _: dict = Depe
             "created_at": {"$gte": month_start.isoformat(), "$lt": next_month.isoformat()},
         },
         {"_id": 0},
-    ).sort("created_at", 1).to_list(1000)
+    ).sort("created_at", 1).to_list(2000)
 
     from pocket_money_pdf import build_statement_pdf
 
-    pdf_bytes = build_statement_pdf(resident=resident, account=acct, transactions=txs, month_label=month)
+    pdf_bytes = build_statement_pdf(
+        resident=resident, account=acct, transactions=txs, month_label=month, categories=FINANCE_CATEGORY_META,
+    )
     safe_name = (resident.get("name") or "resident").replace(" ", "_")
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
-        headers={
-            "Content-Disposition": f"inline; filename=pocket_money_{safe_name}_{month}.pdf"
-        },
+        headers={"Content-Disposition": f"inline; filename=finance_{safe_name}_{month}.pdf"},
     )
+
+
+# ---------- Petty Cash (home-wide handover float) ----------
+PETTY_KIND = Literal["deposit", "spend", "handover", "adjustment"]
+PETTY_DIRECTION = Literal["in", "out", "check"]
+
+
+class PettyCashTxIn(BaseModel):
+    kind: PETTY_KIND = "spend"
+    direction: PETTY_DIRECTION = "out"
+    amount: float  # for handover, this is the verified float at hand-over
+    reason: str
+    signed_by_outgoing_initials: Optional[str] = None
+    signed_by_incoming_initials: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class PettyCashTx(PettyCashTxIn):
+    id: str
+    delta: float
+    balance_after: float
+    discrepancy: float = 0.0
+    created_at: str
+    created_by_name: Optional[str] = None
+
+
+async def _ensure_petty_cash() -> dict:
+    doc = await db.home_petty_cash.find_one({"id": "home"}, {"_id": 0})
+    if not doc:
+        doc = {
+            "id": "home",
+            "balance": 0.0,
+            "currency": "GBP",
+            "last_handover_at": None,
+            "last_handover_outgoing": None,
+            "last_handover_incoming": None,
+            "updated_at": now_iso(),
+        }
+        await db.home_petty_cash.insert_one(doc)
+        doc.pop("_id", None)
+    return doc
+
+
+@api_router.get("/petty-cash")
+async def petty_cash_get(limit: int = 100, _: dict = Depends(get_current_user)):
+    state = await _ensure_petty_cash()
+    txs = await db.home_petty_cash_tx.find({}, {"_id": 0}).sort("created_at", -1).to_list(limit)
+    return {"state": state, "transactions": txs}
+
+
+@api_router.post("/petty-cash/transactions", response_model=PettyCashTx)
+async def petty_cash_add(payload: PettyCashTxIn, user: dict = Depends(get_current_user)):
+    if payload.amount <= 0:
+        raise HTTPException(400, "Amount must be greater than zero")
+    state = await _ensure_petty_cash()
+    balance = float(state.get("balance", 0.0))
+    discrepancy = 0.0
+
+    if payload.kind == "handover":
+        # Verified count at handover. Both sigs required.
+        if not payload.signed_by_outgoing_initials or not payload.signed_by_incoming_initials:
+            raise HTTPException(400, "Both outgoing and incoming staff initials required for handover")
+        verified = round(float(payload.amount), 2)
+        discrepancy = round(verified - balance, 2)
+        # Sync running balance to verified amount; record discrepancy on the tx for audit.
+        balance = verified
+        delta = 0.0
+        # Update last_handover trail
+        await db.home_petty_cash.update_one(
+            {"id": "home"},
+            {"$set": {
+                "balance": balance,
+                "last_handover_at": now_iso(),
+                "last_handover_outgoing": payload.signed_by_outgoing_initials,
+                "last_handover_incoming": payload.signed_by_incoming_initials,
+                "updated_at": now_iso(),
+            }},
+        )
+    else:
+        if payload.kind == "deposit" or payload.direction == "in":
+            delta = round(float(payload.amount), 2)
+        elif payload.kind == "adjustment":
+            delta = round(float(payload.amount) * (1 if payload.direction == "in" else -1), 2)
+        else:
+            delta = round(-float(payload.amount), 2)
+        balance = round(balance + delta, 2)
+        await db.home_petty_cash.update_one(
+            {"id": "home"},
+            {"$set": {"balance": balance, "updated_at": now_iso()}},
+        )
+
+    tx_doc = {
+        **payload.model_dump(),
+        "id": str(uuid.uuid4()),
+        "delta": delta if payload.kind != "handover" else 0.0,
+        "balance_after": balance,
+        "discrepancy": discrepancy,
+        "created_at": now_iso(),
+        "created_by_name": user["name"],
+    }
+    await db.home_petty_cash_tx.insert_one(tx_doc)
+    tx_doc.pop("_id", None)
+    return tx_doc
+
+
+@api_router.delete("/petty-cash/transactions/{tx_id}")
+async def petty_cash_delete(tx_id: str, _: dict = Depends(require_role("manager", "admin"))):
+    tx = await db.home_petty_cash_tx.find_one({"id": tx_id}, {"_id": 0})
+    if not tx:
+        raise HTTPException(404, "Transaction not found")
+    if tx.get("kind") != "handover":
+        state = await _ensure_petty_cash()
+        new_bal = round(float(state.get("balance", 0.0)) - float(tx.get("delta", 0.0)), 2)
+        await db.home_petty_cash.update_one(
+            {"id": "home"},
+            {"$set": {"balance": new_bal, "updated_at": now_iso()}},
+        )
+    await db.home_petty_cash_tx.delete_one({"id": tx_id})
+    return {"deleted": 1}
+
 
 
 # ---------- Notifications ----------

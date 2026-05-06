@@ -15,6 +15,7 @@ import {
   Calendar,
 } from "lucide-react";
 import { toast } from "sonner";
+import PettyCash from "@/components/staff/PettyCash";
 
 const inputCls =
   "w-full bg-white border divider-soft rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#0e3b4a]";
@@ -61,6 +62,7 @@ export default function Staff() {
         {[
           { id: "rota", label: "Rota & On-shift now" },
           { id: "training", label: "Training matrix" },
+          { id: "petty", label: "Petty Cash & Handover" },
         ].map((t) => (
           <button
             key={t.id}
@@ -78,6 +80,7 @@ export default function Staff() {
 
       {tab === "rota" && <RotaPanel canManage={canManage} />}
       {tab === "training" && <TrainingMatrix canManage={canManage} />}
+      {tab === "petty" && <PettyCash />}
     </div>
   );
 }
