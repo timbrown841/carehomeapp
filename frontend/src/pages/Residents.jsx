@@ -45,7 +45,7 @@ export default function Residents() {
     <div className="space-y-6" data-testid="residents-page">
       <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4">
         <div>
-          <h1 className="font-display font-black text-4xl tracking-tighter text-stone-900">
+          <h1 className="font-display font-semibold text-3xl tracking-tight text-stone-900">
             Residents
           </h1>
           <p className="text-stone-600 mt-1">

@@ -27,6 +27,7 @@ from contextlib import asynccontextmanager
 from pdf_builder import build_incident_pdf, build_report_pdf
 from missing_pack_pdf import build_missing_pack_pdf
 from mar_pdf import build_mar_pdf
+from inspection_bundle_pdf import build_inspection_bundle_pdf
 from notifications_service import send_email, send_sms, recipient_for
 import secrets as _secrets
 
@@ -66,6 +67,8 @@ async def lifespan(_app: FastAPI):
     await db.health_observations.create_index([("resident_id", 1), ("recorded_at", -1)])
     await db.immunisations.create_index([("resident_id", 1), ("date_given", -1)])
     await db.education_records.create_index("resident_id", unique=True, sparse=True)
+    await db.shifts.create_index([("start_at", 1), ("end_at", 1)])
+    await db.trainings.create_index([("staff_id", 1), ("expires_on", 1)])
 
     admin_email = os.environ.get("ADMIN_EMAIL", "admin@care.local").lower()
     admin_password = os.environ.get("ADMIN_PASSWORD", "Admin@123")
@@ -121,7 +124,8 @@ async def _seed_demo_data_if_empty():
     has_meds = await db.medications.count_documents({}) > 0
     has_health = await db.health_appointments.count_documents({}) > 0
     has_edu = await db.education_records.count_documents({}) > 0
-    if fully_seeded and has_meds and has_health and has_edu:
+    has_shifts = await db.shifts.count_documents({}) > 0 or await db.trainings.count_documents({}) > 0
+    if fully_seeded and has_meds and has_health and has_edu and has_shifts:
         return
     if fully_seeded:
         # Profiles exist but new modules missing — top up only.
@@ -143,6 +147,8 @@ async def _seed_demo_data_if_empty():
         await db.health_observations.delete_many({})
         await db.immunisations.delete_many({})
         await db.education_records.delete_many({})
+        await db.shifts.delete_many({})
+        await db.trainings.delete_many({})
     logger.info("Seeding demo data…")
 
     staff_user = await db.users.find_one({"email": "staff@care.local"})
@@ -586,12 +592,14 @@ async def _seed_demo_data_if_empty():
 
 
 async def _seed_meds_and_bodymaps():
-    """Idempotent top-up of medications/body_maps/health/education for an existing residents set."""
+    """Idempotent top-up of medications/body_maps/health/education/shifts/trainings."""
     have_meds = await db.medications.count_documents({}) > 0
     have_bm = await db.body_maps.count_documents({}) > 0
     have_health = await db.health_appointments.count_documents({}) > 0
     have_edu = await db.education_records.count_documents({}) > 0
-    if have_meds and have_bm and have_health and have_edu:
+    have_shifts = await db.shifts.count_documents({}) > 0
+    have_train = await db.trainings.count_documents({}) > 0
+    if have_meds and have_bm and have_health and have_edu and have_shifts and have_train:
         return
     residents = await db.residents.find({}, {"_id": 0, "id": 1, "name": 1}).to_list(500)
     if not residents:
@@ -907,6 +915,78 @@ async def _seed_meds_and_bodymaps():
             e["updated_at"] = now.isoformat()
             e["updated_by_name"] = manager_user["name"]
             await db.education_records.insert_one(e)
+
+    # ---- Staff Rotas seed ----
+    if not have_shifts:
+        admin_user = await db.users.find_one({"email": "admin@care.local"})
+        roster = [staff_user, manager_user, admin_user]
+        roster = [u for u in roster if u]
+        # Seed last week + this week + next week of rotating shifts
+        today = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        for day_offset in range(-7, 8):
+            d = today + timedelta(days=day_offset)
+            for shift_idx, (shift_name, start_h, end_h) in enumerate([
+                ("Day shift", 7, 15),
+                ("Late shift", 14, 22),
+                ("Sleep-in", 22, 31),  # 22:00 → 07:00 next day
+            ]):
+                u = roster[(day_offset + shift_idx) % len(roster)]
+                start = d.replace(hour=start_h % 24)
+                if end_h >= 24:
+                    end = (d + timedelta(days=1)).replace(hour=end_h - 24)
+                else:
+                    end = d.replace(hour=end_h)
+                await db.shifts.insert_one({
+                    "id": str(uuid.uuid4()),
+                    "staff_id": u["id"],
+                    "staff_name": u["name"],
+                    "role": shift_name,
+                    "start_at": start.isoformat(),
+                    "end_at": end.isoformat(),
+                    "notes": None,
+                    "created_at": (now - timedelta(days=14)).isoformat(),
+                })
+
+    # ---- Trainings seed ----
+    if not have_train:
+        admin_user = await db.users.find_one({"email": "admin@care.local"})
+        roster = [u for u in [staff_user, manager_user, admin_user] if u]
+        # Each course: (name, completed_days_ago, validity_months)
+        courses = [
+            ("Safeguarding L3", 365, 24),
+            ("First Aid at Work", 800, 36),  # expired for some
+            ("Medication Administration", 200, 12),
+            ("DBS Check", 540, 36),
+            ("Fire Safety", 90, 12),
+            ("Restrictive Practice", 30, 24),
+        ]
+        # Make staff have most courses; manager has all; admin has fewer
+        coverage = {
+            staff_user["id"]: ["Safeguarding L3", "Medication Administration", "DBS Check", "Fire Safety", "Restrictive Practice"],
+            manager_user["id"]: [c[0] for c in courses],
+        }
+        if admin_user:
+            coverage[admin_user["id"]] = ["Safeguarding L3", "DBS Check", "Fire Safety"]
+        for u in roster:
+            for (course, days_ago, months_valid) in courses:
+                if course not in coverage.get(u["id"], []):
+                    continue
+                completed = (now - timedelta(days=days_ago)).date().isoformat()
+                expires_at = (
+                    now - timedelta(days=days_ago) + timedelta(days=months_valid * 30)
+                ).date().isoformat()
+                await db.trainings.insert_one({
+                    "id": str(uuid.uuid4()),
+                    "staff_id": u["id"],
+                    "staff_name": u["name"],
+                    "course": course,
+                    "completed_on": completed,
+                    "expires_on": expires_at,
+                    "certificate_no": None,
+                    "provider": "External provider",
+                    "notes": None,
+                    "created_at": (now - timedelta(days=days_ago)).isoformat(),
+                })
 
 app = FastAPI(title="Care Companion API", lifespan=lifespan)
 api_router = APIRouter(prefix="/api")
@@ -2611,7 +2691,6 @@ async def add_achievement(
     return doc
 
 
-# ---------- Ofsted Readiness Score ----------
 @api_router.get("/ofsted/readiness")
 async def ofsted_readiness(_: dict = Depends(get_current_user)):
     """Aggregate, real-time Ofsted compliance scorecard.
@@ -2765,6 +2844,209 @@ async def ofsted_readiness(_: dict = Depends(get_current_user)):
         "generated_at": now_iso(),
         "sections": sections,
     }
+
+
+@api_router.get("/ofsted/inspection-bundle/pdf")
+async def ofsted_inspection_bundle(user: dict = Depends(require_role("manager", "admin"))):
+    """Single-PDF inspection bundle: scorecard + last 30d incidents + active meds + recent missing."""
+    # Live readiness (re-use the function above by calling its endpoint logic inline)
+    readiness = await ofsted_readiness(_=user)  # type: ignore[arg-type]
+
+    cutoff_30 = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+    cutoff_7 = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+    incidents = (
+        await db.incidents.find(
+            {"created_at": {"$gte": cutoff_30}}, {"_id": 0}
+        )
+        .sort("created_at", -1)
+        .to_list(100)
+    )
+    medications = await db.medications.find(
+        {"active": True}, {"_id": 0}
+    ).sort("name", 1).to_list(500)
+    mar_admins = await db.medication_admins.find(
+        {"administered_at": {"$gte": cutoff_7}}, {"_id": 0}
+    ).to_list(2000)
+    missing_episodes = (
+        await db.missing_episodes.find(
+            {"reported_at": {"$gte": cutoff_30}}, {"_id": 0}
+        )
+        .sort("reported_at", -1)
+        .to_list(50)
+    )
+    residents = await db.residents.find({}, {"_id": 0}).to_list(500)
+    residents_by_id = {r["id"]: r for r in residents}
+    period_label = (
+        datetime.now(timezone.utc) - timedelta(days=30)
+    ).strftime("%d %b %Y") + " → " + datetime.now(timezone.utc).strftime("%d %b %Y")
+
+    pdf_buf = build_inspection_bundle_pdf(
+        readiness=readiness,
+        incidents=incidents,
+        medications=medications,
+        mar_admins=mar_admins,
+        missing_episodes=missing_episodes,
+        residents_by_id=residents_by_id,
+        generated_for=user.get("name", "—"),
+        period_label=period_label,
+    )
+    filename = f"Safelyn_Inspection_Bundle_{datetime.now(timezone.utc).strftime('%Y%m%d')}.pdf"
+    return StreamingResponse(
+        pdf_buf,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+# ---------- Staff Rotas & Training ----------
+class ShiftIn(BaseModel):
+    staff_id: str
+    staff_name: Optional[str] = None
+    role: Optional[str] = None  # e.g. "Lead", "Support", "Sleep-in"
+    start_at: str  # ISO datetime
+    end_at: str
+    notes: Optional[str] = None
+
+
+class Shift(ShiftIn):
+    id: str
+    created_at: str
+
+
+class TrainingIn(BaseModel):
+    staff_id: str
+    staff_name: Optional[str] = None
+    course: str
+    completed_on: str  # YYYY-MM-DD
+    expires_on: Optional[str] = None  # YYYY-MM-DD
+    certificate_no: Optional[str] = None
+    provider: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class Training(TrainingIn):
+    id: str
+    created_at: str
+
+
+@api_router.get("/staff", response_model=List[dict])
+async def list_staff(_: dict = Depends(get_current_user)):
+    """List staff users (read-only — for shift / training assignment)."""
+    docs = await db.users.find(
+        {"role": {"$in": ["staff", "manager", "admin"]}},
+        {"_id": 0, "id": 1, "name": 1, "email": 1, "role": 1},
+    ).sort("name", 1).to_list(500)
+    return docs
+
+
+@api_router.get("/shifts")
+async def list_shifts(
+    from_date: Optional[str] = None,
+    to_date: Optional[str] = None,
+    _: dict = Depends(get_current_user),
+):
+    q: dict = {}
+    if from_date or to_date:
+        q["start_at"] = {}
+        if from_date:
+            q["start_at"]["$gte"] = from_date + "T00:00:00+00:00"
+        if to_date:
+            q["start_at"]["$lt"] = to_date + "T23:59:59+00:00"
+    docs = await db.shifts.find(q, {"_id": 0}).sort("start_at", 1).to_list(500)
+    return docs
+
+
+@api_router.get("/shifts/now")
+async def shifts_now(_: dict = Depends(get_current_user)):
+    """Who is on shift right now — for the dashboard panel."""
+    now = now_iso()
+    docs = await db.shifts.find(
+        {"start_at": {"$lte": now}, "end_at": {"$gte": now}}, {"_id": 0}
+    ).sort("start_at", 1).to_list(50)
+    return docs
+
+
+@api_router.post("/shifts", response_model=Shift)
+async def create_shift(payload: ShiftIn, _: dict = Depends(require_role("manager", "admin"))):
+    if not payload.staff_name:
+        u = await db.users.find_one({"id": payload.staff_id}, {"_id": 0, "name": 1})
+        payload.staff_name = (u or {}).get("name") or "—"
+    doc = {**payload.model_dump(), "id": str(uuid.uuid4()), "created_at": now_iso()}
+    await db.shifts.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api_router.delete("/shifts/{sid}")
+async def delete_shift(sid: str, _: dict = Depends(require_role("manager", "admin"))):
+    res = await db.shifts.delete_one({"id": sid})
+    return {"deleted": res.deleted_count}
+
+
+@api_router.get("/trainings")
+async def list_trainings(staff_id: Optional[str] = None, _: dict = Depends(get_current_user)):
+    q: dict = {}
+    if staff_id:
+        q["staff_id"] = staff_id
+    docs = await db.trainings.find(q, {"_id": 0}).sort("expires_on", 1).to_list(1000)
+    return docs
+
+
+@api_router.get("/trainings/matrix")
+async def trainings_matrix(_: dict = Depends(get_current_user)):
+    """Cross-staff training matrix with RAG status."""
+    today = datetime.now(timezone.utc).date().isoformat()
+    soon = (datetime.now(timezone.utc) + timedelta(days=60)).date().isoformat()
+    staff = await db.users.find(
+        {"role": {"$in": ["staff", "manager", "admin"]}},
+        {"_id": 0, "id": 1, "name": 1, "email": 1, "role": 1},
+    ).sort("name", 1).to_list(500)
+    trainings = await db.trainings.find({}, {"_id": 0}).to_list(2000)
+    by_staff: dict = {}
+    for t in trainings:
+        by_staff.setdefault(t["staff_id"], []).append(t)
+    courses = sorted({t["course"] for t in trainings})
+    rows = []
+    for u in staff:
+        cells = []
+        for c in courses:
+            recs = [t for t in by_staff.get(u["id"], []) if t["course"] == c]
+            if not recs:
+                cells.append({"course": c, "status": "missing", "expires_on": None})
+                continue
+            latest = sorted(recs, key=lambda r: r.get("expires_on") or r.get("completed_on") or "")[-1]
+            exp = latest.get("expires_on")
+            if not exp:
+                status = "ok"
+            elif exp < today:
+                status = "expired"
+            elif exp < soon:
+                status = "expiring"
+            else:
+                status = "ok"
+            cells.append({"course": c, "status": status, "expires_on": exp, "id": latest.get("id")})
+        rows.append({"staff": u, "cells": cells})
+    return {"courses": courses, "rows": rows}
+
+
+@api_router.post("/trainings", response_model=Training)
+async def create_training(payload: TrainingIn, _: dict = Depends(require_role("manager", "admin"))):
+    if not payload.staff_name:
+        u = await db.users.find_one({"id": payload.staff_id}, {"_id": 0, "name": 1})
+        payload.staff_name = (u or {}).get("name") or "—"
+    doc = {**payload.model_dump(), "id": str(uuid.uuid4()), "created_at": now_iso()}
+    await db.trainings.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api_router.delete("/trainings/{tid}")
+async def delete_training(tid: str, _: dict = Depends(require_role("manager", "admin"))):
+    res = await db.trainings.delete_one({"id": tid})
+    return {"deleted": res.deleted_count}
 
 
 # ---------- Notifications ----------

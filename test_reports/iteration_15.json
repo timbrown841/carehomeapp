@@ -1,0 +1,39 @@
+{
+  "summary": "Iteration 15 testing: Inspection Bundle PDF, Staff Rotas & Training module, and ClearCare-grade redesign (Inter typography + global card shadows). Backend: 16/17 pytest tests pass (test_iteration15.py) — only the expired-training seed assertion failed because the seed math produces future expiry dates (see RCA). Frontend: 11/11 critical flows verified — manager login, Inter body+heading fonts (no Fraunces), non-zero card box-shadow, Staff page with both tabs, on-shift-now panel, date pickers, add-shift modal + create/delete, training matrix with 4 RAG summary cards + table, add-training modal, download-inspection-bundle button visible to manager on Ofsted page. Role gating verified: staff role sees Staff page but add-shift-btn / add-training-btn / download-inspection-bundle are not rendered in DOM.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "seed for /api/trainings", "issue": "Review-request specifies 'some expired First Aid at Work records for Sarah Manager'. Actual seed math (server.py ~line 955-977) uses days_ago=800, months_valid=36 → expires ≈ now + 280 days = 'ok', NOT 'expired'. Matrix currently has 0 expired rows, only ok/expiring/missing. The RAG 'expired' branch in the UI is untested against real seed data."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration15.py",
+    "/app/test_reports/pytest/iteration15_results.xml"
+  ],
+  "action_items": [
+    "Fix seed math in server.py (~line 955) so 'First Aid at Work' for Sarah Manager produces an expired record. One option: pair entries like ('First Aid at Work', 1500, 24) so completed 1500d ago + 24m valid ≈ expires 780d ago (expired). Or add explicit expired rows after the loop for the Manager user. Without this, the 'expired' RAG status cannot be visually verified in the Training Matrix and training-summary-expired count is 0.",
+    "(Cosmetic, low-priority) React console warning — <span> inside <option> hydration warning originates from an Emergent dev-mode instrumentation wrapper around mapped <option> elements in AddShiftModal. No functional impact; only visible in dev console. Safe to ignore unless you want to suppress by unwrapping the dynamic text."
+  ],
+  "critical_code_review_comments": [
+    "server.py line 2853: ofsted_inspection_bundle calls `ofsted_readiness(_=user)` directly as a Python function rather than via HTTP. This works because both deps resolve `user` through require_role. Documented in review request — acceptable pattern, but brittle if readiness function signature changes. Consider extracting shared readiness logic to a helper that both endpoints call.",
+    "server.py /api/shifts list: the date-range filter uses string comparison on ISO timestamps (`q['start_at']['$gte'] = from_date + 'T00:00:00+00:00'`). This depends on all seeded/created shifts storing start_at with `+00:00` offset. Works for current seed+endpoint (both use isoformat with tz), but a direct-insert or different tz suffix would break the range query silently. Recommend converting to a proper datetime range or enforcing UTC in a pydantic validator.",
+    "server.py /api/trainings/matrix sort key `key=lambda r: r.get('expires_on') or r.get('completed_on') or ''` — [-1] picks lexicographically latest, which is correct for YYYY-MM-DD strings but will pick 'missing expiry' record (empty string) as latest never — fine. Minor: when multiple training records exist for same staff+course with same expires_on but different completed_on, ordering is undefined. Low risk for MVP.",
+    "Staff.jsx AddShiftModal renders <option value={u.id}>{u.name}</option> but the Emergent instrumentation wraps text in a span inside <option>, producing a React hydration warning. Functional behaviour is unaffected.",
+    "inspection_bundle_pdf.py not reviewed line-by-line but generated PDFs pass %PDF-1.4 magic byte + >1.5KB size + content-type=application/pdf for both manager and admin. Good."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration15.py"
+  ],
+  "success_rate": {"backend": "94% (16/17, only failure is a seed-data assertion)", "frontend": "100% of required selectors and role-gating flows verified"},
+  "test_credentials": "manager@care.local / Manager@123 ; staff@care.local / Staff@123 ; admin@care.local / Admin@123",
+  "seed_data_creation": "Tests created transient TEST_iter15 shift and TEST_iter15_Safeguarding training, both DELETEd in the same test. No lingering seed pollution.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iter-15 shipped cleanly. All new endpoints (/api/staff, /api/shifts*, /api/trainings*, /api/ofsted/inspection-bundle/pdf) are wired with correct auth and role-based access. Inspection bundle returns valid PDF (%PDF-1.4 magic, >1.5KB). Staff page has all data-testids as specified. Only caveat: demo seed does not currently produce any 'expired' training rows — see backend_issues.minor. If main agent fixes the seed, re-run test_trainings_matrix_structure to confirm.",
+  "rca of the issue": "Seed math at /app/backend/server.py line ~955: courses = [('First Aid at Work', 800, 36), ...]. days_ago=800 (completed 800 days ago), months_valid=36 (valid 3 years = ~1080 days). Expiry = now - 800 + 1080 = now + 280 days → status='ok'. For the record to actually expire, the seed must produce an expires_on earlier than today. Fix: change to ('First Aid at Work', 1500, 36) → expires ≈ now - 420d = expired. Or add an explicit one-off expired insert after the loop: `await db.trainings.insert_one({staff_id: manager_user['id'], course: 'First Aid at Work', completed_on: (now-3y).iso, expires_on: (now-60d).iso, ...})` to guarantee one expired row."
+}

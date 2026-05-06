@@ -214,7 +214,7 @@ export default function Dashboard() {
               <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-white/70 mb-1.5">
                 Reducing risk · Improving care · Empowering staff
               </div>
-              <h2 className="font-display font-black text-2xl sm:text-3xl tracking-tight">
+              <h2 className="font-display font-semibold text-2xl sm:text-[28px] tracking-tight">
                 Log Incident in 30 seconds
               </h2>
               <p className="text-sm text-white/80 mt-1">
@@ -261,19 +261,22 @@ export default function Dashboard() {
         </div>
       </section>
 
-      {/* Personalised greeting */}
+      {/* Personalised greeting — clean SaaS hierarchy */}
       <header data-testid="dashboard-greeting">
-        <div className="text-sm font-medium uppercase tracking-wider text-[#E57A5D]">
+        <div className="text-xs font-semibold uppercase tracking-[0.14em] text-[#0e3b4a]">
           {new Date().toLocaleDateString("en-GB", {
             weekday: "long",
             day: "numeric",
             month: "long",
           })}
         </div>
-        <h1 className="font-display font-black text-3xl sm:text-4xl tracking-tighter text-stone-900 mt-1">
+        <h1
+          className="font-display font-semibold text-3xl sm:text-[34px] leading-tight text-[#0F1115] mt-1.5"
+          style={{ letterSpacing: "-0.02em" }}
+        >
           {greeting()}, {user?.name?.split(" ")[0] || "there"}.
         </h1>
-        <p className="text-stone-600 mt-1.5">
+        <p className="text-[#5d6068] mt-1.5 text-[15px]">
           Here's your current risk and activity overview.
         </p>
       </header>

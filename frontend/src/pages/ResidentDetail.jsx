@@ -237,7 +237,7 @@ export default function ResidentDetail() {
                 </span>
               )}
             </div>
-            <h1 className="font-display font-black text-3xl sm:text-4xl tracking-tighter text-stone-900 mt-1.5">
+            <h1 className="font-display font-semibold text-[28px] sm:text-[32px] leading-tight text-[#0F1115] mt-1.5" style={{ letterSpacing: "-0.02em" }}>
               {resident.name}
             </h1>
             <div className="text-sm text-stone-600 mt-1 flex flex-wrap gap-x-3 gap-y-1">

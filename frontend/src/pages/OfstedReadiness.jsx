@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import api from "@/lib/api";
+import api, { API } from "@/lib/api";
+import { useAuth } from "@/context/AuthContext";
 import {
   BadgeCheck,
   ShieldAlert,
@@ -9,7 +10,10 @@ import {
   RefreshCw,
   AlertTriangle,
   CheckCircle2,
+  FileText,
+  Download,
 } from "lucide-react";
+import { toast } from "sonner";
 
 const TONE = {
   green: { fg: "#3A5A40", bg: "#3A5A4015", line: "#3A5A40" },
@@ -87,9 +91,12 @@ function Bar({ score }) {
 }
 
 export default function OfstedReadiness() {
+  const { user } = useAuth();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [downloading, setDownloading] = useState(false);
+  const canManage = user?.role === "manager" || user?.role === "admin";
 
   const load = async (silent = false) => {
     if (silent) setRefreshing(true);
@@ -100,6 +107,31 @@ export default function OfstedReadiness() {
     } finally {
       setLoading(false);
       setRefreshing(false);
+    }
+  };
+
+  const downloadBundle = async () => {
+    setDownloading(true);
+    const token = localStorage.getItem("cc_token");
+    try {
+      const res = await fetch(`${API}/ofsted/inspection-bundle/pdf`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error();
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `Safelyn_Inspection_Bundle_${new Date().toISOString().slice(0, 10)}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1500);
+      toast.success("Inspection bundle downloaded");
+    } catch {
+      toast.error("Download failed");
+    } finally {
+      setDownloading(false);
     }
   };
 
@@ -123,27 +155,37 @@ export default function OfstedReadiness() {
           <div className="text-xs font-bold uppercase tracking-wider text-stone-500">
             Ofsted Readiness
           </div>
-          <h1 className="font-display font-black text-4xl tracking-tighter text-stone-900">
+          <h1 className="font-display font-semibold text-3xl tracking-tight text-stone-900">
             Are you inspection-ready?
           </h1>
           <p className="text-stone-600 mt-1 text-sm">
             Live score across the six Ofsted-watched compliance areas.
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => load(true)}
-          disabled={refreshing}
-          data-testid="ofsted-refresh"
-          className="inline-flex items-center gap-2 bg-white hover:bg-stone-50 text-stone-700 font-semibold rounded-xl px-4 py-2.5 text-sm border divider-soft disabled:opacity-50"
-        >
-          {refreshing ? (
-            <Loader2 size={15} className="animate-spin" />
-          ) : (
-            <RefreshCw size={15} />
+        <div className="flex items-center gap-2 flex-wrap">
+          {canManage && (
+            <button
+              type="button"
+              onClick={downloadBundle}
+              disabled={downloading}
+              data-testid="download-inspection-bundle"
+              className="inline-flex items-center gap-2 bg-[#0e3b4a] hover:bg-[#0a2c38] disabled:opacity-50 text-white font-semibold rounded-xl px-4 py-2.5 text-sm shadow-card"
+            >
+              {downloading ? <Loader2 size={15} className="animate-spin" /> : <FileText size={15} />}
+              Inspection Bundle PDF
+            </button>
           )}
-          Refresh
-        </button>
+          <button
+            type="button"
+            onClick={() => load(true)}
+            disabled={refreshing}
+            data-testid="ofsted-refresh"
+            className="inline-flex items-center gap-2 bg-white hover:bg-stone-50 text-[#0F1115] font-semibold rounded-xl px-4 py-2.5 text-sm border divider-soft disabled:opacity-50"
+          >
+            {refreshing ? <Loader2 size={15} className="animate-spin" /> : <RefreshCw size={15} />}
+            Refresh
+          </button>
+        </div>
       </header>
 
       <section

@@ -2,7 +2,6 @@ import "@/App.css";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
 import { Toaster } from "@/components/ui/sonner";
-import { UserCog } from "lucide-react";
 
 import Layout from "@/components/Layout";
 import Login from "@/pages/Login";
@@ -15,10 +14,10 @@ import LogIncident from "@/pages/LogIncident";
 import IncidentDetail from "@/pages/IncidentDetail";
 import Reports from "@/pages/Reports";
 import Supervisions from "@/pages/Supervisions";
-import ComingSoon from "@/pages/ComingSoon";
 import MissingShare from "@/pages/MissingShare";
 import MedicationRound from "@/pages/MedicationRound";
 import OfstedReadiness from "@/pages/OfstedReadiness";
+import Staff from "@/pages/Staff";
 
 function Protected({ children }) {
   const { user, loading } = useAuth();
@@ -63,13 +62,7 @@ function App() {
               <Route path="/incidents/:id" element={<IncidentDetail />} />
               <Route
                 path="/staff"
-                element={
-                  <ComingSoon
-                    title="Staff Management"
-                    description="Team profiles, rotas, and role permissions for your home."
-                    icon={UserCog}
-                  />
-                }
+                element={<Staff />}
               />
               <Route path="/supervisions" element={<Supervisions />} />
               <Route path="/medications" element={<MedicationRound />} />

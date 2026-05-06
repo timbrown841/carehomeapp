@@ -1,24 +1,50 @@
-@import url("https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700;9..144,800;9..144,900&family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap");
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
+/* --------------------------------------------------------------------
+   Safelyn Systems — clinical SaaS design tokens (iter-15 redesign).
+   Goal: ClearCare-grade clarity. Deeper inks, sharper cards, neutral
+   off-white background, Inter throughout. No decorative serif.
+-------------------------------------------------------------------- */
 :root {
-  --bg: #f5f5f0;
-  --paper: #ffffff;
-  --muted: #eaeae5;
-  --ink: #1c1c1a;
-  --ink-2: #575752;
-  --ink-3: #8a8a85;
-  --brand: #2d4a3e;
-  --brand-hover: #1e332a;
-  --accent: #e57a5d;
-  --accent-hover: #d1664a;
-  --safe: #3a5a40;
-  --warn: #d4a373;
-  --urgent: #b23a48;
-  --line: #d6d6d0;
+  /* Surfaces */
+  --bg: #f7f7f5;          /* page — clean off-white, less yellow than before */
+  --bg-soft: #f1f1ec;
+  --paper: #ffffff;       /* card */
+  --muted: #ebebe6;
+
+  /* Inks — much deeper for SaaS contrast */
+  --ink: #0f1115;         /* headings + key text */
+  --ink-2: #2f3038;       /* body */
+  --ink-3: #5d6068;       /* secondary / labels */
+  --ink-4: #8a8d95;       /* placeholder / very subtle */
+
+  /* Brand & accents — more saturated, intentional */
+  --brand: #0e3b4a;
+  --brand-hover: #0a2c38;
+  --brand-soft: #0e3b4a14;
+
+  --accent: #d65a3a;      /* terracotta, slightly more saturated */
+  --accent-hover: #b94626;
+
+  --safe: #2f6a3a;        /* deeper green */
+  --safe-soft: #2f6a3a14;
+  --warn: #b8772f;        /* deeper amber */
+  --warn-soft: #b8772f14;
+  --urgent: #a8273a;      /* deeper red */
+  --urgent-soft: #a8273a14;
+
+  /* Lines */
+  --line: #e2e3df;        /* sharper card edges */
+  --line-strong: #d2d4ce;
+
+  /* Elevation — soft but defined */
+  --shadow-sm: 0 1px 2px rgba(15, 17, 21, 0.04), 0 1px 1px rgba(15, 17, 21, 0.03);
+  --shadow-md: 0 1px 3px rgba(15, 17, 21, 0.06), 0 4px 12px -2px rgba(15, 17, 21, 0.05);
+  --shadow-lg: 0 4px 6px rgba(15, 17, 21, 0.05), 0 12px 30px -8px rgba(15, 17, 21, 0.10);
 }
 
 html,
@@ -30,9 +56,9 @@ body,
 body {
   margin: 0;
   background: var(--bg);
-  color: var(--ink);
-  font-family: "Geist", "Inter", system-ui, sans-serif;
-  font-feature-settings: "ss01", "cv11";
+  color: var(--ink-2);
+  font-family: "Inter", "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+  font-feature-settings: "cv11", "ss01", "ss03";
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   letter-spacing: -0.005em;
@@ -42,50 +68,55 @@ h1,
 h2,
 h3,
 h4,
+h5,
+h6,
 .font-display {
-  font-family: "Fraunces", "Geist", system-ui, sans-serif;
-  font-optical-sizing: auto;
-  font-variation-settings: "opsz" 144;
-  letter-spacing: -0.022em;
+  font-family: "Inter", "SF Pro Display", system-ui, sans-serif;
+  color: var(--ink);
+  font-weight: 600;          /* SemiBold for SaaS hierarchy */
+  letter-spacing: -0.018em;
 }
 
-.font-display-soft {
-  font-family: "Fraunces", "Geist", system-ui, sans-serif;
-  font-variation-settings: "opsz" 36;
-  letter-spacing: -0.01em;
+/* Bigger display weight for hero numbers / KPI tiles */
+.font-display-bold {
+  font-family: "Inter", system-ui, sans-serif;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--ink);
 }
 
-.tabular-nums {
+.tabular-nums,
+.tabular {
   font-variant-numeric: tabular-nums;
 }
 
 code,
 .font-mono {
-  font-family: "Geist Mono", "JetBrains Mono", monospace;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
 }
 
 @layer base {
   :root {
-    --background: 60 14% 95%;
-    --foreground: 60 4% 11%;
+    --background: 60 11% 96%;
+    --foreground: 222 17% 8%;
     --card: 0 0% 100%;
-    --card-foreground: 60 4% 11%;
+    --card-foreground: 222 17% 8%;
     --popover: 0 0% 100%;
-    --popover-foreground: 60 4% 11%;
-    --primary: 150 24% 23%;
+    --popover-foreground: 222 17% 8%;
+    --primary: 198 70% 17%;
     --primary-foreground: 0 0% 98%;
-    --secondary: 60 9% 91%;
-    --secondary-foreground: 60 4% 11%;
-    --muted: 60 9% 91%;
-    --muted-foreground: 60 4% 45%;
-    --accent: 14 71% 63%;
+    --secondary: 60 9% 92%;
+    --secondary-foreground: 222 17% 8%;
+    --muted: 60 9% 92%;
+    --muted-foreground: 222 7% 38%;
+    --accent: 12 65% 53%;
     --accent-foreground: 0 0% 100%;
-    --destructive: 352 51% 46%;
+    --destructive: 351 63% 41%;
     --destructive-foreground: 0 0% 98%;
-    --border: 60 8% 83%;
-    --input: 60 8% 83%;
-    --ring: 150 24% 23%;
-    --radius: 0.75rem;
+    --border: 60 8% 88%;
+    --input: 60 8% 88%;
+    --ring: 198 70% 17%;
+    --radius: 0.875rem;
   }
 }
 
@@ -98,39 +129,88 @@ code,
   }
 }
 
+/* ----- Card system — sharper, more SaaS ----- */
+.card {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: var(--shadow-sm);
+}
+.card-strong {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: var(--shadow-md);
+}
+
+/* Make inline rounded-2xl + border-divider look uniformly clean across pages.
+   We override our existing `.divider-soft` to a sharper line so existing
+   `border divider-soft rounded-2xl` markup still gets the new look. */
+.divider-soft {
+  border-color: var(--line);
+}
+
+/* Subtle elevation utility */
+.shadow-card {
+  box-shadow: var(--shadow-sm);
+}
+.shadow-card-lg {
+  box-shadow: var(--shadow-md);
+}
+
+/* Global card definition — every "border divider-soft rounded-{xl,2xl}"
+   card now picks up a subtle elevation, making them stand out against
+   the off-white canvas without looking glossy. */
+.divider-soft.rounded-2xl,
+.divider-soft.rounded-xl,
+.divider-soft.rounded-3xl {
+  box-shadow: var(--shadow-sm);
+}
+
+.divider-soft.rounded-2xl:hover,
+.divider-soft.rounded-xl:hover {
+  /* keep static — hover effects are opt-in via tailwind classes */
+}
+
 /* Voice pulse */
 @keyframes pulse-ring {
   0% {
     transform: scale(0.95);
-    box-shadow: 0 0 0 0 rgba(229, 122, 93, 0.55);
+    box-shadow: 0 0 0 0 rgba(214, 90, 58, 0.5);
   }
   70% {
     transform: scale(1);
-    box-shadow: 0 0 0 22px rgba(229, 122, 93, 0);
+    box-shadow: 0 0 0 22px rgba(214, 90, 58, 0);
   }
   100% {
     transform: scale(0.95);
-    box-shadow: 0 0 0 0 rgba(229, 122, 93, 0);
+    box-shadow: 0 0 0 0 rgba(214, 90, 58, 0);
   }
 }
 .voice-recording {
   animation: pulse-ring 1.6s cubic-bezier(0.66, 0, 0, 1) infinite;
 }
 
-/* Subtle paper grain */
+/* Page surfaces */
 .bg-paper {
   background-color: var(--paper);
 }
 .bg-canvas {
   background-color: var(--bg);
 }
-
-.divider-soft {
-  border-color: var(--line);
+.bg-canvas-soft {
+  background-color: var(--bg-soft);
 }
 
 /* Selection */
 ::selection {
-  background: #2d4a3e;
+  background: var(--brand);
   color: #fff;
+}
+
+/* Focus rings — calmer */
+:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+  border-radius: 6px;
 }

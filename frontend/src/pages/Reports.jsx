@@ -55,7 +55,7 @@ export default function Reports() {
   return (
     <div className="space-y-6" data-testid="reports-page">
       <div>
-        <h1 className="font-display font-black text-4xl tracking-tighter text-stone-900">
+        <h1 className="font-display font-semibold text-3xl tracking-tight text-stone-900">
           Manager reports
         </h1>
         <p className="text-stone-600 mt-1 max-w-2xl">
