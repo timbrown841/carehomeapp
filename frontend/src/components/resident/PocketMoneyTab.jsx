@@ -556,7 +556,7 @@ function AddTxModal({
           >
             {categories.map((c) => (
               <option key={c.id} value={c.id}>
-                {c.label} — {c.subtitle}
+                {`${c.label} — ${c.subtitle}`}
               </option>
             ))}
           </select>

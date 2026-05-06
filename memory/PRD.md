@@ -92,13 +92,31 @@ A simple and fast care management app for children's homes and supported living.
   - PDF: A4 portrait monthly statement with brand header, opening/closing pocket+savings, money-in/money-out totals, full ledger (date, kind, description, account, in/out, running balance, staff/YP signature) and an audit hash.
 - Tested: 21/21 backend pytest, all frontend flows in `/app/test_reports/iteration_17.json` (RBAC for delete + PATCH, all 7 tx kinds, deep-link, PDF download).
 
+## Implemented (2026-05-06 · iter-18)
+- **Finance ledger overhaul** — Pocket Money replaced with a 17-category personal-allowance ledger:
+  - Categories: Pocket Money (Weekly Allowance), Personal Spending, Savings, Trust / Leaving Care Fund, Subsistence, Clothing, Incentives / Rewards, Deductions / Sanctions, Staff Purchases, External Income, Education / Activity, Transport / Travel, Mobile / Comms, Emergency Funds, Gifts, Health & Personal Care, Fines / Restitution.
+  - Each transaction stores: category, direction (in|out), amount, reason, **staff initials** (auto if blank), **young-person initials**, receipt flag, notes, signed delta, balance_after_category, balance_after_total.
+  - New endpoint `GET /api/pocket-money/categories` exposes category metadata to the frontend (id/label/subtitle/tone/default_direction).
+  - Frontend Resident Detail · "Pocket Money" tab now shows: 3 stat cards (Total / Weekly / This-month +/−), 17-category grid (tap a tile to log a tx with that category preselected), and a search + category filter on the ledger.
+  - **Live calculator preview** in Add-Transaction modal: shows "was X · ± Y · new Z" updated as you type; flags when the projected category balance goes negative.
+  - Multi-category Monthly Statement PDF (opening/closing per category, money-in/out totals, full transaction list, audit hash).
+  - Demo seed: 4 residents pre-loaded with realistic openings (Maddy includes £1,200 Trust / Leaving Care, £100 clothing, £20 personal spending) plus 10–12 transactions each across 8+ categories (gifts, education_activity, transport, mobile_phone, health_personal_care, deductions, etc.).
+- **Petty Cash & Handover module** (home-wide, on `/staff` → "Petty Cash & Handover" tab):
+  - `GET /api/petty-cash` returns float state + ledger.
+  - `POST /api/petty-cash/transactions` supports kinds: deposit (in), spend (out), handover (check), adjustment. Handover requires BOTH outgoing AND incoming staff initials, sets the running balance to the verified count, and logs a `discrepancy` field for audit.
+  - `DELETE /api/petty-cash/transactions/{id}` (manager+admin) reverses non-handover txs.
+  - UI: Current float card, Last-handover card with RAG age, Activity tile, three action buttons (Record spend, Top up float manager-only, Shift handover), full ledger with discrepancy badges.
+  - Handover modal shows live discrepancy preview before submit.
+  - Demo seed: £80 float, sample ledger with one £6.00 discrepancy already logged for visual reference.
+- Tested: 21/21 backend pytest + all observed frontend flows (manager + staff sessions, role gating, calculator preview, handover signing). One advisory: hydration warning fixed in `PocketMoneyTab.jsx` Add modal. See `/app/test_reports/iteration_18.json`.
+
 ## Backlog (next-up)
 ### P0 — User-confirmed sequential plan ("everything ClearCare has, but better"):
 1. ✅ ~~Health & Wellbeing~~ (iter-14)
 2. ✅ ~~Education / PEP tracking~~ (iter-14)
 3. ✅ ~~Staff Rotas & Training~~ (iter-15)
 4. ✅ ~~Statutory Visits & LAC Reviews~~ (iter-16)
-5. ✅ ~~Pocket Money & Personal Allowance~~ (iter-17)
+5. ✅ ~~Pocket Money & Personal Allowance~~ (iter-17, expanded iter-18 to 17 categories + Petty Cash/Handover)
 6. **Document Library** — upload PDFs, tag to resident/staff, version history, expiry reminders
 7. **Communications / Handover Log** — shift handover with voice, read-receipts
 8. **Audit Log** — every edit/delete/login captured; filterable for inspections
