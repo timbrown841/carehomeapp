@@ -1,0 +1,36 @@
+{
+  "summary": "Iteration 16 testing: Statutory Visits & LAC Reviews module (backend CRUD + filters), Dashboard urgency widgets + QuickActions strip, grouped sidebar (Overview/Care/Compliance/Team), ResidentBadges on Residents list, and per-resident Statutory Visits tab on Resident Detail. Backend: 18/18 pytest tests pass (test_iteration16.py). Frontend: all critical flows pass — login, dashboard (QuickActions 5 tiles + UrgencyWidgets 6 tiles with live values), grouped sidebar with 4 group labels, Reports hidden for staff but visible for manager, /visits page (list 10 seeded visits, filter tabs All/Upcoming/Overdue/Completed, schedule modal creates new visit 10→11, complete action fires PATCH and shows toast), Residents list renders ResidentBadges (Maddy O'Brien shows 'High Risk, Risk Review Overdue, Missing Risk +4'), and the new 'Statutory Visits' tab on Resident Detail is correctly positioned between 'Education / PEP' and 'Body Maps' with per-resident scoped counts (Upcoming 1/Overdue 0/Completed 1) and a working add-visit modal (2→3 items after create).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Sidebar + Resident Detail tabs", "issues": ["The sidebar link 'Statutory Visits' (nav-visits) shares the exact same visible label as the per-resident 'Statutory Visits' tab on Resident Detail. Not a functional bug — data-testids differ (nav-visits vs tab-visits) — but text-based selectors for testers/automation could ambiguously match. Consider renaming the tab to e.g. 'Visits' or 'Stat. Visits' for clarity. Low priority."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration16.py",
+    "/app/test_reports/pytest/iteration16_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py /api/visits PATCH endpoint (line 3163-3170): the handler accepts `StatutoryVisitIn` (not a partial model) which requires the full body for a 'patch'. It then calls `payload.model_dump(exclude_unset=True)` which does mitigate this, BUT because StatutoryVisitIn has required fields (scheduled_for, kind with default), a client that sends ONLY `{ \"status\": \"completed\" }` will 422 out on validation. The frontend (VisitsTab.jsx line 70) always sends scheduled_for and kind along with status, so it works — but the REST contract is misleading. Recommend making PATCH accept a partial model (all Optional) or document required fields.",
+    "server.py /api/visits GET (line 3125-3143): when BOTH `upcoming=true` and `overdue=true` query params are passed, the overdue branch overwrites the upcoming branch's `scheduled_for` filter and the result is silently 'just overdue'. Mutually exclusive flags should either raise 400 or use a single `filter=...` enum.",
+    "server.py dashboard/urgency missed_doses_24h (line 3194-3210): computes `scheduled` as `now.replace(hour, minute)` which uses TODAY's date only. If a dose was scheduled yesterday at 23:30 and we're now 00:15 today, `sched < now - 24h` is false (sched is today 23:30 which is future) and the missed dose is NOT counted. The window logic misses any scheduled times that cross the day boundary. Minor defect — low impact for 8:00/14:00/20:00 schedules but worth noting.",
+    "ResidentBadges.jsx & Residents.jsx: badges are fetched with one HTTP call per resident card on mount (N+1 pattern). For homes with >30 residents this is 30 parallel GETs on list render. Consider batching into a single /api/residents/badges endpoint that returns `{ [rid]: [...] }`.",
+    "QuickWidgets.jsx UrgencyWidgets: tile values come from one /api/dashboard/urgency call on mount with no polling/invalidation. When a manager creates an incident or resolves a safeguarding case, the dashboard stats stay stale until page reload. Consider React Query refetch-on-focus or a window 'focus' listener."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration16.py"
+  ],
+  "success_rate": {"backend": "100% (18/18)", "frontend": "100% of required flows — Dashboard QuickActions + UrgencyWidgets, grouped Sidebar with role gating, /visits page CRUD + filters, Residents list ResidentBadges, Resident Detail Statutory Visits tab"},
+  "test_credentials": "manager@care.local / Manager@123 ; staff@care.local / Staff@123 ; admin@care.local / Admin@123",
+  "seed_data_creation": "test_iteration16.py creates transient TEST_iter16 visits (home-wide + per-resident) and DELETEs them in the same class. Frontend playwright added 2 real visits (Regulation 44 home-wide on 2026-09-15, and IRO visit on 2026-11-20 for Maddy) that were NOT cleaned up and remain in the demo seed — inconsequential for demo but main agent may want to clear statutory_visits collection on next seed reset.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iteration 16 shipped cleanly. All endpoints (GET/POST/PATCH/DELETE /api/visits, GET /api/dashboard/urgency, GET /api/residents/{rid}/badges) work with correct role gating (delete = manager/admin, everything else = any authenticated). Frontend wiring solid: QuickActions link to correct routes, UrgencyWidgets render non-zero live counts, grouped sidebar shows all 4 groups, Reports hidden for staff, ResidentBadges load per card, tab-visits inserted at the correct index between tab-education and tab-bodymaps on ResidentDetail. Code review comments are advisory, not blocking.",
+  "rca of the issue": "None — no bugs or failures observed during this iteration's testing."
+}

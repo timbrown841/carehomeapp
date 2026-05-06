@@ -5,6 +5,7 @@ import { useAuth } from "@/context/AuthContext";
 import { personaColor, personaInitials } from "@/lib/persona";
 import { Plus, X, Loader2, ChevronRight, ShieldAlert } from "lucide-react";
 import { toast } from "sonner";
+import ResidentBadges from "@/components/ResidentBadges";
 
 const RISK_LABEL = {
   high: { bg: "#B23A48", label: "HIGH" },
@@ -122,6 +123,9 @@ export default function Residents() {
                 {r.placement_summary || r.notes}
               </p>
             )}
+            <div className="mt-3">
+              <ResidentBadges residentId={r.id} max={3} />
+            </div>
             <div className="text-[10px] uppercase tracking-wider text-stone-400 mt-3 inline-flex items-center gap-1">
               <ShieldAlert size={11} /> Open profile · risk · missing pack
             </div>
