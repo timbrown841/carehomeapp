@@ -137,6 +137,24 @@ A simple and fast care management app for children's homes and supported living.
   - Login page demo-account hint updated to include the senior credentials.
 - Tested: 31/31 backend pytest, 12/12 frontend assertions. No blockers. Optional polish items applied. Report: `/app/test_reports/iteration_20.json`.
 
+## Implemented (2026-05-06 · iter-21)
+- **Resident profile redesigned around the 9 Children's Homes Quality Standards** with a "simple on the surface, deep underneath" structure:
+  - **8 clean top-level tabs** (down from 14): Overview · Daily Care · Safeguarding · Health · Education & Independence · Finance · Documents · Timeline.
+  - **Always-visible Alerts & Risks bar** (`AlertsAndRisksBar`) above the tab strip on every tab — derives from server-computed badges + active missing episodes + risk_level + allergies + active medications. Color-tiered (red/amber/blue/green) with collapsible behaviour. Empty state shows green "All clear".
+  - **Quick Actions panel** (`QuickActionsPanel`) — 8 mobile-first action tiles (Add daily note · Log incident · Missing from care · Body map · Medication · Pocket money · Handover note · Contact) for one-click access during shifts.
+  - **Accordion structure** inside each tab (`AccordionSection`) — keeps top-level navigation calm but exposes depth on click. Tab → accordion mapping:
+    - Overview = Overview card + Background & referral + Statutory visits accordions
+    - Daily Care = Care plan & wishes (defaultOpen) + Recent daily notes (live fetch)
+    - Safeguarding = Risk assessment (defaultOpen) + Missing from care + Body maps + Recent incidents (live fetch)
+    - Health = Medical overview (defaultOpen) + Medications (MAR) + Health & wellbeing
+    - Education & Independence = Education & PEP (defaultOpen) + Independence skills (NEW)
+    - Finance = full PocketMoneyTab inline
+    - Documents = NEW DocumentsTab
+    - Timeline = existing TimelineTab
+- **NEW Independence Skills tracker** for semi-independent placements: 12 skill areas (cooking, budgeting, shopping, travel, appointments, self-medication, cleaning, emotional regulation, tenancy readiness, daily living, personal hygiene, communication) × 5 levels (not_started → mastered). Backend GET always returns all 12 with defaults + merged saved records; POST upserts. Overall readiness % calculated from level pcts averaged across skills. Senior+ can edit; staff is read-only.
+- **NEW Documents module (metadata-only)**: 12 categories (care_plan, placement_plan, pathway_plan, court_order, ehcp, assessment, consent_form, review, id_document, placement_agreement, delegated_authority, other). Expiry date with EXPIRED red badge / 30-day "Expiring soon" amber badge. External URL link supported. Add/Delete gated to senior+ via require_tier(2). File uploads themselves arrive next iteration.
+- Tested: 38/38 backend pytest, all 8 frontend tabs verified. One critical FE bug caught by code review (local DocumentsTab function shadowing the imported component) — fixed inline (removed dead local definition + added explicit import). Verified manually after fix: senior creates a doc → document appears in the list with category pill + uploader. Report: `/app/test_reports/iteration_21.json`.
+
 ## Backlog (next-up)
 ### P0 — User-confirmed sequential plan ("everything ClearCare has, but better"):
 1. ✅ ~~Health & Wellbeing~~ (iter-14)

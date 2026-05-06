@@ -11,6 +11,7 @@ import EducationTab from "@/components/resident/EducationTab";
 import VisitsTab from "@/components/resident/VisitsTab";
 import PocketMoneyTab from "@/components/resident/PocketMoneyTab";
 import IndependenceTracker from "@/components/resident/IndependenceTracker";
+import DocumentsTab from "@/components/resident/DocumentsTab";
 import AlertsAndRisksBar, { useResidentAlerts } from "@/components/resident/AlertsAndRisksBar";
 import QuickActionsPanel from "@/components/resident/QuickActionsPanel";
 import { AccordionSection } from "@/components/resident/Accordion";
@@ -749,46 +750,6 @@ function MedicalTab({ resident }) {
       <FieldRow label="Medical appointments" value={m.appointments} />
       <FieldRow label="Health conditions" value={m.conditions} />
       <FieldRow label="Emergency medical notes" value={m.emergency_notes} />
-    </div>
-  );
-}
-
-// ---------------- Documents ----------------
-function DocumentsTab({ resident }) {
-  const groups = [
-    { title: "Risk assessments", desc: "Current and previous risk reviews." },
-    { title: "Support plans", desc: "Care plan, behaviour plan, education plan." },
-    { title: "Placement plan", desc: "Signed placement agreement and amendments." },
-    { title: "Referral documents", desc: "Initial referral and chronology." },
-    { title: "Medical documents", desc: "GP letters, hospital discharges, prescriptions." },
-    { title: "Incident reports", desc: "PDFs of historic incident reports." },
-    { title: "Review documents", desc: "LAC reviews, IRO minutes, statutory visits." },
-  ];
-  return (
-    <div className="space-y-3" data-testid="documents-content">
-      <p className="text-sm text-stone-600">
-        Document storage with version history is on the way. For now, generate PDFs from incident
-        reports or the Manager Reports page.
-      </p>
-      <div className="grid sm:grid-cols-2 gap-3 mt-2">
-        {groups.map((g) => (
-          <div
-            key={g.title}
-            className="border divider-soft rounded-xl p-4 flex items-start gap-3 bg-stone-50/50"
-          >
-            <span className="w-9 h-9 rounded-lg bg-[#1E4D5C]/10 text-[#1E4D5C] flex items-center justify-center shrink-0">
-              <FileText size={16} />
-            </span>
-            <div className="flex-1">
-              <div className="font-semibold text-sm text-stone-900">{g.title}</div>
-              <div className="text-xs text-stone-500">{g.desc}</div>
-              <div className="text-[10px] uppercase tracking-wider text-stone-400 mt-2">
-                Coming soon
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
     </div>
   );
 }
