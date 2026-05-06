@@ -124,8 +124,9 @@ async def _seed_demo_data_if_empty():
     has_meds = await db.medications.count_documents({}) > 0
     has_health = await db.health_appointments.count_documents({}) > 0
     has_edu = await db.education_records.count_documents({}) > 0
-    has_shifts = await db.shifts.count_documents({}) > 0 or await db.trainings.count_documents({}) > 0
-    if fully_seeded and has_meds and has_health and has_edu and has_shifts:
+    has_shifts = await db.shifts.count_documents({}) > 0
+    has_train = await db.trainings.count_documents({}) > 0
+    if fully_seeded and has_meds and has_health and has_edu and has_shifts and has_train:
         return
     if fully_seeded:
         # Profiles exist but new modules missing — top up only.
@@ -954,7 +955,7 @@ async def _seed_meds_and_bodymaps():
         # Each course: (name, completed_days_ago, validity_months)
         courses = [
             ("Safeguarding L3", 365, 24),
-            ("First Aid at Work", 800, 36),  # expired for some
+            ("First Aid at Work", 1500, 36),  # intentionally expired (~14mo overdue)
             ("Medication Administration", 200, 12),
             ("DBS Check", 540, 36),
             ("Fire Safety", 90, 12),

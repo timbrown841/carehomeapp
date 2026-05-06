@@ -63,11 +63,19 @@ A simple and fast care management app for children's homes and supported living.
   - Replaces previous placeholder. Live aggregate 0-100 score donut + 6 sub-sections (medication, risk reviews, daily notes, supervisions, safeguarding response, missing-from-care).
   - Each section shows top issues + "Fix this" deep link. Auto-updates with current state.
 
+## Implemented (2026-05-06 · iter-15)
+- **UI overhaul to ClearCare-grade clinical SaaS**: dropped Fraunces serif headings → **Inter throughout** (SemiBold for headings, Regular body, Bold for stats). Deeper inks (`#0F1115` body, `#0E3B4A` brand). Off-white canvas. Sharper card borders + global subtle box-shadow on every `.divider-soft.rounded-2xl/.rounded-xl` card. Reduced page heading from text-4xl/font-black to text-3xl/font-semibold across all pages. Editorial vibe replaced by operational SaaS clarity.
+- **Inspection Bundle PDF** (`GET /api/ofsted/inspection-bundle/pdf`, manager+admin only): single-PDF cover-page scorecard + last 30 days incidents + active medications snapshot + recent missing episodes + audit hash. New "Inspection Bundle PDF" button on the Ofsted Readiness page.
+- **Staff Rotas & Training module** (`/staff` — replaces ComingSoon):
+  - **Rota tab**: live "On shift now" panel + week schedule with date-range pickers; manager can add/delete shifts.
+  - **Training matrix tab**: 4 RAG summary cards (Current / Expiring / Expired / Missing) + cross-staff matrix table with course-level expiry RAG (Safeguarding L3, First Aid at Work, Medication Administration, DBS Check, Fire Safety, Restrictive Practice). Manager can record new training.
+  - Backend: `/api/staff` (list), `/api/shifts`, `/api/shifts/now`, `/api/shifts/{id}`, `/api/trainings`, `/api/trainings/matrix`. Demo seed produces a fully populated matrix including an expired First Aid record on Sarah Manager so the RAG palette is fully visible.
+
 ## Backlog (next-up after the trio)
 ### P0 — User-confirmed sequential plan ("everything ClearCare has, but better"):
 1. ✅ ~~Health & Wellbeing~~ (iter-14)
 2. ✅ ~~Education / PEP tracking~~ (iter-14)
-3. **Staff Rotas & Training** — shift planner, on-shift now panel, training matrix with expiry RAG (DBS, First Aid, Safeguarding, Medication-trained)
+3. ✅ ~~Staff Rotas & Training~~ (iter-15)
 4. **Statutory Visits & LAC Reviews** — IRO visits, social-worker visits, LAC review schedule with overdue alerts
 5. **Pocket Money & Personal Allowance** — running balance, sign-out, ledger, monthly statement
 6. **Document Library** — upload PDFs, tag to resident/staff, version history, expiry reminders
@@ -91,7 +99,7 @@ A simple and fast care management app for children's homes and supported living.
 See `/app/memory/test_credentials.md`.
 nurse reviews
 2. **Education / PEP tracking** — school, attendance %, PEP dates, exclusions, achievements
-3. **Staff Rotas & Training** — shift planner, on-shift now panel, training matrix with expiry RAG (DBS, First Aid, Safeguarding, Medication-trained)
+3. ✅ ~~Staff Rotas & Training~~ (iter-15)
 4. **Statutory Visits & LAC Reviews** — IRO visits, social-worker visits, LAC review schedule with overdue alerts
 5. **Pocket Money & Personal Allowance** — running balance, sign-out, ledger, monthly statement
 6. **Document Library** — upload PDFs, tag to resident/staff, version history, expiry reminders
