@@ -59,8 +59,7 @@ export default function Staff() {
 }
 
 export function TrainingPage() {
-  const { user } = useAuth();
-  const canManage = user?.role === "manager" || user?.role === "admin";
+  const { user, isSeniorOrAbove, isManagerOrAbove } = useAuth();
   return (
     <div className="space-y-5 max-w-6xl mx-auto" data-testid="training-page">
       <header>
@@ -68,13 +67,19 @@ export function TrainingPage() {
           Training & Development
         </div>
         <h1 className="font-display font-semibold text-3xl tracking-tight text-[#0F1115] mt-1.5" style={{ letterSpacing: "-0.02em" }}>
-          Training matrix
+          {isSeniorOrAbove ? "Training matrix" : "My training"}
         </h1>
         <p className="text-[#5d6068] mt-1.5 text-[15px]">
-          Mandatory training, expiry dates and certificates. Managers see the full team matrix; support workers see their own training only.
+          {isSeniorOrAbove
+            ? "Mandatory training, expiry dates and certificates across the whole team."
+            : "Your training record. Speak to your senior or manager about anything expiring soon."}
         </p>
       </header>
-      <TrainingMatrix canManage={canManage} />
+      {isSeniorOrAbove ? (
+        <TrainingMatrix canManage={isManagerOrAbove} />
+      ) : (
+        <MyTraining userId={user?.id} />
+      )}
     </div>
   );
 }
@@ -562,6 +567,91 @@ function AddTrainingModal({ onClose, onSaved }) {
           Save training
         </button>
       </form>
+    </div>
+  );
+}
+
+// ---------------- My Training (staff view) ----------------
+function MyTraining() {
+  const [data, setData] = useState({ trainings: [] });
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    api.get("/trainings/mine").then((r) => setData(r.data || { trainings: [] })).finally(() => setLoading(false));
+  }, []);
+
+  if (loading) {
+    return (
+      <div className="text-center py-10 text-[#5d6068]">
+        <Loader2 className="animate-spin inline" />
+      </div>
+    );
+  }
+
+  const trainings = data.trainings || [];
+  const counts = trainings.reduce((acc, t) => {
+    acc[t.status] = (acc[t.status] || 0) + 1;
+    return acc;
+  }, {});
+
+  if (trainings.length === 0) {
+    return (
+      <div className="bg-white border divider-soft rounded-2xl p-10 text-center" data-testid="my-training-empty">
+        <p className="text-sm text-[#5d6068]">
+          You have no training records on file yet. Speak to your manager.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4" data-testid="my-training">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        {Object.entries(STATUS_TONE).map(([k, v]) => (
+          <div
+            key={k}
+            data-testid={`my-training-summary-${k}`}
+            className="bg-white border-l-4 border-y border-r divider-soft rounded-xl p-4"
+            style={{ borderLeftColor: v.bg }}
+          >
+            <div className="text-[10px] font-bold uppercase tracking-wider text-[#5d6068]">
+              {v.label}
+            </div>
+            <div className="font-display-bold text-3xl tabular-nums" style={{ color: v.fg }}>
+              {counts[k] || 0}
+            </div>
+          </div>
+        ))}
+      </div>
+      <ul className="space-y-2" data-testid="my-training-list">
+        {trainings.map((t) => {
+          const tone = STATUS_TONE[t.status] || STATUS_TONE.ok;
+          return (
+            <li
+              key={t.id}
+              data-testid={`my-training-${t.id}`}
+              className="bg-white border-l-4 border-y border-r divider-soft rounded-xl p-4 flex items-start gap-3 flex-wrap"
+              style={{ borderLeftColor: tone.bg }}
+            >
+              <div className="flex-1 min-w-[200px]">
+                <div className="flex items-center gap-2 flex-wrap mb-1">
+                  <span
+                    className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded text-white"
+                    style={{ background: tone.fg }}
+                  >
+                    {tone.label}
+                  </span>
+                </div>
+                <div className="font-semibold text-[#0F1115]">{t.course}</div>
+                <div className="text-xs text-[#5d6068] mt-0.5">
+                  {t.completed_on && <>Completed {t.completed_on}</>}
+                  {t.expires_on && <> · Expires {t.expires_on}</>}
+                  {t.provider && <> · {t.provider}</>}
+                </div>
+              </div>
+            </li>
+          );
+        })}
+      </ul>
     </div>
   );
 }

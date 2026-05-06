@@ -69,7 +69,7 @@ function App() {
               <Route path="/training" element={<TrainingPage />} />
               <Route path="/handover" element={<Handover />} />
               <Route path="/handover/:id" element={<Handover />} />
-              <Route path="/hr" element={<SaferRecruitment />} />
+              <Route path="/hr" element={<ManagerOnly><SaferRecruitment /></ManagerOnly>} />
               <Route path="/petty-cash" element={<PettyCashPage />} />
               <Route path="/supervisions" element={<Supervisions />} />
               <Route path="/medications" element={<MedicationRound />} />

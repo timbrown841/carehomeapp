@@ -1,0 +1,40 @@
+{
+  "summary": "Iteration 20 LIGHT 3-tier RBAC fully validated. Backend: 31/31 pytest tests pass covering /auth/permissions, /hr/preview, /trainings/matrix, /trainings, /trainings/mine, senior seed, require_tier 403s, and RegisterIn accepting 'senior'. Frontend: staff sees Support Worker pill with no HR nav + 'My training' view + no add button + /hr redirects; senior sees Senior pill with no HR nav + full team matrix + /hr redirects; manager sees Manager pill + nav-hr visible + Safer Recruitment placeholder renders. Iter-19 regression spot-checks (residents, handovers, petty-cash, dashboard stats) all 200.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Login page demo accounts block", "issues": ["Demo credentials hint still lists only admin/manager/staff; senior@care.local not shown though it is now a seeded tier. Minor discoverability issue — non-blocking."]},
+      {"screen": "Sidebar — Training & Development group (staff view)", "issues": ["Nav item label still reads 'Training Matrix' for staff even though the /training page for staff renders a 'My training' view. Consider dynamically relabeling to 'My Training' when tier < 2 for consistency with the page header. Non-blocking cosmetic."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration20.py",
+    "/app/test_reports/pytest/iteration20_results.xml"
+  ],
+  "action_items": [
+    "(Optional polish) Add senior@care.local / Senior@123 line to the Login page demo-accounts hint block.",
+    "(Optional polish) Rename sidebar 'Training Matrix' → 'My Training' for tier < 2 to match the page header shown to staff."
+  ],
+  "critical_code_review_comments": [
+    "server.py is ~4600 lines — long overdue to split into routers/modules (auth, training, hr, finance, compliance). Not an iter-20 blocker but each subsequent iteration compounds the maintenance cost.",
+    "PERMISSION_MIN_TIER is a clean single-source-of-truth; good. Frontend AuthContext exposes can()/tier()/isSeniorOrAbove/isManagerOrAbove correctly and /auth/permissions is fetched on login and on /auth/me rehydrate.",
+    "Layout.jsx group/item filter correctly respects both group.minTier and item.minTier. Reports link also correctly gated behind minTier=3.",
+    "/hr route guarded by ManagerOnly in App.js verified by direct-URL redirect test for both staff and senior.",
+    "require_tier returns 403 with 'Insufficient permissions' detail as spec'd; verified via staff→/hr/preview and staff→/trainings/matrix responses."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration20.py"
+  ],
+  "success_rate": {"backend": "100% (31/31)", "frontend": "100% (all 12 assertions passed)"},
+  "test_credentials": "Used seeded creds from /app/memory/test_credentials.md — admin/manager/senior/staff all login OK and return correct role.",
+  "seed_data_creation": "No new seed data. TestRegister created 'TEST_senior_reg@care.local' — idempotent and harmless; not cleaned up (register endpoint duplicate-safe).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iter-20 (light 3-tier RBAC) is green end-to-end. Backend single source of truth is PERMISSION_MIN_TIER in server.py (~line 1677) and require_tier dependency (~line 1371). Frontend reads /auth/permissions on login + rehydrate, populates permissions Set in AuthContext, and exposes can()/tier/isSeniorOrAbove/isManagerOrAbove helpers. Sidebar group + item both support minTier filtering. For next iteration the two cosmetic polish items above are the only carryover. Regression endpoints confirmed still healthy: /api/residents, /api/handovers, /api/petty-cash, /api/dashboard/stats, /api/trainings (now senior-gated), /api/trainings/matrix (senior-gated), /api/trainings/mine (any auth user).",
+  "rca of the issue": "N/A — no failures."
+}

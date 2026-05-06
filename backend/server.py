@@ -95,6 +95,7 @@ async def lifespan(_app: FastAPI):
 
     for email, name, role, pwd in [
         ("manager@care.local", "Sarah Manager", "manager", "Manager@123"),
+        ("senior@care.local", "Priya Senior", "senior", "Senior@123"),
         ("staff@care.local", "Alex Staff", "staff", "Staff@123"),
         ("james@care.local", "James Patel", "staff", "Staff@123"),
     ]:
@@ -1353,12 +1354,36 @@ def require_role(*roles: str):
     return _checker
 
 
+# Role tiers — light hierarchy. Higher number = more privilege.
+# This sits alongside (not replacing) require_role to avoid a big bang refactor.
+ROLE_TIER = {
+    "staff": 1,
+    "senior": 2,
+    "manager": 3,
+    "admin": 4,
+}
+
+
+def role_tier(role: Optional[str]) -> int:
+    return ROLE_TIER.get(role or "", 0)
+
+
+def require_tier(min_tier: int):
+    """Require a minimum role tier. 1=staff, 2=senior, 3=manager, 4=admin."""
+    async def _checker(user: dict = Depends(get_current_user)) -> dict:
+        if role_tier(user.get("role")) < min_tier:
+            raise HTTPException(status_code=403, detail="Insufficient permissions")
+        return user
+
+    return _checker
+
+
 # ---------- Models ----------
 class RegisterIn(BaseModel):
     email: str
     password: str = Field(min_length=6)
     name: str
-    role: Literal["staff", "manager", "admin"] = "staff"
+    role: Literal["staff", "senior", "manager", "admin"] = "staff"
 
     @field_validator("email")
     @classmethod
@@ -1644,6 +1669,94 @@ async def login(payload: LoginIn, request: Request):
 @api_router.get("/auth/me", response_model=UserOut)
 async def me(user: dict = Depends(get_current_user)):
     return user
+
+
+# Light permission map — single source of truth shared with the frontend.
+# Each key is a `module:action` string. Each value is the minimum role tier required.
+# Tiers: 1 staff, 2 senior, 3 manager, 4 admin.
+PERMISSION_MIN_TIER = {
+    # Care
+    "residents:read": 1,
+    "residents:write": 3,
+    "residents:delete": 4,
+    "notes:read": 1,
+    "notes:write": 1,
+    "incidents:read": 1,
+    "incidents:write": 1,
+    "incidents:delete": 4,
+    "medications:read": 1,
+    "medications:write": 3,
+    "visits:read": 1,
+    "visits:write": 1,
+    "visits:delete": 3,
+    # Handover
+    "handover:read": 1,
+    "handover:write": 1,
+    "handover:sign_in": 1,
+    "handover:sign_out": 1,
+    "handover:unlock": 3,
+    "handover:delete": 3,
+    # Staff Operations / Rota
+    "staff_ops:read": 1,
+    "staff_ops:write": 2,  # senior+ can edit rota
+    "staff_ops:delete": 3,
+    # Training & Development
+    "training_self:read": 1,
+    "training_matrix:read": 2,  # senior+ can see full matrix
+    "training_matrix:write": 3,
+    "supervisions:read": 1,
+    "supervisions:write": 3,
+    # Compliance / Reports
+    "ofsted:read": 1,
+    "reports:read": 3,
+    "reports:write": 3,
+    # Finance
+    "pocket_money:read": 1,
+    "pocket_money:write": 1,  # staff can record tx
+    "pocket_money:approve_delete": 3,  # only manager can reverse
+    "petty_cash:read": 1,
+    "petty_cash:spend": 1,  # staff can record spends
+    "petty_cash:topup": 3,  # only manager can deposit / top up float
+    "petty_cash:delete": 3,
+    "petty_cash:handover": 1,  # any signed-in staff can do shift count
+    # Safer Recruitment & HR (restricted)
+    "hr:read": 3,  # manager+admin only
+    "hr:write": 3,
+}
+
+
+def has_permission(user: dict, perm: str) -> bool:
+    needed = PERMISSION_MIN_TIER.get(perm)
+    if needed is None:
+        return False
+    return role_tier(user.get("role")) >= needed
+
+
+@api_router.get("/auth/permissions")
+async def my_permissions(user: dict = Depends(get_current_user)):
+    """Returns the user's effective permission set + role + tier for the frontend."""
+    grants = [p for p in PERMISSION_MIN_TIER if has_permission(user, p)]
+    return {
+        "role": user.get("role"),
+        "tier": role_tier(user.get("role")),
+        "grants": grants,
+    }
+
+
+@api_router.get("/hr/preview")
+async def hr_preview(_: dict = Depends(require_tier(3))):
+    """Placeholder endpoint that proves role-gating works for the HR module."""
+    return {
+        "module": "Safer Recruitment & HR",
+        "status": "coming_soon",
+        "sections": [
+            "DBS Checks",
+            "Right to Work",
+            "References & Interviews",
+            "Single Central Record",
+            "Disciplinary Records",
+        ],
+    }
 
 
 @api_router.get("/auth/users", response_model=List[UserOut])
@@ -3291,7 +3404,8 @@ async def delete_shift(sid: str, _: dict = Depends(require_role("manager", "admi
 
 
 @api_router.get("/trainings")
-async def list_trainings(staff_id: Optional[str] = None, _: dict = Depends(get_current_user)):
+async def list_trainings(staff_id: Optional[str] = None, _: dict = Depends(require_tier(2))):
+    """Cross-staff training list. Senior+ only."""
     q: dict = {}
     if staff_id:
         q["staff_id"] = staff_id
@@ -3299,13 +3413,36 @@ async def list_trainings(staff_id: Optional[str] = None, _: dict = Depends(get_c
     return docs
 
 
+@api_router.get("/trainings/mine")
+async def list_my_trainings(user: dict = Depends(get_current_user)):
+    """Returns the current user's own training records — for the staff 'My Training' view."""
+    today = datetime.now(timezone.utc).date().isoformat()
+    soon = (datetime.now(timezone.utc) + timedelta(days=60)).date().isoformat()
+    docs = await db.trainings.find(
+        {"staff_id": user["id"]}, {"_id": 0}
+    ).sort("expires_on", 1).to_list(500)
+    out = []
+    for t in docs:
+        exp = t.get("expires_on")
+        if not exp:
+            status = "ok"
+        elif exp < today:
+            status = "expired"
+        elif exp < soon:
+            status = "expiring"
+        else:
+            status = "ok"
+        out.append({**t, "status": status})
+    return {"trainings": out, "today": today, "soon_cutoff": soon}
+
+
 @api_router.get("/trainings/matrix")
-async def trainings_matrix(_: dict = Depends(get_current_user)):
-    """Cross-staff training matrix with RAG status."""
+async def trainings_matrix(_: dict = Depends(require_tier(2))):
+    """Cross-staff training matrix with RAG status. Senior+ only — staff use /trainings/mine."""
     today = datetime.now(timezone.utc).date().isoformat()
     soon = (datetime.now(timezone.utc) + timedelta(days=60)).date().isoformat()
     staff = await db.users.find(
-        {"role": {"$in": ["staff", "manager", "admin"]}},
+        {"role": {"$in": ["staff", "senior", "manager", "admin"]}},
         {"_id": 0, "id": 1, "name": 1, "email": 1, "role": 1},
     ).sort("name", 1).to_list(500)
     trainings = await db.trainings.find({}, {"_id": 0}).to_list(2000)

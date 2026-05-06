@@ -62,8 +62,9 @@ const groups = [
   },
   {
     label: "Safer Recruitment & HR",
+    minTier: 3,
     items: [
-      { to: "/hr", label: "Safer Recruitment", icon: ShieldCheck, testid: "nav-hr", roles: ["manager", "admin"] },
+      { to: "/hr", label: "Safer Recruitment", icon: ShieldCheck, testid: "nav-hr", minTier: 3 },
     ],
   },
   {
@@ -77,7 +78,7 @@ const groups = [
     label: "Compliance",
     items: [
       { to: "/ofsted", label: "Ofsted Readiness", icon: BadgeCheck, testid: "nav-ofsted" },
-      { to: "/reports", label: "Reports", icon: FileText, testid: "nav-reports", roles: ["manager", "admin"] },
+      { to: "/reports", label: "Reports", icon: FileText, testid: "nav-reports", minTier: 3 },
     ],
   },
 ];
@@ -105,11 +106,19 @@ function NavItem({ link, onClick }) {
 }
 
 export default function Layout() {
-  const { user, logout } = useAuth();
+  const { user, logout, tier } = useAuth();
   const location = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
 
   const close = () => setMobileOpen(false);
+
+  const ROLE_BADGE = {
+    staff: { label: "Support Worker", tone: "#5d6068" },
+    senior: { label: "Senior", tone: "#0e3b4a" },
+    manager: { label: "Manager", tone: "#2F6A3A" },
+    admin: { label: "Admin", tone: "#A8273A" },
+  };
+  const badge = ROLE_BADGE[user?.role] || { label: user?.role || "—", tone: "#5d6068" };
 
   return (
     <div className="min-h-screen bg-canvas">
@@ -143,8 +152,9 @@ export default function Layout() {
           </div>
           <nav className="p-3 space-y-4">
             {groups.map((g) => {
+              if (g.minTier && tier < g.minTier) return null;
               const items = g.items.filter(
-                (l) => !l.roles || l.roles.includes(user?.role)
+                (l) => (!l.roles || l.roles.includes(user?.role)) && (!l.minTier || tier >= l.minTier)
               );
               if (items.length === 0) return null;
               return (
@@ -178,8 +188,12 @@ export default function Layout() {
                 <div className="text-[13px] font-semibold text-[#0F1115] truncate">
                   {user?.name || "—"}
                 </div>
-                <div className="text-[10px] uppercase tracking-wider text-[#8a8d95]">
-                  {user?.role}
+                <div
+                  className="text-[10px] uppercase tracking-wider font-bold inline-block"
+                  style={{ color: badge.tone }}
+                  data-testid="user-role-badge"
+                >
+                  {badge.label}
                 </div>
               </div>
               <button
