@@ -56,7 +56,7 @@ const groups = [
   {
     label: "Training & Development",
     items: [
-      { to: "/training", label: "Training Matrix", icon: GraduationCap, testid: "nav-training" },
+      { to: "/training", label: "Training Matrix", labelByTier: { 1: "My Training" }, icon: GraduationCap, testid: "nav-training" },
       { to: "/supervisions", label: "Supervisions", icon: ClipboardCheck, testid: "nav-supervisions" },
     ],
   },
@@ -164,7 +164,14 @@ export default function Layout() {
                   </div>
                   <div className="space-y-0.5">
                     {items.map((l) => (
-                      <NavItem key={l.to} link={l} onClick={close} />
+                      <NavItem
+                        key={l.to}
+                        link={{
+                          ...l,
+                          label: (l.labelByTier && l.labelByTier[tier]) || l.label,
+                        }}
+                        onClick={close}
+                      />
                     ))}
                   </div>
                 </div>

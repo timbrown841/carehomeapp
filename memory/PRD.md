@@ -124,6 +124,19 @@ A simple and fast care management app for children's homes and supported living.
   - Demo seed: 1 locked morning handover from yesterday + 1 awaiting_incoming afternoon handover with 2 flagged sections (Safeguarding disclosure + Petty cash £6 surplus discrepancy) so you can demo the full workflow on day one.
 - Tested: 17/17 backend pytest, all observed frontend flows. Two minor refinements applied post-test (deep-link `/handover/:id` route + replaced bare `except: pass` with logger.warning in sign-in delivery_log handler). Report: `/app/test_reports/iteration_19.json`.
 
+## Implemented (2026-05-06 · iter-20)
+- **LIGHT 3-tier permissions** (user explicitly deferred the full 9-role enterprise RBAC + multi-tenant, wanting to validate operational workflows first):
+  - Tiers: 1 staff (Support Worker) · 2 senior · 3 manager · 4 admin.
+  - Backend: `ROLE_TIER` map, `role_tier()` helper, `require_tier(min_tier)` dependency, `PERMISSION_MIN_TIER` resource:action permission table (single source of truth shared with the frontend), `has_permission()`, new endpoints `GET /api/auth/permissions` (returns role + tier + grants[]), `GET /api/hr/preview` (manager+ only, proves the gate works), `GET /api/trainings/mine` (any signed-in user — own training only).
+  - Backend: `GET /api/trainings/matrix` and `GET /api/trainings` are now senior+ only. Existing `require_role(...)` usages remain unchanged (backward-compat).
+  - Backend: new seeded user `senior@care.local` / `Senior@123`.
+  - Frontend `AuthContext` rewritten to hold a permissions Set; exposes `can(perm)`, `tier`, `isSeniorOrAbove`, `isManagerOrAbove`. Permissions auto-loaded on login + on token rehydrate via `/auth/permissions`.
+  - Frontend `Layout`: sidebar groups respect a `minTier` field; the **Safer Recruitment & HR** group hides for tier < 3. Reports link gated minTier 3. The "Training Matrix" sidebar label auto-renames to "My Training" for staff (tier 1). User-card pill shows the role label (Support Worker / Senior / Manager / Admin) with role-tinted color.
+  - Frontend `TrainingPage`: switches between full team Matrix (senior+) and a personal "My Training" view (staff) showing each course's status (ok/expiring/expired) with a 4-pill summary.
+  - Frontend `App.js`: `/hr` route wrapped in `ManagerOnly` — direct URL access by staff/senior redirects to `/`.
+  - Login page demo-account hint updated to include the senior credentials.
+- Tested: 31/31 backend pytest, 12/12 frontend assertions. No blockers. Optional polish items applied. Report: `/app/test_reports/iteration_20.json`.
+
 ## Backlog (next-up)
 ### P0 — User-confirmed sequential plan ("everything ClearCare has, but better"):
 1. ✅ ~~Health & Wellbeing~~ (iter-14)

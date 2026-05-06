@@ -151,6 +151,7 @@ export default function Login() {
             <div>
               <code className="text-[#1E4D5C]">admin@care.local</code> / Admin@123 ·{" "}
               <code className="text-[#1E4D5C]">manager@care.local</code> / Manager@123 ·{" "}
+              <code className="text-[#1E4D5C]">senior@care.local</code> / Senior@123 ·{" "}
               <code className="text-[#1E4D5C]">staff@care.local</code> / Staff@123
             </div>
           </div>
