@@ -1,0 +1,38 @@
+{
+  "summary": "Iteration 21 backend (resident documents + independence skills) is solid: 38/38 pytest passes including all 12 doc categories, all 5 skill levels, role-gated DELETE (staff 403, senior/manager 200), GET returns all 12 skills with default 'not_started', POST upserts. Frontend restructure mostly succeeds: 8 top-level tabs render with correct data-testids, persistent alerts-and-risks-bar visible on EVERY tab, Maddy shows 8 alerts (Currently Missing / High Risk / Risk Review Overdue / Active Meds among them), Quick Actions panel renders 8 actions, Daily Care/Safeguarding/Health/Education accordions all render. Iter-19/20 regression endpoints all 200. ONE CRITICAL FRONTEND BUG: Documents tab still renders the OLD inline 'Coming soon' placeholder — the new DocumentsTab component is never imported and is shadowed by a same-named inline function in ResidentDetail.jsx line 757.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "ResidentDetail.jsx → Documents tab", "issue": "The new DocumentsTab from /app/frontend/src/components/resident/DocumentsTab.jsx is NOT imported. Instead, an inline `function DocumentsTab({ resident })` at line 757 of ResidentDetail.jsx renders the old 'Coming soon' placeholder cards (Risk assessments / Support plans / Placement plan / Referral documents). As a result: no [data-testid=add-document-btn], no add-document modal, no list of saved docs, no role-gating, no expiry badges. Verified for both senior and staff roles — both see the placeholder and zero count for add-document-btn.", "selector": "[data-testid=tab-body-documents]", "priority": "CRITICAL"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration21.py",
+    "/app/test_reports/pytest/iteration21_results.xml"
+  ],
+  "action_items": [
+    "FIX (critical): In /app/frontend/src/pages/ResidentDetail.jsx — (a) add `import DocumentsTab from \"@/components/resident/DocumentsTab\";` near the other resident-component imports (~line 17), and (b) DELETE the local `function DocumentsTab({ resident }) { ... }` block starting at ~line 757 (the COMING SOON placeholder array + render). The page already references `<DocumentsTab resident={resident} />` at line 441 — once the local shadow is removed and the import added, the iteration-21 Documents experience (add modal, role gating, expiry badges, category pill) will render automatically.",
+    "(verification after fix) Re-run frontend smoke for Documents tab as senior (Add btn visible, modal opens, save creates doc, doc shows in list with category pill) and as staff (no Add btn, no Delete btns).",
+    "(nice-to-have) IndependenceTracker — the 'Independence skills' accordion is rendered but skill rows live inside; consider also exposing data-testid=\"independence-accordion\" on the accordion header for easier testing."
+  ],
+  "critical_code_review_comments": [
+    "CRITICAL: Local inline `function DocumentsTab` in ResidentDetail.jsx shadows the imported component — exactly the kind of issue that catches a code review. JS module-level function declarations override named imports of the same name silently. Recommend adding eslint rule no-redeclare / @typescript-eslint/no-shadow to catch this.",
+    "ResidentDetail.jsx is now ~1360 lines — past time to split into per-tab files (OverviewTab, DailyCareTab, SafeguardingTab, HealthTab) under components/resident/. Iter-21 added 4 accordion bodies inline which keeps growing the file.",
+    "Backend documents/independence endpoints look clean: proper Literal types for category/level (auto-422 on invalid), 404 on unknown resident_id, _id properly excluded via projection, require_tier(2) used correctly for delete. No ObjectId leakage observed.",
+    "GET /residents/{rid}/independence merges saved records onto INDEPENDENCE_SKILLS_META — good single-source-of-truth pattern. Always returns 12 rows even if zero saved, which matches the FE contract.",
+    "Frontend IndependenceTracker disables level pills via `disabled={!isSeniorOrAbove}` driven by AuthContext — correct.",
+    "AlertsAndRisksBar presence on every tab confirmed via direct deep-link hits to all 8 ?tab= values; bar count 8 alerts for Maddy across all tabs."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration21.py"
+  ],
+  "success_rate": {"backend": "100% (38/38)", "frontend": "~88% — 7 of 8 tabs fully functional; Documents tab shows wrong content"},
+  "test_credentials": "Used seeded creds from /app/memory/test_credentials.md — manager/senior/staff all login fine. Login page demo block now correctly lists senior@care.local (carryover polish from iter-20 ✓).",
+  "seed_data_creation": "Created TEST_-prefixed documents and independence-skill records on the first resident in the list during pytest. Categories 12x docs + a UI_TEST_doc attempt (which failed silently because the new tab isn't rendered). Independence cooking/budgeting/communication levels written. All test rows are TEST_ or UI_TEST_ prefixed for easy cleanup; recommend a periodic cleanup job but not iter-21 blocking.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iter-21 backend is GREEN. The single critical issue is the Documents tab front-end shadow bug — once main agent removes the inline DocumentsTab function and imports the real one from /app/frontend/src/components/resident/DocumentsTab.jsx, re-run iteration_21 frontend test focused only on Documents tab: (1) senior sees [data-testid=add-document-btn]; (2) clicking opens a modal with title input + category dropdown (12 options) + expiry date + URL + notes; (3) saved doc renders with category pill + expiry badge (red EXPIRED past date, amber 'Expiring soon' if <30 days); (4) staff role sees no Add button and no per-row Delete button; (5) DELETE round-trip works for senior/manager. All other iter-21 frontend assertions already verified passing.",
+  "rca of the issue": "Root cause for Documents tab regression: in ResidentDetail.jsx, two declarations exist with the name `DocumentsTab` — one is a local function (line 757) created in an earlier iteration to render placeholder 'coming soon' cards, the other is the new component file under components/resident/. The new file is NEVER imported. JSX `<DocumentsTab resident={resident} />` at line 441 binds to the local function (function declarations hoist and override import names if the import is missing). Reproduction: log in as senior, open any resident, click Documents tab → see four 'Coming soon' cards instead of the new add-document UI. Mitigation: (1) add `import DocumentsTab from \"@/components/resident/DocumentsTab\";` (2) delete the local function block (the docs array + its return) to remove the shadow. Linting suggestion: enable no-shadow or unicorn/no-redundant-roles to surface this class of bug going forward."
+}

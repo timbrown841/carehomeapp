@@ -4338,6 +4338,123 @@ async def delete_handover(hid: str, _: dict = Depends(require_role("manager", "a
     return {"deleted": res.deleted_count}
 
 
+# ---------- Resident Documents (metadata-only this iteration) ----------
+DOC_CATEGORY = Literal[
+    "care_plan", "placement_plan", "pathway_plan", "court_order", "ehcp",
+    "assessment", "consent_form", "review", "id_document", "placement_agreement",
+    "delegated_authority", "other",
+]
+
+
+class ResidentDocumentIn(BaseModel):
+    title: str
+    category: DOC_CATEGORY = "other"
+    expiry_date: Optional[str] = None
+    notes: Optional[str] = None
+    file_url: Optional[str] = None  # external link or placeholder for future upload
+
+
+class ResidentDocument(ResidentDocumentIn):
+    id: str
+    resident_id: str
+    uploaded_by_name: Optional[str] = None
+    created_at: str
+
+
+@api_router.get("/residents/{rid}/documents", response_model=List[ResidentDocument])
+async def list_documents(rid: str, _: dict = Depends(get_current_user)):
+    return await db.resident_documents.find({"resident_id": rid}, {"_id": 0}).sort("created_at", -1).to_list(500)
+
+
+@api_router.post("/residents/{rid}/documents", response_model=ResidentDocument)
+async def add_document(rid: str, payload: ResidentDocumentIn, user: dict = Depends(get_current_user)):
+    if not await db.residents.find_one({"id": rid}, {"_id": 0, "id": 1}):
+        raise HTTPException(404, "Resident not found")
+    doc = {
+        **payload.model_dump(),
+        "id": str(uuid.uuid4()),
+        "resident_id": rid,
+        "uploaded_by_name": user["name"],
+        "created_at": now_iso(),
+    }
+    await db.resident_documents.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api_router.delete("/residents/documents/{doc_id}")
+async def delete_document(doc_id: str, _: dict = Depends(require_tier(2))):
+    res = await db.resident_documents.delete_one({"id": doc_id})
+    return {"deleted": res.deleted_count}
+
+
+# ---------- Independence Skills ----------
+SKILL_KEY = Literal[
+    "cooking", "budgeting", "shopping", "travel", "appointments",
+    "self_medication", "cleaning", "emotional_regulation", "tenancy_readiness",
+    "daily_living", "personal_hygiene", "communication",
+]
+SKILL_LEVEL = Literal["not_started", "needs_support", "developing", "competent", "mastered"]
+
+INDEPENDENCE_SKILLS_META = [
+    {"id": "cooking", "label": "Cooking & meal prep"},
+    {"id": "budgeting", "label": "Budgeting & money management"},
+    {"id": "shopping", "label": "Shopping skills"},
+    {"id": "travel", "label": "Travel / public transport"},
+    {"id": "appointments", "label": "Managing own appointments"},
+    {"id": "self_medication", "label": "Self-medication"},
+    {"id": "cleaning", "label": "Cleaning & domestic tasks"},
+    {"id": "emotional_regulation", "label": "Emotional regulation"},
+    {"id": "tenancy_readiness", "label": "Tenancy readiness"},
+    {"id": "daily_living", "label": "Daily living skills"},
+    {"id": "personal_hygiene", "label": "Personal hygiene"},
+    {"id": "communication", "label": "Communication & relationships"},
+]
+
+
+class IndependenceUpdate(BaseModel):
+    skill: SKILL_KEY
+    level: SKILL_LEVEL
+    notes: Optional[str] = None
+
+
+@api_router.get("/residents/{rid}/independence")
+async def get_independence(rid: str, _: dict = Depends(get_current_user)):
+    skills = await db.independence_skills.find({"resident_id": rid}, {"_id": 0}).to_list(50)
+    by_skill = {s["skill"]: s for s in skills}
+    out = []
+    for meta in INDEPENDENCE_SKILLS_META:
+        rec = by_skill.get(meta["id"])
+        out.append({
+            **meta,
+            "level": (rec or {}).get("level", "not_started"),
+            "notes": (rec or {}).get("notes"),
+            "updated_at": (rec or {}).get("updated_at"),
+            "updated_by_name": (rec or {}).get("updated_by_name"),
+        })
+    return {"skills": out}
+
+
+@api_router.post("/residents/{rid}/independence")
+async def update_independence(rid: str, payload: IndependenceUpdate, user: dict = Depends(get_current_user)):
+    if not await db.residents.find_one({"id": rid}, {"_id": 0, "id": 1}):
+        raise HTTPException(404, "Resident not found")
+    doc = {
+        "resident_id": rid,
+        "skill": payload.skill,
+        "level": payload.level,
+        "notes": payload.notes,
+        "updated_at": now_iso(),
+        "updated_by_name": user["name"],
+    }
+    await db.independence_skills.update_one(
+        {"resident_id": rid, "skill": payload.skill},
+        {"$set": doc},
+        upsert=True,
+    )
+    return doc
+
+
 # ---------- Notifications ----------
 @api_router.post("/notifications", response_model=Notification)
 async def create_notification(

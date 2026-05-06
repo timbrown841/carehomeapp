@@ -10,6 +10,10 @@ import HealthTab from "@/components/resident/HealthTab";
 import EducationTab from "@/components/resident/EducationTab";
 import VisitsTab from "@/components/resident/VisitsTab";
 import PocketMoneyTab from "@/components/resident/PocketMoneyTab";
+import IndependenceTracker from "@/components/resident/IndependenceTracker";
+import AlertsAndRisksBar, { useResidentAlerts } from "@/components/resident/AlertsAndRisksBar";
+import QuickActionsPanel from "@/components/resident/QuickActionsPanel";
+import { AccordionSection } from "@/components/resident/Accordion";
 import {
   ArrowLeft,
   AlertTriangle,
@@ -33,17 +37,11 @@ import { toast } from "sonner";
 
 const TABS = [
   { id: "overview", label: "Overview" },
-  { id: "background", label: "Background & Referral" },
-  { id: "risk", label: "Risk Assessment" },
-  { id: "care", label: "Care Plan" },
-  { id: "missing", label: "Missing / Philomena" },
-  { id: "medical", label: "Medical & Medication" },
-  { id: "medications", label: "MAR / Meds" },
-  { id: "health", label: "Health & Wellbeing" },
-  { id: "education", label: "Education / PEP" },
-  { id: "visits", label: "Statutory Visits" },
-  { id: "pocket-money", label: "Pocket Money" },
-  { id: "bodymaps", label: "Body Maps" },
+  { id: "daily-care", label: "Daily Care" },
+  { id: "safeguarding", label: "Safeguarding" },
+  { id: "health", label: "Health" },
+  { id: "education", label: "Education & Independence" },
+  { id: "finance", label: "Finance" },
   { id: "documents", label: "Documents" },
   { id: "timeline", label: "Timeline" },
 ];
@@ -279,6 +277,12 @@ export default function ResidentDetail() {
         </div>
       </header>
 
+      {/* Always-visible Alerts & Risks bar */}
+      <AlertsAndRisksWithData resident={resident} />
+
+      {/* Quick Actions panel for mobile-first access */}
+      <QuickActionsPanel resident={resident} onTabChange={setTab} />
+
       {/* Tab strip */}
       <nav
         className="flex gap-1 border-b divider-soft overflow-x-auto -mx-1 px-1 scrollbar-thin"
@@ -303,24 +307,137 @@ export default function ResidentDetail() {
 
       {/* Tab body */}
       <section data-testid={`tab-body-${tab}`} className="bg-white border divider-soft rounded-2xl p-5 sm:p-6">
-        {tab === "overview" && <OverviewTab resident={resident} age={age} />}
-        {tab === "background" && <BackgroundTab resident={resident} />}
-        {tab === "risk" && <RiskTab resident={resident} riskTheme={riskTheme} reviewOverdue={reviewOverdue} />}
-        {tab === "care" && <CareTab resident={resident} />}
-        {tab === "missing" && (
-          <MissingTab
-            resident={resident}
-            episodes={episodes}
-            onOpen={() => setMissingOpen(true)}
-          />
+        {tab === "overview" && (
+          <div className="space-y-3">
+            <OverviewTab resident={resident} age={age} />
+            <AccordionSection
+              title="Background & referral"
+              subtitle="Placement reason, referral source, history"
+              testid="acc-background"
+            >
+              <BackgroundTab resident={resident} />
+            </AccordionSection>
+            <AccordionSection
+              title="Statutory visits"
+              subtitle="IRO, social worker, Reg 44/45, LAC reviews"
+              testid="acc-visits"
+            >
+              <VisitsTab resident={resident} />
+            </AccordionSection>
+          </div>
         )}
-        {tab === "medical" && <MedicalTab resident={resident} />}
-        {tab === "medications" && <MedicationsTab resident={resident} />}
-        {tab === "health" && <HealthTab resident={resident} />}
-        {tab === "education" && <EducationTab resident={resident} />}
-        {tab === "visits" && <VisitsTab resident={resident} />}
-        {tab === "pocket-money" && <PocketMoneyTab resident={resident} />}
-        {tab === "bodymaps" && <BodyMapsTab resident={resident} />}
+
+        {tab === "daily-care" && (
+          <div className="space-y-3">
+            <AccordionSection
+              title="Care plan & wishes"
+              subtitle="Children's views, wishes, feelings, positive relationships"
+              defaultOpen
+              testid="acc-care"
+            >
+              <CareTab resident={resident} />
+            </AccordionSection>
+            <AccordionSection
+              title="Recent daily notes"
+              subtitle="Latest staff observations & welfare checks for this young person"
+              testid="acc-notes"
+            >
+              <RecentNotesPanel residentId={resident.id} />
+            </AccordionSection>
+          </div>
+        )}
+
+        {tab === "safeguarding" && (
+          <div className="space-y-3">
+            <AccordionSection
+              title="Risk assessment"
+              subtitle="Levels, identified risks, next review, mitigations"
+              tone="#A8273A"
+              defaultOpen
+              testid="acc-risk"
+            >
+              <RiskTab resident={resident} riskTheme={riskTheme} reviewOverdue={reviewOverdue} />
+            </AccordionSection>
+            <AccordionSection
+              title="Missing from care"
+              subtitle="Active and past episodes, return interviews, Philomena pack"
+              tone="#A8273A"
+              testid="acc-missing"
+            >
+              <MissingTab
+                resident={resident}
+                episodes={episodes}
+                onOpen={() => setMissingOpen(true)}
+              />
+            </AccordionSection>
+            <AccordionSection
+              title="Body maps"
+              subtitle="Marks, bruises, injuries — front/back diagram with timeline"
+              tone="#A8273A"
+              testid="acc-bodymaps"
+            >
+              <BodyMapsTab resident={resident} />
+            </AccordionSection>
+            <AccordionSection
+              title="Recent incidents"
+              subtitle="Linked incidents and safeguarding events for this young person"
+              tone="#A8273A"
+              testid="acc-incidents"
+            >
+              <RecentIncidentsPanel residentId={resident.id} />
+            </AccordionSection>
+          </div>
+        )}
+
+        {tab === "health" && (
+          <div className="space-y-3">
+            <AccordionSection
+              title="Medical overview"
+              subtitle="GP, dentist, allergies, medical conditions, dietary needs"
+              defaultOpen
+              testid="acc-medical"
+            >
+              <MedicalTab resident={resident} />
+            </AccordionSection>
+            <AccordionSection
+              title="Medications (MAR)"
+              subtitle="Active medications, schedule, last administered"
+              testid="acc-meds"
+            >
+              <MedicationsTab resident={resident} />
+            </AccordionSection>
+            <AccordionSection
+              title="Health & wellbeing"
+              subtitle="Immunisations, CAMHS, therapy, mental health, appointments"
+              testid="acc-health"
+            >
+              <HealthTab resident={resident} />
+            </AccordionSection>
+          </div>
+        )}
+
+        {tab === "education" && (
+          <div className="space-y-3">
+            <AccordionSection
+              title="Education & PEP"
+              subtitle="School, attendance, achievements, PEP cycle"
+              defaultOpen
+              testid="acc-education"
+            >
+              <EducationTab resident={resident} />
+            </AccordionSection>
+            <AccordionSection
+              title="Independence skills"
+              subtitle="Cooking, budgeting, travel, tenancy readiness — semi-independent progression"
+              tone="#2F6A3A"
+              testid="acc-independence"
+            >
+              <IndependenceTracker resident={resident} />
+            </AccordionSection>
+          </div>
+        )}
+
+        {tab === "finance" && <PocketMoneyTab resident={resident} />}
         {tab === "documents" && <DocumentsTab resident={resident} />}
         {tab === "timeline" && <TimelineTab items={timeline} />}
       </section>
@@ -1120,6 +1237,123 @@ function TimeRow({ label, ts, by, action }) {
         </div>
       </div>
       {action}
+    </div>
+  );
+}
+
+
+// ---------------- AlertsAndRisks wrapper that loads its own data ----------------
+function AlertsAndRisksWithData({ resident }) {
+  const { badges, episodes, medications, loading } = useResidentAlerts(resident?.id);
+  if (loading) return null;
+  return <AlertsAndRisksBar resident={resident} badges={badges} episodes={episodes} medications={medications} />;
+}
+
+// ---------------- Recent notes (last 5 for this resident) ----------------
+function RecentNotesPanel({ residentId }) {
+  const [notes, setNotes] = useState([]);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    api
+      .get("/notes", { params: { resident_id: residentId, limit: 8 } })
+      .then((r) => setNotes(r.data || []))
+      .catch(() => setNotes([]))
+      .finally(() => setLoading(false));
+  }, [residentId]);
+  if (loading) {
+    return <div className="text-sm text-[#5d6068]">Loading notes…</div>;
+  }
+  if (notes.length === 0) {
+    return (
+      <div className="text-sm text-[#5d6068]">
+        No daily notes for this young person yet.{" "}
+        <Link to="/notes" className="text-[#0e3b4a] font-semibold hover:underline">
+          Add one →
+        </Link>
+      </div>
+    );
+  }
+  return (
+    <div className="space-y-2" data-testid="recent-notes-panel">
+      {notes.map((n) => (
+        <div
+          key={n.id}
+          className="bg-stone-50 border divider-soft rounded-xl p-3"
+          data-testid={`recent-note-${n.id}`}
+        >
+          <div className="flex items-center gap-2 flex-wrap mb-1">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-[#5d6068]">
+              {(n.created_at || "").slice(0, 16).replace("T", " ")}
+            </span>
+            <span className="text-[10px] text-[#8a8d95]">by {n.author_name}</span>
+          </div>
+          <p className="text-sm text-[#0F1115] line-clamp-3">{n.content}</p>
+        </div>
+      ))}
+      <Link
+        to="/notes"
+        className="inline-block text-xs text-[#0e3b4a] font-semibold hover:underline"
+      >
+        See all daily notes →
+      </Link>
+    </div>
+  );
+}
+
+// ---------------- Recent incidents (last 5 for this resident) ----------------
+function RecentIncidentsPanel({ residentId }) {
+  const [incidents, setIncidents] = useState([]);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    api
+      .get("/incidents", { params: { resident_id: residentId, limit: 8 } })
+      .then((r) => setIncidents(r.data || []))
+      .catch(() => setIncidents([]))
+      .finally(() => setLoading(false));
+  }, [residentId]);
+  if (loading) {
+    return <div className="text-sm text-[#5d6068]">Loading incidents…</div>;
+  }
+  if (incidents.length === 0) {
+    return (
+      <div className="text-sm text-[#5d6068]">
+        No incidents on record for this young person.
+      </div>
+    );
+  }
+  return (
+    <div className="space-y-2" data-testid="recent-incidents-panel">
+      {incidents.map((inc) => (
+        <Link
+          key={inc.id}
+          to={`/incidents/${inc.id}`}
+          className="block bg-stone-50 hover:bg-stone-100 border-l-4 border-y border-r divider-soft rounded-xl p-3"
+          style={{ borderLeftColor: inc.severity === "high" ? "#A8273A" : inc.severity === "medium" ? "#B8772F" : "#5d6068" }}
+          data-testid={`recent-incident-${inc.id}`}
+        >
+          <div className="flex items-center gap-2 flex-wrap mb-0.5">
+            <span
+              className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded text-white"
+              style={{ background: inc.severity === "high" ? "#A8273A" : inc.severity === "medium" ? "#B8772F" : "#5d6068" }}
+            >
+              {inc.severity || "low"}
+            </span>
+            <span className="text-[10px] font-bold uppercase tracking-wider text-[#5d6068]">
+              {inc.type}
+            </span>
+            <span className="text-[10px] text-[#8a8d95]">
+              {(inc.occurred_at || inc.created_at || "").slice(0, 16).replace("T", " ")}
+            </span>
+          </div>
+          <div className="font-semibold text-sm text-[#0F1115] truncate">{inc.title || inc.summary}</div>
+        </Link>
+      ))}
+      <Link
+        to="/incidents"
+        className="inline-block text-xs text-[#0e3b4a] font-semibold hover:underline"
+      >
+        See all incidents →
+      </Link>
     </div>
   );
 }
