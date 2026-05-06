@@ -1,0 +1,32 @@
+{
+  "summary": "Iteration 17 Pocket Money & Personal Allowance — 21/21 backend pytest pass; frontend overview, deep-link, per-resident tab, Pay weekly allowance, Add transaction modal (all 7 kinds), delete RBAC, and PDF endpoint verified.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration17.py",
+    "/app/test_reports/pytest/iteration17_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py is now 3941 lines — strongly recommend splitting pocket-money endpoints (~3415-3653) into /app/backend/routers/pocket_money.py along with other domain modules; file size far exceeds the 700-line guideline.",
+    "pocket_money_pdf.py opening-balance calculation: for savings_in/savings_out the per-tx loop applies the other-account adjustment by `amount` (unsigned) while also subtracting `delta` (signed) on the primary account; this logic is correct today because tx `account` is always 'pocket' for transfers, but if a future tx ever stores `account:'savings'` for a transfer the reverse will double-count. Consider deriving opening balances from the first tx's `balance_after - delta` instead for robustness.",
+    "Transaction endpoint stores `acct` doc and updates independently without a transaction/lock — under concurrent writes the `balance_after` snapshot and account total can desync. Recommend using a MongoDB `$inc` update + return-document pattern or a lightweight distributed lock when integrity under concurrency matters."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration17.py"
+  ],
+  "success_rate": {"backend": "100% (21/21)", "frontend": "100% (all observed flows OK)"},
+  "test_credentials": "manager@care.local / Manager@123 ; staff@care.local / Staff@123 ; admin@care.local / Admin@123",
+  "seed_data_creation": "Test transactions prefixed TEST_iter17 were created on Aisha Khan and Jordan Reilly accounts during pytest runs. A few remain on Aisha (adj, wd, dep, sav_in, sav_out, spend, allowance) after the last run; may be cleaned by next reseed or via DELETE by manager. Does not affect functionality.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend regression: pytest /app/backend/tests/test_iteration17.py with REACT_APP_BACKEND_URL env set. Covers overview, per-resident detail, all 7 tx kinds (including savings_in/out math), amount<=0 422/400, manager-only PATCH & DELETE (staff=403), PDF (default/explicit/invalid month). Frontend verified via browser: /pocket-money stat totals £180.90/£292.00/£34.50 (= 10+7.5+5+12) correct; 4 demo residents present; Open button deep-links to /residents/{id}?tab=pocket-money; Pay weekly allowance adds +£10 tx (balance 41.50→51.50); Add transaction modal exposes all 7 kinds; manager shows ~23 delete icons on tx rows; staff session shows NO Adjust weekly amount button AND NO delete icons on rows (RBAC gate OK). Monthly statement endpoint returns valid application/pdf >500 bytes; frontend fetches via blob (no Playwright download event fires which is expected).",
+  "rca of the issue": "No bugs found. All acceptance criteria for iteration 17 met."
+}

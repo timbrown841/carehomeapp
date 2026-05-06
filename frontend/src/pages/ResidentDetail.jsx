@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useNavigate, useParams, Link } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams, Link } from "react-router-dom";
 import api, { formatApiError, API } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { personaColor, personaInitials } from "@/lib/persona";
@@ -9,6 +9,7 @@ import BodyMapsTab from "@/components/resident/BodyMapsTab";
 import HealthTab from "@/components/resident/HealthTab";
 import EducationTab from "@/components/resident/EducationTab";
 import VisitsTab from "@/components/resident/VisitsTab";
+import PocketMoneyTab from "@/components/resident/PocketMoneyTab";
 import {
   ArrowLeft,
   AlertTriangle,
@@ -41,6 +42,7 @@ const TABS = [
   { id: "health", label: "Health & Wellbeing" },
   { id: "education", label: "Education / PEP" },
   { id: "visits", label: "Statutory Visits" },
+  { id: "pocket-money", label: "Pocket Money" },
   { id: "bodymaps", label: "Body Maps" },
   { id: "documents", label: "Documents" },
   { id: "timeline", label: "Timeline" },
@@ -120,11 +122,13 @@ function RagPill({ level }) {
 export default function ResidentDetail() {
   const { id } = useParams();
   const nav = useNavigate();
+  const [searchParams] = useSearchParams();
+  const initialTab = searchParams.get("tab") || "overview";
   const { user } = useAuth();
   const [resident, setResident] = useState(null);
   const [timeline, setTimeline] = useState([]);
   const [episodes, setEpisodes] = useState([]);
-  const [tab, setTab] = useState("overview");
+  const [tab, setTab] = useState(initialTab);
   const [loading, setLoading] = useState(true);
   const [missingOpen, setMissingOpen] = useState(false);
   const canManage = user?.role === "manager" || user?.role === "admin";
@@ -315,6 +319,7 @@ export default function ResidentDetail() {
         {tab === "health" && <HealthTab resident={resident} />}
         {tab === "education" && <EducationTab resident={resident} />}
         {tab === "visits" && <VisitsTab resident={resident} />}
+        {tab === "pocket-money" && <PocketMoneyTab resident={resident} />}
         {tab === "bodymaps" && <BodyMapsTab resident={resident} />}
         {tab === "documents" && <DocumentsTab resident={resident} />}
         {tab === "timeline" && <TimelineTab items={timeline} />}

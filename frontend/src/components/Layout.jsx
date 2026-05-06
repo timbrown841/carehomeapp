@@ -12,6 +12,7 @@ import {
   BadgeCheck,
   Pill,
   CalendarCheck,
+  Wallet,
   LogOut,
   Menu,
   X,
@@ -34,6 +35,7 @@ const groups = [
       { to: "/incidents", label: "Incidents", icon: ShieldAlert, testid: "nav-incidents" },
       { to: "/medications", label: "Medications", icon: Pill, testid: "nav-medications" },
       { to: "/visits", label: "Statutory Visits", icon: CalendarCheck, testid: "nav-visits" },
+      { to: "/pocket-money", label: "Pocket Money", icon: Wallet, testid: "nav-pocket-money" },
     ],
   },
   {

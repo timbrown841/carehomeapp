@@ -21,7 +21,7 @@ from pydantic import BaseModel, Field, EmailStr, field_validator
 
 from emergentintegrations.llm.openai import OpenAISpeechToText
 from emergentintegrations.llm.chat import LlmChat, UserMessage
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, Response
 from contextlib import asynccontextmanager
 
 from pdf_builder import build_incident_pdf, build_report_pdf
@@ -129,7 +129,8 @@ async def _seed_demo_data_if_empty():
     has_shifts = await db.shifts.count_documents({}) > 0
     has_train = await db.trainings.count_documents({}) > 0
     has_visits = await db.statutory_visits.count_documents({}) > 0
-    if fully_seeded and has_meds and has_health and has_edu and has_shifts and has_train and has_visits:
+    has_pm = await db.pocket_money_accounts.count_documents({}) > 0
+    if fully_seeded and has_meds and has_health and has_edu and has_shifts and has_train and has_visits and has_pm:
         return
     if fully_seeded:
         # Profiles exist but new modules missing — top up only.
@@ -604,7 +605,8 @@ async def _seed_meds_and_bodymaps():
     have_shifts = await db.shifts.count_documents({}) > 0
     have_train = await db.trainings.count_documents({}) > 0
     have_visits = await db.statutory_visits.count_documents({}) > 0
-    if have_meds and have_bm and have_health and have_edu and have_shifts and have_train and have_visits:
+    have_pm = await db.pocket_money_accounts.count_documents({}) > 0
+    if have_meds and have_bm and have_health and have_edu and have_shifts and have_train and have_visits and have_pm:
         return
     residents = await db.residents.find({}, {"_id": 0, "id": 1, "name": 1}).to_list(500)
     if not residents:
@@ -1029,6 +1031,118 @@ async def _seed_meds_and_bodymaps():
                 "created_by_name": manager_user["name"],
             }
             await db.statutory_visits.insert_one(doc)
+
+    # ---- Pocket Money seed ----
+    if not have_pm:
+        pm_seed = [
+            # (name, weekly_allowance, opening_pocket, opening_savings, transactions [(days_ago, account, kind, amount, label, yp_initials)])
+            ("Jordan Reilly", 7.50, 22.50, 50.00, [
+                (28, "pocket", "allowance", 7.50, "Weekly allowance · w/c Mar", "JR"),
+                (24, "pocket", "spend", 3.00, "Sports drink + crisps", "JR"),
+                (21, "pocket", "allowance", 7.50, "Weekly allowance", "JR"),
+                (18, "pocket", "spend", 5.50, "Football kit accessory", "JR"),
+                (14, "pocket", "savings_in", 5.00, "Saving for new boots", "JR"),
+                (10, "pocket", "allowance", 7.50, "Weekly allowance", "JR"),
+                (4, "pocket", "spend", 4.20, "Cinema ticket", "JR"),
+                (3, "pocket", "allowance", 7.50, "Weekly allowance", "JR"),
+            ]),
+            ("Aisha Khan", 10.00, 18.00, 120.00, [
+                (29, "pocket", "allowance", 10.00, "Weekly allowance", "AK"),
+                (26, "pocket", "spend", 6.50, "Stationery / school supplies", "AK"),
+                (22, "pocket", "allowance", 10.00, "Weekly allowance", "AK"),
+                (19, "pocket", "spend", 12.00, "Birthday gift for friend", "AK"),
+                (15, "pocket", "allowance", 10.00, "Weekly allowance", "AK"),
+                (8, "pocket", "savings_in", 10.00, "Long-term savings transfer", "AK"),
+                (5, "pocket", "allowance", 10.00, "Weekly allowance", "AK"),
+                (2, "pocket", "spend", 4.00, "Bus fare top-up", "AK"),
+            ]),
+            ("Maddy O'Brien", 12.00, 35.00, 80.00, [
+                (27, "pocket", "allowance", 12.00, "Weekly allowance", "MO"),
+                (25, "pocket", "spend", 8.40, "Hairdresser tip + travel", "MO"),
+                (20, "pocket", "allowance", 12.00, "Weekly allowance", "MO"),
+                (16, "pocket", "spend", 9.00, "Phone top-up", "MO"),
+                (12, "pocket", "allowance", 12.00, "Weekly allowance", "MO"),
+                (9, "pocket", "deposit", 20.00, "Birthday money from mum", "MO"),
+                (6, "pocket", "spend", 14.50, "Lunch with friends in town", "MO"),
+                (3, "pocket", "allowance", 12.00, "Weekly allowance", "MO"),
+            ]),
+            ("Leo Martinez", 5.00, 12.50, 25.00, [
+                (28, "pocket", "allowance", 5.00, "Weekly allowance", "LM"),
+                (24, "pocket", "spend", 1.80, "Pokemon cards", "LM"),
+                (21, "pocket", "allowance", 5.00, "Weekly allowance", "LM"),
+                (16, "pocket", "spend", 3.20, "Comic + sweets", "LM"),
+                (14, "pocket", "allowance", 5.00, "Weekly allowance", "LM"),
+                (7, "pocket", "allowance", 5.00, "Weekly allowance", "LM"),
+                (4, "pocket", "spend", 2.50, "Ice cream at park", "LM"),
+            ]),
+        ]
+        for (name, weekly, open_pocket, open_savings, txs) in pm_seed:
+            rid = res_by_name.get(name)
+            if not rid:
+                continue
+            pocket = float(open_pocket)
+            savings = float(open_savings)
+            last_allowance = None
+            account_doc = {
+                "resident_id": rid,
+                "weekly_allowance": float(weekly),
+                "pocket_balance": pocket,
+                "savings_balance": savings,
+                "currency": "GBP",
+                "note": None,
+                "last_allowance_paid": None,
+                "updated_at": now.isoformat(),
+            }
+            await db.pocket_money_accounts.insert_one(account_doc)
+            sign_map = {
+                "allowance": +1, "deposit": +1, "savings_out": +1,
+                "spend": -1, "withdrawal": -1, "savings_in": -1,
+                "adjustment": +1,
+            }
+            for (days_ago, acct, kind, amt, label_text, yp_init) in txs:
+                d = round(sign_map.get(kind, +1) * float(amt), 2)
+                if kind == "savings_in":
+                    pocket = round(pocket - float(amt), 2)
+                    savings = round(savings + float(amt), 2)
+                    bal_after = savings if acct == "savings" else pocket
+                elif kind == "savings_out":
+                    pocket = round(pocket + float(amt), 2)
+                    savings = round(savings - float(amt), 2)
+                    bal_after = savings if acct == "savings" else pocket
+                elif acct == "savings":
+                    savings = round(savings + d, 2)
+                    bal_after = savings
+                else:
+                    pocket = round(pocket + d, 2)
+                    bal_after = pocket
+                ts = (now - timedelta(days=days_ago, hours=2)).isoformat()
+                tx_doc = {
+                    "id": str(uuid.uuid4()),
+                    "resident_id": rid,
+                    "account": acct,
+                    "kind": kind,
+                    "amount": float(amt),
+                    "label": label_text,
+                    "signed_by_yp_initials": yp_init,
+                    "receipt_attached": kind == "spend" and float(amt) >= 5,
+                    "notes": None,
+                    "delta": d,
+                    "balance_after": bal_after,
+                    "created_at": ts,
+                    "created_by_name": staff_user["name"],
+                }
+                await db.pocket_money_tx.insert_one(tx_doc)
+                if kind == "allowance":
+                    last_allowance = (now - timedelta(days=days_ago)).date().isoformat()
+            await db.pocket_money_accounts.update_one(
+                {"resident_id": rid},
+                {"$set": {
+                    "pocket_balance": pocket,
+                    "savings_balance": savings,
+                    "last_allowance_paid": last_allowance,
+                    "updated_at": now.isoformat(),
+                }},
+            )
 
 
 app = FastAPI(title="Care Companion API", lifespan=lifespan)
@@ -3292,6 +3406,251 @@ async def resident_badges(rid: str, _: dict = Depends(get_current_user)):
         badges.append({"label": "Immunisation Overdue", "tone": "amber"})
 
     return {"badges": badges}
+
+
+# ---------- Pocket Money & Personal Allowance ----------
+PMTX_KIND = Literal[
+    "allowance", "spend", "deposit", "withdrawal", "savings_in", "savings_out", "adjustment"
+]
+PM_ACCOUNT = Literal["pocket", "savings"]
+
+
+class PocketMoneyAccountIn(BaseModel):
+    weekly_allowance: float = 5.0
+    pocket_balance: float = 0.0
+    savings_balance: float = 0.0
+    currency: str = "GBP"
+    note: Optional[str] = None
+
+
+class PocketMoneyAccount(PocketMoneyAccountIn):
+    resident_id: str
+    last_allowance_paid: Optional[str] = None  # ISO date
+    updated_at: Optional[str] = None
+
+
+class PocketMoneyTxIn(BaseModel):
+    account: PM_ACCOUNT = "pocket"
+    kind: PMTX_KIND = "spend"
+    amount: float  # always positive — direction determined by `kind`
+    label: str
+    signed_by_yp_initials: Optional[str] = None
+    receipt_attached: bool = False
+    notes: Optional[str] = None
+
+
+class PocketMoneyTx(PocketMoneyTxIn):
+    id: str
+    resident_id: str
+    delta: float  # signed effect on balance
+    balance_after: float
+    created_at: str
+    created_by_name: Optional[str] = None
+
+
+_PM_KIND_DELTA = {
+    "allowance": +1,
+    "deposit": +1,
+    "savings_out": +1,  # money OUT of savings INTO pocket
+    "spend": -1,
+    "withdrawal": -1,
+    "savings_in": -1,  # money INTO savings OUT of pocket
+    "adjustment": +1,  # signed in `amount`? we keep positive amount; managers can record reversal as another adjustment with `amount` mismatched? Use `notes`. Default + and let staff use 'withdrawal' for negative
+}
+
+
+async def _ensure_pm_account(resident_id: str) -> dict:
+    acct = await db.pocket_money_accounts.find_one({"resident_id": resident_id}, {"_id": 0})
+    if not acct:
+        acct = {
+            "resident_id": resident_id,
+            "weekly_allowance": 5.0,
+            "pocket_balance": 0.0,
+            "savings_balance": 0.0,
+            "currency": "GBP",
+            "note": None,
+            "last_allowance_paid": None,
+            "updated_at": now_iso(),
+        }
+        await db.pocket_money_accounts.insert_one(acct)
+        acct.pop("_id", None)
+    return acct
+
+
+@api_router.get("/pocket-money", response_model=List[dict])
+async def pm_overview(_: dict = Depends(get_current_user)):
+    """Cross-home pocket money overview: every resident with their balances + last tx date."""
+    residents = await db.residents.find({}, {"_id": 0, "id": 1, "name": 1, "preferred_name": 1, "room": 1}).sort("name", 1).to_list(500)
+    out = []
+    for r in residents:
+        acct = await _ensure_pm_account(r["id"])
+        last_tx = await db.pocket_money_tx.find_one(
+            {"resident_id": r["id"]}, {"_id": 0}, sort=[("created_at", -1)]
+        )
+        out.append({
+            "resident_id": r["id"],
+            "name": r["name"],
+            "preferred_name": r.get("preferred_name"),
+            "room": r.get("room"),
+            "weekly_allowance": acct["weekly_allowance"],
+            "pocket_balance": acct["pocket_balance"],
+            "savings_balance": acct["savings_balance"],
+            "currency": acct.get("currency", "GBP"),
+            "last_allowance_paid": acct.get("last_allowance_paid"),
+            "last_tx_date": (last_tx or {}).get("created_at"),
+            "last_tx_label": (last_tx or {}).get("label"),
+        })
+    return out
+
+
+@api_router.get("/pocket-money/{rid}")
+async def pm_for_resident(rid: str, limit: int = 100, _: dict = Depends(get_current_user)):
+    if not await db.residents.find_one({"id": rid}, {"_id": 0, "id": 1}):
+        raise HTTPException(404, "Resident not found")
+    acct = await _ensure_pm_account(rid)
+    txs = await db.pocket_money_tx.find({"resident_id": rid}, {"_id": 0}).sort("created_at", -1).to_list(limit)
+    return {"account": acct, "transactions": txs}
+
+
+@api_router.patch("/pocket-money/{rid}/account", response_model=PocketMoneyAccount)
+async def pm_update_account(
+    rid: str,
+    payload: PocketMoneyAccountIn,
+    _: dict = Depends(require_role("manager", "admin")),
+):
+    if not await db.residents.find_one({"id": rid}, {"_id": 0, "id": 1}):
+        raise HTTPException(404, "Resident not found")
+    await _ensure_pm_account(rid)
+    update = payload.model_dump(exclude_unset=True)
+    update["updated_at"] = now_iso()
+    await db.pocket_money_accounts.update_one({"resident_id": rid}, {"$set": update})
+    acct = await db.pocket_money_accounts.find_one({"resident_id": rid}, {"_id": 0})
+    return acct
+
+
+@api_router.post("/pocket-money/{rid}/transactions", response_model=PocketMoneyTx)
+async def pm_add_transaction(
+    rid: str, payload: PocketMoneyTxIn, user: dict = Depends(get_current_user)
+):
+    if not await db.residents.find_one({"id": rid}, {"_id": 0, "id": 1}):
+        raise HTTPException(404, "Resident not found")
+    if payload.amount <= 0:
+        raise HTTPException(400, "Amount must be greater than zero")
+    acct = await _ensure_pm_account(rid)
+
+    sign = _PM_KIND_DELTA.get(payload.kind, +1)
+    delta = round(sign * float(payload.amount), 2)
+
+    # savings_in/out are special: they affect BOTH ledgers (pocket -delta, savings +delta or vice versa)
+    pocket_balance = float(acct.get("pocket_balance", 0.0))
+    savings_balance = float(acct.get("savings_balance", 0.0))
+    if payload.kind == "savings_in":  # move from pocket to savings
+        pocket_balance = round(pocket_balance - float(payload.amount), 2)
+        savings_balance = round(savings_balance + float(payload.amount), 2)
+        balance_after = savings_balance if payload.account == "savings" else pocket_balance
+    elif payload.kind == "savings_out":  # move from savings to pocket
+        pocket_balance = round(pocket_balance + float(payload.amount), 2)
+        savings_balance = round(savings_balance - float(payload.amount), 2)
+        balance_after = savings_balance if payload.account == "savings" else pocket_balance
+    elif payload.account == "savings":
+        savings_balance = round(savings_balance + delta, 2)
+        balance_after = savings_balance
+    else:
+        pocket_balance = round(pocket_balance + delta, 2)
+        balance_after = pocket_balance
+
+    tx_id = str(uuid.uuid4())
+    tx_doc = {
+        **payload.model_dump(),
+        "id": tx_id,
+        "resident_id": rid,
+        "delta": delta,
+        "balance_after": balance_after,
+        "created_at": now_iso(),
+        "created_by_name": user["name"],
+    }
+    await db.pocket_money_tx.insert_one(tx_doc)
+    tx_doc.pop("_id", None)
+
+    set_doc = {
+        "pocket_balance": pocket_balance,
+        "savings_balance": savings_balance,
+        "updated_at": now_iso(),
+    }
+    if payload.kind == "allowance":
+        set_doc["last_allowance_paid"] = datetime.now(timezone.utc).date().isoformat()
+    await db.pocket_money_accounts.update_one({"resident_id": rid}, {"$set": set_doc})
+
+    return tx_doc
+
+
+@api_router.delete("/pocket-money/transactions/{tx_id}")
+async def pm_delete_transaction(tx_id: str, _: dict = Depends(require_role("manager", "admin"))):
+    """Reverse and delete a transaction. Adjusts running balances accordingly."""
+    tx = await db.pocket_money_tx.find_one({"id": tx_id}, {"_id": 0})
+    if not tx:
+        raise HTTPException(404, "Transaction not found")
+    rid = tx["resident_id"]
+    acct = await _ensure_pm_account(rid)
+    pocket = float(acct.get("pocket_balance", 0.0))
+    savings = float(acct.get("savings_balance", 0.0))
+    amt = float(tx["amount"])
+    if tx["kind"] == "savings_in":
+        pocket = round(pocket + amt, 2)
+        savings = round(savings - amt, 2)
+    elif tx["kind"] == "savings_out":
+        pocket = round(pocket - amt, 2)
+        savings = round(savings + amt, 2)
+    elif tx.get("account") == "savings":
+        savings = round(savings - float(tx["delta"]), 2)
+    else:
+        pocket = round(pocket - float(tx["delta"]), 2)
+    await db.pocket_money_accounts.update_one(
+        {"resident_id": rid},
+        {"$set": {"pocket_balance": pocket, "savings_balance": savings, "updated_at": now_iso()}},
+    )
+    await db.pocket_money_tx.delete_one({"id": tx_id})
+    return {"deleted": 1}
+
+
+@api_router.get("/pocket-money/{rid}/statement.pdf")
+async def pm_statement_pdf(rid: str, month: Optional[str] = None, _: dict = Depends(get_current_user)):
+    """Monthly statement PDF. `month` = YYYY-MM (defaults to current month)."""
+    resident = await db.residents.find_one({"id": rid}, {"_id": 0})
+    if not resident:
+        raise HTTPException(404, "Resident not found")
+    acct = await _ensure_pm_account(rid)
+    if not month:
+        month = datetime.now(timezone.utc).strftime("%Y-%m")
+    try:
+        y, m = map(int, month.split("-"))
+        month_start = datetime(y, m, 1, tzinfo=timezone.utc)
+        if m == 12:
+            next_month = datetime(y + 1, 1, 1, tzinfo=timezone.utc)
+        else:
+            next_month = datetime(y, m + 1, 1, tzinfo=timezone.utc)
+    except Exception:
+        raise HTTPException(400, "month must be YYYY-MM")
+
+    txs = await db.pocket_money_tx.find(
+        {
+            "resident_id": rid,
+            "created_at": {"$gte": month_start.isoformat(), "$lt": next_month.isoformat()},
+        },
+        {"_id": 0},
+    ).sort("created_at", 1).to_list(1000)
+
+    from pocket_money_pdf import build_statement_pdf
+
+    pdf_bytes = build_statement_pdf(resident=resident, account=acct, transactions=txs, month_label=month)
+    safe_name = (resident.get("name") or "resident").replace(" ", "_")
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f"inline; filename=pocket_money_{safe_name}_{month}.pdf"
+        },
+    )
 
 
 # ---------- Notifications ----------
