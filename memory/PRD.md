@@ -179,6 +179,26 @@ A simple and fast care management app for children's homes and supported living.
 - Incident trend charts per resident
 - Witness picker — replace free-text witness with real staff selection (uses /auth/users; staff-role read access required)
 
+## Implemented (2026-02-09 — Iteration 23 — Children's-side Safeguarding Polish)
+- **Resident photo upload**: Local-disk storage at `/app/backend/uploads/photos/`. `POST /api/residents/{id}/photo` (Senior+); replaces prior photo cleanly. Photo embedded in Missing Pack PDF header.
+- **Files/uploads infrastructure**: `POST /api/uploads` (multipart, kind=document/photo/return_interview), `GET /api/files/{id}` accepts Bearer **OR** `?token=<jwt>` query param so `<img>` tags work, `DELETE /api/files/{id}` (Senior+). 10MB max; PDF/DOCX/PNG/JPG.
+- **Return Interview** (statutory missing-from-care follow-up):
+  - `POST /api/return-interviews` (Senior+) auto-closes the missing episode, appends timeline event.
+  - Fields: account of events, locations visited, who they were with, safeguarding concerns, exploitation indicators (10 preset chips), actions taken, follow-up required.
+  - `POST /api/return-interviews/{id}/sign-off` (Manager+) records signed_off_by + signed_off_at + manager_comments.
+  - `GET /api/return-interviews/{id}/pdf` — clean A4 PDF including manager sign-off section.
+  - Frontend: triggered from open missing-episode "Mark returned & start interview" CTA; episodes list shows RI status pill, RI PDF download, Manager sign-off button.
+- **Documents Tab full build-out**:
+  - 7 priority categories (Risk Assessments, Support Plans, Placement Plans, Education Documents, Medical Documents, Referral Documents, Safeguarding Documents) + legacy categories.
+  - Real file upload (10MB, PDF/DOCX/PNG/JPG) with Download button on each doc.
+  - `expiry_date` AND new `review_date` fields with overdue / due-soon visual warnings; top-of-tab "X documents overdue review" red banner.
+- **Inspection-Ready Snapshot**:
+  - `GET /api/inspection/snapshot[?scope=auto|ofsted|cqc|both]` (Manager+) returns service mix, 12 live counts (open safeguarding, open missing, MAR completeness %, missed doses 24h, statutory visits overdue, visits next 14d, handovers 24h, residents w/o note 24h, outstanding actions, risk reviews overdue, document reviews overdue).
+  - `GET /api/inspection/snapshot/pdf` — manager-only one-click PDF, auto-detects Ofsted-only / CQC-only / combined scope; gold-banded inspection branding with 12 metric cards, recent incidents, open missing, outstanding actions, regulator self-rating.
+  - Dashboard CTA card (`inspection-snapshot-card`) for managers shows live counts + "Generate snapshot" download button.
+- **Login hero** now reads "children's homes and adult-care teams … inspection-ready" — no longer children-only.
+- **Tested**: testing_agent_v3_fork iteration 23 — backend 43/43 PASS in `/app/backend/tests/test_iteration23.py` (uploads, file-token query mode, photo lifecycle, RI full RBAC + sign-off, documents new categories, inspection snapshot scopes, RBAC regression). Frontend smoke screenshots verified RI workflow rendering correctly inside the Missing accordion. See `/app/test_reports/iteration_23.json`.
+
 ## Implemented (2026-02-09 — Iteration 22 — Adult Services Modular Overlay)
 - **Modular service-type platform**: same core, conditional modules per `service_type` (children / adult_supported_living / elderly_residential / dementia / mental_health / veteran). Children's workflows are NOT altered — strict regression-safety.
 - **Backend**: `Resident` model extended with `service_type` + adult fields (NHS#, GP, tenancy, mental-health diagnoses); legacy residents default to `children`. New endpoints:
