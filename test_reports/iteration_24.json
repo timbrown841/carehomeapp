@@ -1,0 +1,37 @@
+{
+  "summary": "Iteration 24 (Audit Log + Inline Edit + Witness Picker) full backend + frontend verification PASS. Backend pytest: 28/28 PASS in /app/backend/tests/test_iteration24.py covering /audit list+facets+resident-scoped (Senior+ gating), Resident PATCH widened to Senior+ with audit diff (excludes updated_at), Incident POST/PATCH with witnesses[]+witness_notes (Senior+ gate, staff 403), incident PDF includes 'Witnesses & People Present' section (verified via pypdf text extraction) and is omitted when no witnesses, photo upload/delete audit (object_type=resident_photo), document upload/delete audit, missing_episode PATCH audit (action=update), return_interview create+sign-off audit, /incidents/{id}/status audit (action=update_status). Frontend Playwright smoke (Manager + Staff sessions): Audit Log nav hidden for staff and direct /audit redirects; Manager sees /audit page with all 5 filters (search, resident, actor, object, action) and a populated event list incl. SIGNED OFF / CREATED / UPDATED / DOCUMENT UPLOADED-DELETED / PHOTO UPLOADED-REMOVED chips with actor initials and #ref tags. Inline edit verified for key_worker (header — saves and persists in DOM), risk_level, social_worker_name, local_authority on Overview tab. Incident form (/incidents/new) shows witness-picker, Add witness opens dropdown with all 3 tabs (staff/resident/external) and witness-notes textarea. Regression smoke: residents/incidents/inspection-snapshot listing OK.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "AuditLog filter dropdowns", "issues": ["React hydration warning: <span> rendered as child of <option> in audit-actor-filter / audit-resident-filter / audit-action-filter / audit-object-filter <select> elements. Browser strips the span and React logs 'In HTML, %s cannot be a child of <option>. This will cause a hydration error.' Visually correct, but should be fixed by rendering option label as plain text only (likely a wrapper span emitted by a tracking/instrumentation HOC rather than user code — but please verify in AuditLog.jsx around lines 220-230)."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration24.py",
+    "/app/test_reports/pytest/iteration24_results.xml"
+  ],
+  "action_items": [
+    "Fix the React hydration warning in AuditLog.jsx <select> options — rendered <span> child of <option> (low impact but pollutes console; possibly a tracking instrumentation wrapper that needs to be excluded for option children)."
+  ],
+  "critical_code_review_comments": [
+    "server.py is now 5789 lines — well past the 700-line guideline. Audit endpoints, residents, missing, return-interviews, incidents, uploads, residents/photo, residents/documents, inspection-snapshot are all candidates for routers/* split.",
+    "PATCH /api/residents/{rid}: Resident PATCH body redaction is good, but the audit `summary` line includes raw field names verbatim — it is fine for inspectors but could expose business sensitivity (e.g., 'risk_level') in plain audit search hits; consider a humanised label map.",
+    "PATCH /api/missing/{eid} writes audit with metadata containing whatever was sent (incl. 'timeline' is excluded — good). However it has no RBAC gate (uses get_current_user) — staff can patch a missing episode. Confirm this is intentional given staff need to log returns; otherwise widen to senior+.",
+    "GET /api/audit `q` regex search on `summary` and `actor_name` does not escape user input — if q contains regex metacharacters like '(' or '+' it can ReDoS or fail. Wrap in `re.escape` server-side.",
+    "GET /api/audit/facets returns up to 200 actors; for very long-running deployments distinct actor_id over millions of audit rows will be slow. Consider periodic materialised facets.",
+    "WitnessRef has no length cap on `name`/`role`/`organisation`/`contact`/`notes` — at minimum add Field(max_length=200) on each to avoid abuse.",
+    "PATCH /incidents/{iid}/status passes `status` as a query parameter (Literal) — that is unusual REST shape; the frontend works because it appends ?status=... but it would be more idiomatic to accept a JSON body and document with OpenAPI."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration24.py"
+  ],
+  "success_rate": {"backend": "100% (28/28)", "frontend": "100% on the iteration-24 surfaces (audit-log-page, all 5 audit filters, nav RBAC for staff/manager, inline-key_worker edit→save→persist, inline risk_level/social_worker_name/local_authority edit-btns, witness-picker with staff/resident/external tabs and witness-notes)"},
+  "test_credentials": "Used seeded creds from /app/memory/test_credentials.md (admin/manager/senior/staff). Login endpoint returns `token` (NOT `access_token`) — first iteration of test failed because of that.",
+  "seed_data_creation": "Test run on seed resident a1fb73b6 (Maddy O'Brien) created: 2 TEST_iteration24 incidents (one with witnesses, one without), one TEST_iter24 missing episode → return-interview → signed-off, one TEST_iteration24_doc resident_document (deleted at end). One UI inline-edit set key_worker='TEST_KW_FROM_UI' on the seed resident — main agent may want to revert this to a friendlier value.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iteration 24 is fully covered in /app/backend/tests/test_iteration24.py (28 tests, ~10s). Notable gotchas: (1) login endpoint returns 'token' key, NOT 'access_token'; (2) photo audit object_type is 'resident_photo' (not 'resident'); (3) PATCH /incidents/{id}/status uses `?status=...` query param, NOT JSON body; (4) MissingEpisodePatch field is `police_reference` (not police_ref); (5) missing-episode CREATE is at /api/residents/{rid}/missing (not /api/missing); (6) inspection snapshot is at /api/inspection/snapshot (slash, not dash); (7) file upload endpoint is /api/uploads (not /api/files); (8) Incident PDF text is ASCII85+Flate compressed — must decode via pypdf to assert text content; raw bytes won't contain 'WITNESSES'. data-testids verified live: nav-audit, audit-log-page, audit-filter-search, audit-filter-resident-filter, audit-filter-actor-filter, audit-filter-object-filter, audit-filter-action-filter, inline-key_worker-{edit-btn,input,save-btn}, inline-risk_level-edit-btn, inline-social_worker_name-edit-btn, inline-local_authority-edit-btn, witness-picker, witness-notes, witness-tab-{staff,resident,external}.",
+  "rca of the issue": "No production bugs identified. 7 test-side discrepancies were corrected during the run: token key, photo object_type, status query-param shape, missing-episode field name, missing-episode CREATE route, uploads route, inspection-snapshot route, and PDF-text extraction strategy (pypdf instead of raw bytes). Once corrected, all 28 backend tests pass in 10s and all iteration-24 frontend surfaces verify."
+}

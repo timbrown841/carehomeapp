@@ -24,6 +24,7 @@ import PettyCashPage from "@/pages/PettyCashPage";
 import Handover from "@/pages/Handover";
 import SaferRecruitment from "@/pages/SaferRecruitment";
 import CQCReadiness from "@/pages/CQCReadiness";
+import AuditLog from "@/pages/AuditLog";
 
 function Protected({ children }) {
   const { user, loading } = useAuth();
@@ -89,6 +90,14 @@ function App() {
                 element={
                   <SeniorOrAbove>
                     <CQCReadiness />
+                  </SeniorOrAbove>
+                }
+              />
+              <Route
+                path="/audit"
+                element={
+                  <SeniorOrAbove>
+                    <AuditLog />
                   </SeniorOrAbove>
                 }
               />

@@ -32,6 +32,7 @@ from return_interview_pdf import build_return_interview_pdf
 from inspection_snapshot_pdf import build_inspection_snapshot_pdf
 from notifications_service import send_email, send_sms, recipient_for
 from uploads_service import save_upload, disk_path, public_meta
+from audit_service import record_audit
 import secrets as _secrets
 
 
@@ -77,6 +78,11 @@ async def lifespan(_app: FastAPI):
     await db.files.create_index("id", unique=True)
     await db.return_interviews.create_index([("resident_id", 1), ("conducted_at", -1)])
     await db.return_interviews.create_index("missing_episode_id")
+    await db.audit_events.create_index([("at", -1)])
+    await db.audit_events.create_index([("resident_id", 1), ("at", -1)])
+    await db.audit_events.create_index("actor_id")
+    await db.audit_events.create_index("object_type")
+    await db.audit_events.create_index("action")
 
     admin_email = os.environ.get("ADMIN_EMAIL", "admin@care.local").lower()
     admin_password = os.environ.get("ADMIN_PASSWORD", "Admin@123")
@@ -1598,6 +1604,18 @@ class Note(NoteIn):
     created_at: str
 
 
+class WitnessRef(BaseModel):
+    """A single witness on an incident."""
+    kind: Literal["staff", "resident", "external"] = "external"
+    user_id: Optional[str] = None  # for staff
+    resident_id: Optional[str] = None  # for resident
+    name: str
+    role: Optional[str] = None  # e.g. "Social Worker", "Police Officer"
+    organisation: Optional[str] = None
+    contact: Optional[str] = None  # phone/email for external
+    notes: Optional[str] = None
+
+
 class IncidentIn(BaseModel):
     resident_id: str
     severity: Literal["low", "medium", "high"] = "low"
@@ -1612,6 +1630,8 @@ class IncidentIn(BaseModel):
     tags: List[str] = Field(default_factory=list)
     structured_report: Optional[str] = ""
     raw_transcript: Optional[str] = ""
+    witnesses: List[WitnessRef] = Field(default_factory=list)
+    witness_notes: Optional[str] = None
 
 
 class Incident(IncidentIn):
@@ -1860,6 +1880,15 @@ async def list_users(_: dict = Depends(require_role("admin", "manager"))):
     return users
 
 
+@api_router.get("/auth/users/picker")
+async def user_picker(_: dict = Depends(get_current_user)):
+    """Lightweight directory for witness pickers — name + role only."""
+    users = await db.users.find(
+        {}, {"_id": 0, "id": 1, "name": 1, "role": 1}
+    ).sort("name", 1).to_list(500)
+    return users
+
+
 # ---------- Residents ----------
 @api_router.get("/residents", response_model=List[Resident])
 async def list_residents(
@@ -1973,7 +2002,7 @@ class ResidentPatch(BaseModel):
 async def update_resident(
     rid: str,
     payload: ResidentPatch,
-    _: dict = Depends(require_role("manager", "admin")),
+    user: dict = Depends(require_role("senior", "manager", "admin")),
 ):
     update_doc = {k: v for k, v in payload.model_dump(exclude_unset=True).items() if v is not None}
     if not update_doc:
@@ -1981,12 +2010,26 @@ async def update_resident(
         if not doc:
             raise HTTPException(404, "Resident not found")
         return doc
-    update_doc["updated_at"] = now_iso()
-    result = await db.residents.update_one({"id": rid}, {"$set": update_doc})
-    if result.matched_count == 0:
+    before = await db.residents.find_one({"id": rid}, {"_id": 0})
+    if not before:
         raise HTTPException(404, "Resident not found")
-    doc = await db.residents.find_one({"id": rid}, {"_id": 0})
-    return doc
+    update_doc["updated_at"] = now_iso()
+    await db.residents.update_one({"id": rid}, {"$set": update_doc})
+    after = await db.residents.find_one({"id": rid}, {"_id": 0})
+    audit_before = {k: before.get(k) for k in update_doc.keys() if k != "updated_at"}
+    audit_after = {k: after.get(k) for k in update_doc.keys() if k != "updated_at"}
+    await record_audit(
+        db,
+        actor=user,
+        action="update",
+        object_type="resident",
+        object_id=rid,
+        resident_id=rid,
+        summary=f"Resident profile updated · {', '.join(audit_before.keys()) or '—'}",
+        before=audit_before,
+        after=audit_after,
+    )
+    return after
 
 
 @api_router.get("/residents/{rid}/timeline")
@@ -2168,6 +2211,17 @@ async def update_missing_episode(
         update["updated_at"] = now
         await db.missing_episodes.update_one({"id": eid}, {"$set": update})
     doc = await db.missing_episodes.find_one({"id": eid}, {"_id": 0})
+    if update:
+        await record_audit(
+            db,
+            actor=user,
+            action="update",
+            object_type="missing_episode",
+            object_id=eid,
+            resident_id=doc.get("resident_id"),
+            summary=f"Missing episode updated ({', '.join(k for k in update.keys() if k not in ('timeline','updated_at'))})",
+            metadata={k: v for k, v in update.items() if k not in ("timeline", "updated_at")},
+        )
     return doc
 
 
@@ -2447,6 +2501,22 @@ async def create_incident(payload: IncidentIn, user: dict = Depends(get_current_
     }
     await db.incidents.insert_one(doc)
     doc.pop("_id", None)
+    await record_audit(
+        db,
+        actor=user,
+        action="create",
+        object_type="incident",
+        object_id=doc["id"],
+        resident_id=doc.get("resident_id"),
+        summary=f"Logged {doc.get('severity','').upper()} {doc.get('incident_type','')} incident"
+                + (" (safeguarding)" if doc.get("safeguarding") else ""),
+        metadata={
+            "severity": doc.get("severity"),
+            "incident_type": doc.get("incident_type"),
+            "safeguarding": doc.get("safeguarding"),
+            "witness_count": len(doc.get("witnesses") or []),
+        },
+    )
     return doc
 
 
@@ -2539,13 +2609,70 @@ async def structure_incident(payload: StructureRequest, _: dict = Depends(get_cu
 async def update_incident_status(
     iid: str,
     status: Literal["open", "reviewed", "closed"],
-    _: dict = Depends(require_role("manager", "admin")),
+    user: dict = Depends(require_role("manager", "admin")),
 ):
+    before = await db.incidents.find_one({"id": iid}, {"_id": 0})
     await db.incidents.update_one({"id": iid}, {"$set": {"status": status}})
     doc = await db.incidents.find_one({"id": iid}, {"_id": 0})
     if not doc:
         raise HTTPException(404, "Not found")
+    await record_audit(
+        db,
+        actor=user,
+        action="update_status",
+        object_type="incident",
+        object_id=iid,
+        resident_id=doc.get("resident_id"),
+        summary=f"Incident status changed to {status}",
+        before={"status": (before or {}).get("status")},
+        after={"status": status},
+    )
     return doc
+
+
+class IncidentPatch(BaseModel):
+    severity: Optional[Literal["low", "medium", "high"]] = None
+    category: Optional[Literal["physical", "verbal", "self-harm", "missing", "medical", "other"]] = None
+    incident_type: Optional[Literal["behaviour", "safeguarding", "absconding", "other"]] = None
+    body: Optional[str] = None
+    safeguarding: Optional[bool] = None
+    action_taken: Optional[str] = None
+    tags: Optional[List[str]] = None
+    structured_report: Optional[str] = None
+    witnesses: Optional[List[WitnessRef]] = None
+    witness_notes: Optional[str] = None
+
+
+@api_router.patch("/incidents/{iid}", response_model=Incident)
+async def patch_incident(
+    iid: str,
+    payload: IncidentPatch,
+    user: dict = Depends(require_role("senior", "manager", "admin")),
+):
+    before = await db.incidents.find_one({"id": iid}, {"_id": 0})
+    if not before:
+        raise HTTPException(404, "Incident not found")
+    update = {k: v for k, v in payload.model_dump(exclude_unset=True).items() if v is not None}
+    if not update:
+        return before
+    update["updated_at"] = now_iso()
+    await db.incidents.update_one({"id": iid}, {"$set": update})
+    after = await db.incidents.find_one({"id": iid}, {"_id": 0})
+    # Compute audit diff but redact long body text into length-only marker
+    audit_before = {k: before.get(k) for k in update.keys()}
+    audit_after = {k: after.get(k) for k in update.keys()}
+    await record_audit(
+        db,
+        actor=user,
+        action="update",
+        object_type="incident",
+        object_id=iid,
+        resident_id=after.get("resident_id"),
+        summary=f"Incident updated ({', '.join(update.keys())})",
+        before=audit_before,
+        after=audit_after,
+    )
+    return after
 
 
 @api_router.get("/incidents/{iid}", response_model=Incident)
@@ -4653,11 +4780,27 @@ async def add_document(rid: str, payload: ResidentDocumentIn, user: dict = Depen
     }
     await db.resident_documents.insert_one(doc)
     doc.pop("_id", None)
+    await record_audit(
+        db,
+        actor=user,
+        action="upload_document",
+        object_type="document",
+        object_id=doc["id"],
+        resident_id=rid,
+        summary=f"Document added · {payload.title} ({payload.category})",
+        metadata={
+            "category": payload.category,
+            "review_date": payload.review_date,
+            "expiry_date": payload.expiry_date,
+            "file_id": payload.file_id,
+            "file_name": doc.get("file_name"),
+        },
+    )
     return doc
 
 
 @api_router.delete("/residents/documents/{doc_id}")
-async def delete_document(doc_id: str, _: dict = Depends(require_tier(2))):
+async def delete_document(doc_id: str, user: dict = Depends(require_tier(2))):
     doc = await db.resident_documents.find_one({"id": doc_id}, {"_id": 0})
     res = await db.resident_documents.delete_one({"id": doc_id})
     # Best-effort cleanup of the underlying file if it's only referenced here.
@@ -4671,6 +4814,17 @@ async def delete_document(doc_id: str, _: dict = Depends(require_tier(2))):
                 except Exception:
                     pass
             await db.files.delete_one({"id": doc["file_id"]})
+    if doc:
+        await record_audit(
+            db,
+            actor=user,
+            action="delete_document",
+            object_type="document",
+            object_id=doc_id,
+            resident_id=doc.get("resident_id"),
+            summary=f"Document deleted · {doc.get('title', '—')} ({doc.get('category', '—')})",
+            metadata={"category": doc.get("category"), "title": doc.get("title")},
+        )
     return {"deleted": res.deleted_count}
 
 
@@ -5117,11 +5271,21 @@ async def upload_resident_photo(
             "updated_at": now_iso(),
         }},
     )
+    await record_audit(
+        db,
+        actor=user,
+        action="upload_photo",
+        object_type="resident_photo",
+        object_id=meta["id"],
+        resident_id=rid,
+        summary=f"Resident photo uploaded ({meta.get('original_name', 'photo')})",
+        metadata={"size": meta.get("size"), "mime": meta.get("mime")},
+    )
     return public_meta(meta)
 
 
 @api_router.delete("/residents/{rid}/photo")
-async def remove_resident_photo(rid: str, _: dict = Depends(require_tier(2))):
+async def remove_resident_photo(rid: str, user: dict = Depends(require_tier(2))):
     resident = await db.residents.find_one({"id": rid}, {"_id": 0})
     if not resident:
         raise HTTPException(404, "Resident not found")
@@ -5139,6 +5303,15 @@ async def remove_resident_photo(rid: str, _: dict = Depends(require_tier(2))):
     await db.residents.update_one(
         {"id": rid},
         {"$set": {"photo_file_id": None, "photo_url": None, "updated_at": now_iso()}},
+    )
+    await record_audit(
+        db,
+        actor=user,
+        action="remove_photo",
+        object_type="resident_photo",
+        object_id=fid,
+        resident_id=rid,
+        summary="Resident photo removed",
     )
     return {"removed": True}
 
@@ -5224,6 +5397,20 @@ async def create_return_interview(
         update["returned_at"] = payload.returned_at
     await db.missing_episodes.update_one({"id": payload.missing_episode_id}, {"$set": update})
     doc.pop("_id", None)
+    await record_audit(
+        db,
+        actor=user,
+        action="create",
+        object_type="return_interview",
+        object_id=doc["id"],
+        resident_id=rid,
+        summary="Return interview submitted (missing episode closed)",
+        metadata={
+            "missing_episode_id": payload.missing_episode_id,
+            "exploitation_indicators": payload.exploitation_indicators or [],
+            "has_safeguarding_concerns": bool(payload.safeguarding_concerns),
+        },
+    )
     return doc
 
 
@@ -5279,7 +5466,20 @@ async def sign_off_return_interview(
     if payload and isinstance(payload, dict) and payload.get("manager_comments"):
         update["manager_comments"] = payload["manager_comments"]
     await db.return_interviews.update_one({"id": rid}, {"$set": update})
-    return await db.return_interviews.find_one({"id": rid}, {"_id": 0})
+    after = await db.return_interviews.find_one({"id": rid}, {"_id": 0})
+    await record_audit(
+        db,
+        actor=user,
+        action="sign_off",
+        object_type="return_interview",
+        object_id=rid,
+        resident_id=after.get("resident_id"),
+        summary="Return interview signed off by manager",
+        metadata={
+            "manager_comments": update.get("manager_comments"),
+        },
+    )
+    return after
 
 
 @api_router.get("/return-interviews/{rid}/pdf")
@@ -5498,6 +5698,83 @@ async def inspection_snapshot_pdf(
 
 
 # ---------- Startup is handled via lifespan above ----------
+
+
+# ============================================================
+# Audit log — read endpoints (write goes via record_audit)
+# ============================================================
+
+@api_router.get("/audit")
+async def list_audit_events(
+    resident_id: Optional[str] = None,
+    actor_id: Optional[str] = None,
+    object_type: Optional[str] = None,
+    action: Optional[str] = None,
+    q: Optional[str] = None,
+    from_at: Optional[str] = None,
+    to_at: Optional[str] = None,
+    limit: int = 200,
+    user: dict = Depends(require_tier(2)),
+):
+    """Inspector-friendly audit log. Senior+ only."""
+    query: dict = {}
+    if resident_id:
+        query["resident_id"] = resident_id
+    if actor_id:
+        query["actor_id"] = actor_id
+    if object_type:
+        query["object_type"] = object_type
+    if action:
+        query["action"] = action
+    if from_at or to_at:
+        time_q: dict = {}
+        if from_at:
+            time_q["$gte"] = from_at
+        if to_at:
+            time_q["$lte"] = to_at
+        query["at"] = time_q
+    if q:
+        query["$or"] = [
+            {"summary": {"$regex": q, "$options": "i"}},
+            {"actor_name": {"$regex": q, "$options": "i"}},
+        ]
+    limit = max(1, min(int(limit or 200), 1000))
+    items = await db.audit_events.find(query, {"_id": 0}).sort("at", -1).to_list(limit)
+    total = await db.audit_events.count_documents(query)
+    return {"items": items, "total": total, "returned": len(items)}
+
+
+@api_router.get("/audit/facets")
+async def audit_facets(_: dict = Depends(require_tier(2))):
+    """Distinct values for filter dropdowns."""
+    actors = await db.audit_events.aggregate([
+        {"$group": {"_id": "$actor_id", "name": {"$first": "$actor_name"},
+                    "role": {"$first": "$actor_role"}, "count": {"$sum": 1}}},
+        {"$sort": {"count": -1}},
+        {"$limit": 200},
+    ]).to_list(200)
+    object_types = await db.audit_events.distinct("object_type")
+    actions = await db.audit_events.distinct("action")
+    return {
+        "actors": [
+            {"id": a["_id"], "name": a.get("name"), "role": a.get("role"), "count": a.get("count", 0)}
+            for a in actors if a.get("_id")
+        ],
+        "object_types": sorted([o for o in object_types if o]),
+        "actions": sorted([a for a in actions if a]),
+    }
+
+
+@api_router.get("/residents/{rid}/audit")
+async def resident_audit(
+    rid: str,
+    limit: int = 200,
+    _: dict = Depends(require_tier(2)),
+):
+    items = await db.audit_events.find(
+        {"resident_id": rid}, {"_id": 0}
+    ).sort("at", -1).to_list(limit)
+    return items
 
 
 app.include_router(api_router)

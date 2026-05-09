@@ -4,6 +4,7 @@ import api, { formatApiError } from "@/lib/api";
 import { downloadIncidentPdf } from "@/lib/pdf";
 import VoiceRecorder from "@/components/VoiceRecorder";
 import SaveReceipt from "@/components/SaveReceipt";
+import WitnessPicker from "@/components/incident/WitnessPicker";
 import { renderRich } from "@/lib/markdown";
 import {
   ArrowLeft,
@@ -72,6 +73,8 @@ export default function LogIncident() {
     safeguarding: false,
     structured_report: "",
     suggested_action: "",
+    witnesses: [],
+    witness_notes: "",
   });
 
   const tags = useMemo(() => TAG_SETS[form.incident_type] || [], [form.incident_type]);
@@ -164,6 +167,8 @@ export default function LogIncident() {
         tags: form.tags,
         structured_report: form.structured_report || "",
         raw_transcript: form.transcript || "",
+        witnesses: form.witnesses,
+        witness_notes: form.witness_notes,
       });
       setSavedRecord(data);
       toast.success("Saved instantly · audit-trail recorded");
@@ -570,6 +575,14 @@ export default function LogIncident() {
             </div>
           </div>
         )}
+
+        {/* Witnesses & people present */}
+        <WitnessPicker
+          value={form.witnesses}
+          onChange={(w) => setForm({ ...form, witnesses: w })}
+          notesValue={form.witness_notes}
+          onNotesChange={(s) => setForm({ ...form, witness_notes: s })}
+        />
 
         {/* Safeguarding flag — emphasised */}
         {form.incident_type !== "safeguarding" && (

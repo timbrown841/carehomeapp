@@ -14,6 +14,7 @@ import IndependenceTracker from "@/components/resident/IndependenceTracker";
 import DocumentsTab from "@/components/resident/DocumentsTab";
 import ResidentPhoto from "@/components/resident/ResidentPhoto";
 import ReturnInterviewModal from "@/components/resident/ReturnInterviewModal";
+import InlineField from "@/components/resident/InlineField";
 import AlertsAndRisksBar, { useResidentAlerts } from "@/components/resident/AlertsAndRisksBar";
 import QuickActionsPanel from "@/components/resident/QuickActionsPanel";
 import { AccordionSection } from "@/components/resident/Accordion";
@@ -74,14 +75,14 @@ function isOverdue(iso) {
   return new Date(iso).getTime() < Date.now();
 }
 
-function FieldRow({ label, value, className = "" }) {
+function FieldRow({ label, value, className = "", inline }) {
   return (
     <div className={`grid grid-cols-3 gap-4 py-2.5 border-b divider-soft last:border-0 ${className}`}>
       <div className="text-[11px] font-bold uppercase tracking-wider text-stone-500">
         {label}
       </div>
       <div className="col-span-2 text-sm text-stone-800 break-words whitespace-pre-wrap">
-        {value || <span className="text-stone-400 italic">Not specified</span>}
+        {inline ? inline : (value || <span className="text-stone-400 italic">Not specified</span>)}
       </div>
     </div>
   );
@@ -291,11 +292,27 @@ export default function ResidentDetail() {
           <div className="text-right text-xs text-stone-600 space-y-1 min-w-[180px]">
             <div className="inline-flex items-center gap-1.5">
               <User size={12} className="text-stone-400" />
-              <span className="font-medium">Key worker · {resident.key_worker || "—"}</span>
+              <span className="font-medium">Key worker · </span>
+              <InlineField
+                resident={resident}
+                field="key_worker"
+                label="Key worker"
+                placeholder="—"
+                onSaved={(updated) => setResident(updated)}
+                className="font-medium"
+              />
             </div>
             <div className="inline-flex items-center gap-1.5">
               <Heart size={12} className="text-stone-400" />
-              <span className="font-medium">SW · {resident.social_worker_name || "—"}</span>
+              <span className="font-medium">SW · </span>
+              <InlineField
+                resident={resident}
+                field="social_worker_name"
+                label="Social worker"
+                placeholder="—"
+                onSaved={(updated) => setResident(updated)}
+                className="font-medium"
+              />
             </div>
             <div className="inline-flex items-center gap-1.5 text-stone-500">
               <Hash size={11} />
@@ -514,13 +531,102 @@ function OverviewTab({ resident, age }) {
       <SectionTitle className="mt-6">Placement & Care</SectionTitle>
       <FieldRow label="Placement start" value={resident.placement_date} />
       <FieldRow label="Legal status" value={resident.legal_status} />
-      <FieldRow label="Local authority" value={resident.local_authority} />
-      <FieldRow label="Key worker" value={resident.key_worker} />
+      <FieldRow
+        label="Local authority"
+        inline={
+          <InlineField
+            resident={resident}
+            field="local_authority"
+            label="Local authority"
+            onSaved={(u) => setResident(u)}
+            placeholder="Not specified"
+          />
+        }
+      />
+      <FieldRow
+        label="Key worker"
+        inline={
+          <InlineField
+            resident={resident}
+            field="key_worker"
+            label="Key worker"
+            onSaved={(u) => setResident(u)}
+            placeholder="Not specified"
+          />
+        }
+      />
+      <FieldRow
+        label="Risk level"
+        inline={
+          <InlineField
+            resident={resident}
+            field="risk_level"
+            label="Risk level"
+            type="select"
+            sensitive
+            options={[
+              { value: "low", label: "Low" },
+              { value: "medium", label: "Medium" },
+              { value: "high", label: "High" },
+            ]}
+            onSaved={(u) => setResident(u)}
+          />
+        }
+      />
+      <FieldRow
+        label="Risk review due"
+        inline={
+          <InlineField
+            resident={resident}
+            field="risk_next_review"
+            label="Risk review due"
+            type="date"
+            onSaved={(u) => setResident(u)}
+          />
+        }
+      />
       <FieldRow label="Placement summary" value={resident.placement_summary || resident.notes} />
 
       <SectionTitle className="mt-6">Professional contacts</SectionTitle>
-      <FieldRow label="Social worker" value={resident.social_worker_name} />
-      <FieldRow label="SW contact" value={resident.social_worker_contact} />
+      <FieldRow
+        label="Social worker"
+        inline={
+          <InlineField
+            resident={resident}
+            field="social_worker_name"
+            label="Social worker"
+            onSaved={(u) => setResident(u)}
+            placeholder="Not specified"
+          />
+        }
+      />
+      <FieldRow
+        label="SW contact"
+        inline={
+          <InlineField
+            resident={resident}
+            field="social_worker_contact"
+            label="SW contact"
+            onSaved={(u) => setResident(u)}
+            placeholder="Phone or email"
+          />
+        }
+      />
+
+      <SectionTitle className="mt-6">Quick contact</SectionTitle>
+      <FieldRow
+        label="Phone"
+        inline={
+          <InlineField
+            resident={resident}
+            field="phone"
+            label="Phone"
+            type="tel"
+            onSaved={(u) => setResident(u)}
+            placeholder="Mobile / landline"
+          />
+        }
+      />
 
       <SectionTitle className="mt-6">Emergency contacts</SectionTitle>
       <ContactsList contacts={resident.emergency_contacts} />

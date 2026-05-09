@@ -452,6 +452,46 @@ def build_incident_pdf(
         story.append(Paragraph("ACTION TAKEN", s["section"]))
         story.append(Paragraph(action.replace("\n", "<br/>"), s["body"]))
 
+    # ----- Witnesses & people present
+    witnesses = incident.get("witnesses") or []
+    witness_notes = (incident.get("witness_notes") or "").strip()
+    if witnesses or witness_notes:
+        story.append(Paragraph("WITNESSES & PEOPLE PRESENT", s["section"]))
+        if witnesses:
+            wlabel = ParagraphStyle(
+                "wlabel", parent=s["label"], fontSize=7, textColor=INK_2,
+            )
+            wval = ParagraphStyle(
+                "wval", parent=s["body"], fontSize=10, leading=13, spaceAfter=2,
+            )
+            data = [[Paragraph(c, wlabel) for c in ["KIND", "NAME", "ROLE / ORG", "CONTACT"]]]
+            for w in witnesses:
+                kind_lbl = (w.get("kind") or "external").upper()
+                role_org = " · ".join(filter(None, [w.get("role"), w.get("organisation")])) or "—"
+                data.append([
+                    Paragraph(kind_lbl, wval),
+                    Paragraph(w.get("name") or "—", wval),
+                    Paragraph(role_org, wval),
+                    Paragraph(w.get("contact") or "—", wval),
+                ])
+            wtab = Table(data, colWidths=[20 * mm, 70 * mm, 50 * mm, 34 * mm], repeatRows=1)
+            wtab.setStyle(TableStyle([
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#F8F7F2")),
+                ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#D6D6D0")),
+                ("INNERGRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#D6D6D0")),
+                ("LEFTPADDING", (0, 0), (-1, -1), 5),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+                ("TOPPADDING", (0, 0), (-1, -1), 4),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ]))
+            story.append(wtab)
+        if witness_notes:
+            story.append(Spacer(1, 2 * mm))
+            story.append(Paragraph(
+                f"<i>{witness_notes.replace(chr(10), '<br/>')}</i>", s["body"],
+            ))
+
     # ----- Raw transcript (audit completeness)
     raw = (incident.get("raw_transcript") or "").strip()
     if raw and raw != (incident.get("structured_report") or ""):

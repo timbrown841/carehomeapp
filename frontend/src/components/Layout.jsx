@@ -19,6 +19,7 @@ import {
   GraduationCap,
   ShieldCheck,
   HeartPulse,
+  History,
   LogOut,
   Menu,
   X,
@@ -80,6 +81,7 @@ const groups = [
     label: "Compliance",
     items: [
       { to: "/ofsted", label: "Ofsted Readiness", icon: BadgeCheck, testid: "nav-ofsted" },
+      { to: "/audit", label: "Audit Log", icon: History, testid: "nav-audit", minTier: 2 },
       { to: "/reports", label: "Reports", icon: FileText, testid: "nav-reports", minTier: 3 },
     ],
   },

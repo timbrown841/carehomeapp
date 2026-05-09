@@ -246,6 +246,56 @@ export default function IncidentDetail() {
         </section>
       )}
 
+      {((incident.witnesses || []).length > 0 || incident.witness_notes) && (
+        <section
+          className="bg-white border divider-soft rounded-2xl p-5 sm:p-6"
+          data-testid="incident-witnesses-section"
+        >
+          <h3 className="font-display font-bold text-sm uppercase tracking-wider text-[#1E4D5C] mb-3">
+            Witnesses & people present
+          </h3>
+          {(incident.witnesses || []).length > 0 && (
+            <ul className="space-y-1.5">
+              {incident.witnesses.map((w, i) => {
+                const tone =
+                  w.kind === "staff"
+                    ? "bg-[#0e3b4a]/10 text-[#0e3b4a]"
+                    : w.kind === "resident"
+                    ? "bg-[#5a3d8c]/10 text-[#5a3d8c]"
+                    : "bg-[#B8772F]/10 text-[#8C5A20]";
+                const role =
+                  w.kind === "staff"
+                    ? `Staff${w.role ? " · " + w.role : ""}`
+                    : w.kind === "resident"
+                    ? "Young person"
+                    : [w.role, w.organisation].filter(Boolean).join(" · ") || "External";
+                return (
+                  <li
+                    key={i}
+                    data-testid={`incident-witness-${i}`}
+                    className="flex items-center gap-2 text-sm"
+                  >
+                    <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded ${tone}`}>
+                      {w.kind}
+                    </span>
+                    <span className="font-semibold text-stone-800">{w.name}</span>
+                    <span className="text-xs text-stone-500">· {role}</span>
+                    {w.contact && (
+                      <span className="text-xs text-stone-500">· {w.contact}</span>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+          {incident.witness_notes && (
+            <p className="text-sm italic text-stone-600 mt-3 whitespace-pre-wrap">
+              {incident.witness_notes}
+            </p>
+          )}
+        </section>
+      )}
+
       {incident.raw_transcript &&
         incident.raw_transcript !== incident.structured_report && (
           <details className="bg-white border divider-soft rounded-2xl group">
