@@ -213,6 +213,7 @@ def build_missing_pack_pdf(
     resident: dict,
     incidents: List[dict],
     generated_for: str,
+    photo_path: Optional[str] = None,
 ) -> io.BytesIO:
     """Build a police-ready missing-from-care PDF."""
     buf = io.BytesIO()
@@ -258,10 +259,21 @@ def build_missing_pack_pdf(
         s["subtitle"],
     ))
 
-    # Banner: identification
+    # Banner: identification — with photo (if available)
     risk = (resident.get("risk_level") or "medium").lower()
     risk_color = {"high": URGENT_RED, "medium": WARN_AMBER, "low": SAFE_GREEN}.get(risk, INK_3)
-    head = Table([
+
+    photo_cell = Paragraph("<i>No photo<br/>on file</i>", s["muted"])
+    if photo_path and os.path.exists(photo_path):
+        try:
+            from reportlab.platypus import Image as RLImage
+            img = RLImage(photo_path, width=28 * mm, height=34 * mm, kind="proportional")
+            img.hAlign = "CENTER"
+            photo_cell = img
+        except Exception:
+            pass
+
+    head_inner = Table([
         [
             Paragraph("YOUNG PERSON", s["label"]),
             Paragraph("DOB", s["label"]),
@@ -280,17 +292,31 @@ def build_missing_pack_pdf(
             Paragraph("&nbsp;", s["muted"]),
             Paragraph(f"Placed: {resident.get('placement_date') or '—'}", s["muted"]),
         ],
-    ], colWidths=[55 * mm, 30 * mm, 30 * mm, 59 * mm])
-    head.setStyle(TableStyle([
+    ], colWidths=[40 * mm, 28 * mm, 28 * mm, 42 * mm])
+    head_inner.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#F8F7F2")),
         ("BACKGROUND", (2, 1), (2, 1), risk_color),
         ("TEXTCOLOR", (2, 1), (2, 1), colors.white),
         ("BOX", (0, 0), (-1, -1), 0.5, LINE),
         ("INNERGRID", (0, 0), (-1, -1), 0.5, LINE),
-        ("LEFTPADDING", (0, 0), (-1, -1), 7),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 7),
-        ("TOPPADDING", (0, 0), (-1, -1), 5),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+        ("LEFTPADDING", (0, 0), (-1, -1), 6),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+    ]))
+
+    head = Table(
+        [[photo_cell, head_inner]],
+        colWidths=[34 * mm, 140 * mm],
+    )
+    head.setStyle(TableStyle([
+        ("BOX", (0, 0), (0, 0), 0.5, LINE),
+        ("BACKGROUND", (0, 0), (0, 0), colors.HexColor("#F8F7F2")),
+        ("LEFTPADDING", (0, 0), (-1, -1), 4),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
     ]))
     story.append(head)
     story.append(Spacer(1, 5 * mm))

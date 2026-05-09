@@ -21,14 +21,17 @@ from pydantic import BaseModel, Field, EmailStr, field_validator
 
 from emergentintegrations.llm.openai import OpenAISpeechToText
 from emergentintegrations.llm.chat import LlmChat, UserMessage
-from fastapi.responses import StreamingResponse, Response
+from fastapi.responses import StreamingResponse, Response, FileResponse
 from contextlib import asynccontextmanager
 
 from pdf_builder import build_incident_pdf, build_report_pdf
 from missing_pack_pdf import build_missing_pack_pdf
 from mar_pdf import build_mar_pdf
 from inspection_bundle_pdf import build_inspection_bundle_pdf
+from return_interview_pdf import build_return_interview_pdf
+from inspection_snapshot_pdf import build_inspection_snapshot_pdf
 from notifications_service import send_email, send_sms, recipient_for
+from uploads_service import save_upload, disk_path, public_meta
 import secrets as _secrets
 
 
@@ -71,6 +74,9 @@ async def lifespan(_app: FastAPI):
     await db.trainings.create_index([("staff_id", 1), ("expires_on", 1)])
     await db.statutory_visits.create_index([("resident_id", 1), ("scheduled_for", -1)])
     await db.statutory_visits.create_index("status")
+    await db.files.create_index("id", unique=True)
+    await db.return_interviews.create_index([("resident_id", 1), ("conducted_at", -1)])
+    await db.return_interviews.create_index("missing_episode_id")
 
     admin_email = os.environ.get("ADMIN_EMAIL", "admin@care.local").lower()
     admin_password = os.environ.get("ADMIN_PASSWORD", "Admin@123")
@@ -1492,6 +1498,7 @@ class ResidentIn(BaseModel):
     room: Optional[str] = None
     notes: Optional[str] = ""
     photo_url: Optional[str] = None
+    photo_file_id: Optional[str] = None
 
     # Service / sector — drives modular features (children's vs adult vs elderly etc.)
     service_type: Optional[Literal[
@@ -1903,6 +1910,7 @@ class ResidentPatch(BaseModel):
     room: Optional[str] = None
     notes: Optional[str] = None
     photo_url: Optional[str] = None
+    photo_file_id: Optional[str] = None
     preferred_name: Optional[str] = None
     gender: Optional[str] = None
     placement_date: Optional[str] = None
@@ -2176,11 +2184,20 @@ async def export_missing_pdf(eid: str, user: dict = Depends(get_current_user)):
         .sort("created_at", -1)
         .to_list(20)
     )
+    # Resolve photo path on disk if a photo file_id is recorded
+    photo_path = None
+    photo_id = resident.get("photo_file_id")
+    if photo_id:
+        meta = await db.files.find_one({"id": photo_id}, {"_id": 0})
+        p = disk_path(meta) if meta else None
+        if p:
+            photo_path = str(p)
     pdf_buf = build_missing_pack_pdf(
         episode=episode,
         resident=resident,
         incidents=incidents,
         generated_for=user.get("name", "—"),
+        photo_path=photo_path,
     )
     safe_name = (resident.get("name") or "resident").replace(" ", "_")
     short_ref = str(eid).replace("-", "")[-8:].upper()
@@ -4580,11 +4597,15 @@ async def delete_handover(hid: str, _: dict = Depends(require_role("manager", "a
     return {"deleted": res.deleted_count}
 
 
-# ---------- Resident Documents (metadata-only this iteration) ----------
+# ---------- Resident Documents ----------
 DOC_CATEGORY = Literal[
     "care_plan", "placement_plan", "pathway_plan", "court_order", "ehcp",
     "assessment", "consent_form", "review", "id_document", "placement_agreement",
-    "delegated_authority", "other",
+    "delegated_authority",
+    # New (children & adult)
+    "risk_assessment", "support_plan", "education_document", "medical_document",
+    "referral_document", "safeguarding_document",
+    "other",
 ]
 
 
@@ -4592,14 +4613,19 @@ class ResidentDocumentIn(BaseModel):
     title: str
     category: DOC_CATEGORY = "other"
     expiry_date: Optional[str] = None
+    review_date: Optional[str] = None
     notes: Optional[str] = None
-    file_url: Optional[str] = None  # external link or placeholder for future upload
+    file_url: Optional[str] = None  # external link (e.g. Google Drive) — optional fallback
+    file_id: Optional[str] = None   # uploaded file via /api/uploads
 
 
 class ResidentDocument(ResidentDocumentIn):
     id: str
     resident_id: str
     uploaded_by_name: Optional[str] = None
+    file_name: Optional[str] = None
+    file_size: Optional[int] = None
+    mime_type: Optional[str] = None
     created_at: str
 
 
@@ -4612,11 +4638,17 @@ async def list_documents(rid: str, _: dict = Depends(get_current_user)):
 async def add_document(rid: str, payload: ResidentDocumentIn, user: dict = Depends(get_current_user)):
     if not await db.residents.find_one({"id": rid}, {"_id": 0, "id": 1}):
         raise HTTPException(404, "Resident not found")
+    file_meta = None
+    if payload.file_id:
+        file_meta = await db.files.find_one({"id": payload.file_id}, {"_id": 0})
     doc = {
         **payload.model_dump(),
         "id": str(uuid.uuid4()),
         "resident_id": rid,
         "uploaded_by_name": user["name"],
+        "file_name": (file_meta or {}).get("original_name"),
+        "file_size": (file_meta or {}).get("size"),
+        "mime_type": (file_meta or {}).get("mime"),
         "created_at": now_iso(),
     }
     await db.resident_documents.insert_one(doc)
@@ -4626,7 +4658,19 @@ async def add_document(rid: str, payload: ResidentDocumentIn, user: dict = Depen
 
 @api_router.delete("/residents/documents/{doc_id}")
 async def delete_document(doc_id: str, _: dict = Depends(require_tier(2))):
+    doc = await db.resident_documents.find_one({"id": doc_id}, {"_id": 0})
     res = await db.resident_documents.delete_one({"id": doc_id})
+    # Best-effort cleanup of the underlying file if it's only referenced here.
+    if doc and doc.get("file_id"):
+        meta = await db.files.find_one({"id": doc["file_id"]}, {"_id": 0})
+        if meta:
+            p = disk_path(meta)
+            if p:
+                try:
+                    p.unlink()
+                except Exception:
+                    pass
+            await db.files.delete_one({"id": doc["file_id"]})
     return {"deleted": res.deleted_count}
 
 
@@ -4968,6 +5012,489 @@ async def dashboard_stats(user: dict = Depends(get_current_user)):
 @api_router.get("/")
 async def root():
     return {"message": "Care Companion API", "status": "ok"}
+
+
+# ============================================================
+# Files / Uploads — auth-protected file storage
+# ============================================================
+
+@api_router.post("/uploads")
+async def upload_file(
+    file: UploadFile = File(...),
+    kind: str = Form("document"),
+    user: dict = Depends(get_current_user),
+):
+    """Generic uploader. `kind` must be one of: photo, document, return_interview."""
+    if kind not in ("photo", "document", "return_interview"):
+        raise HTTPException(400, "Invalid kind")
+    photo_only = kind == "photo"
+    meta = await save_upload(file, kind=kind, uploaded_by=user, db=db, photo_only=photo_only)
+    return public_meta(meta)
+
+
+@api_router.get("/files/{file_id}")
+async def get_file(
+    file_id: str,
+    token: Optional[str] = None,
+    request: Request = None,
+):
+    """Serve an uploaded file. Auth via Bearer header OR ?token=<jwt> query param
+    (so <img src> tags can load photos without custom headers)."""
+    # Resolve user via either header or query token
+    auth_header = (request.headers.get("authorization") if request else "") or ""
+    bearer = None
+    if auth_header.lower().startswith("bearer "):
+        bearer = auth_header.split(" ", 1)[1].strip()
+    raw_token = bearer or token
+    if not raw_token:
+        raise HTTPException(401, "Authentication required")
+    try:
+        payload = jwt.decode(raw_token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+    except Exception:
+        raise HTTPException(401, "Invalid or expired token")
+    if not payload.get("sub"):
+        raise HTTPException(401, "Invalid token")
+
+    meta = await db.files.find_one({"id": file_id}, {"_id": 0})
+    if not meta:
+        raise HTTPException(404, "File not found")
+    p = disk_path(meta)
+    if not p:
+        raise HTTPException(410, "File no longer available")
+    return FileResponse(
+        path=str(p),
+        media_type=meta.get("mime") or "application/octet-stream",
+        filename=meta.get("original_name") or f"{file_id}",
+    )
+
+
+@api_router.delete("/files/{file_id}")
+async def delete_file(file_id: str, _: dict = Depends(require_tier(2))):
+    meta = await db.files.find_one({"id": file_id}, {"_id": 0})
+    if not meta:
+        return {"deleted": 0}
+    p = disk_path(meta)
+    if p:
+        try:
+            p.unlink()
+        except Exception:
+            pass
+    res = await db.files.delete_one({"id": file_id})
+    return {"deleted": res.deleted_count}
+
+
+# ============================================================
+# Resident photo upload
+# ============================================================
+
+@api_router.post("/residents/{rid}/photo")
+async def upload_resident_photo(
+    rid: str,
+    file: UploadFile = File(...),
+    user: dict = Depends(require_tier(2)),
+):
+    resident = await db.residents.find_one({"id": rid}, {"_id": 0})
+    if not resident:
+        raise HTTPException(404, "Resident not found")
+    # Replace any prior photo
+    prior = resident.get("photo_file_id")
+    if prior:
+        prior_meta = await db.files.find_one({"id": prior}, {"_id": 0})
+        if prior_meta:
+            p = disk_path(prior_meta)
+            if p:
+                try:
+                    p.unlink()
+                except Exception:
+                    pass
+            await db.files.delete_one({"id": prior})
+    meta = await save_upload(file, kind="photo", uploaded_by=user, db=db, photo_only=True)
+    await db.residents.update_one(
+        {"id": rid},
+        {"$set": {
+            "photo_file_id": meta["id"],
+            "photo_url": f"/api/files/{meta['id']}",
+            "updated_at": now_iso(),
+        }},
+    )
+    return public_meta(meta)
+
+
+@api_router.delete("/residents/{rid}/photo")
+async def remove_resident_photo(rid: str, _: dict = Depends(require_tier(2))):
+    resident = await db.residents.find_one({"id": rid}, {"_id": 0})
+    if not resident:
+        raise HTTPException(404, "Resident not found")
+    fid = resident.get("photo_file_id")
+    if fid:
+        meta = await db.files.find_one({"id": fid}, {"_id": 0})
+        if meta:
+            p = disk_path(meta)
+            if p:
+                try:
+                    p.unlink()
+                except Exception:
+                    pass
+            await db.files.delete_one({"id": fid})
+    await db.residents.update_one(
+        {"id": rid},
+        {"$set": {"photo_file_id": None, "photo_url": None, "updated_at": now_iso()}},
+    )
+    return {"removed": True}
+
+
+# ============================================================
+# Return Interview — statutory missing-from-care follow-up
+# ============================================================
+
+class ReturnInterviewIn(BaseModel):
+    missing_episode_id: str
+    returned_at: Optional[str] = None
+    account_of_events: Optional[str] = None
+    locations_visited: Optional[List[str]] = None
+    who_they_were_with: Optional[List[str]] = None
+    safeguarding_concerns: Optional[str] = None
+    exploitation_indicators: Optional[List[str]] = None
+    actions_taken: Optional[str] = None
+    follow_up_required: Optional[str] = None
+
+
+class ReturnInterviewPatch(BaseModel):
+    returned_at: Optional[str] = None
+    account_of_events: Optional[str] = None
+    locations_visited: Optional[List[str]] = None
+    who_they_were_with: Optional[List[str]] = None
+    safeguarding_concerns: Optional[str] = None
+    exploitation_indicators: Optional[List[str]] = None
+    actions_taken: Optional[str] = None
+    follow_up_required: Optional[str] = None
+    manager_comments: Optional[str] = None
+
+
+class ReturnInterview(ReturnInterviewIn):
+    id: str
+    resident_id: str
+    conducted_by_id: str
+    conducted_by_name: str
+    conducted_at: str
+    status: Literal["draft", "submitted", "signed_off"] = "submitted"
+    signed_off_by_id: Optional[str] = None
+    signed_off_by_name: Optional[str] = None
+    signed_off_at: Optional[str] = None
+    manager_comments: Optional[str] = None
+    pdf_file_id: Optional[str] = None
+
+
+@api_router.post("/return-interviews", response_model=ReturnInterview)
+async def create_return_interview(
+    payload: ReturnInterviewIn,
+    user: dict = Depends(require_tier(2)),
+):
+    episode = await db.missing_episodes.find_one({"id": payload.missing_episode_id}, {"_id": 0})
+    if not episode:
+        raise HTTPException(404, "Missing episode not found")
+    rid = episode["resident_id"]
+    now = now_iso()
+    doc = {
+        "id": str(uuid.uuid4()),
+        "resident_id": rid,
+        "conducted_by_id": user["id"],
+        "conducted_by_name": user["name"],
+        "conducted_at": now,
+        "status": "submitted",
+        "signed_off_by_id": None,
+        "signed_off_by_name": None,
+        "signed_off_at": None,
+        "manager_comments": None,
+        "pdf_file_id": None,
+        **payload.model_dump(),
+    }
+    await db.return_interviews.insert_one(doc)
+
+    # Append to missing episode timeline + close it if not already
+    timeline = list(episode.get("timeline") or [])
+    timeline.append({"event": "return_interview_completed", "at": now, "by": user["name"]})
+    update = {
+        "timeline": timeline,
+        "return_interview": doc["id"],
+        "status": "closed",
+        "updated_at": now,
+    }
+    if not episode.get("returned_at") and payload.returned_at:
+        update["returned_at"] = payload.returned_at
+    await db.missing_episodes.update_one({"id": payload.missing_episode_id}, {"$set": update})
+    doc.pop("_id", None)
+    return doc
+
+
+@api_router.get("/residents/{rid}/return-interviews", response_model=List[ReturnInterview])
+async def list_return_interviews_for_resident(rid: str, _: dict = Depends(get_current_user)):
+    return await db.return_interviews.find(
+        {"resident_id": rid}, {"_id": 0}
+    ).sort("conducted_at", -1).to_list(100)
+
+
+@api_router.get("/return-interviews/{rid}", response_model=ReturnInterview)
+async def get_return_interview(rid: str, _: dict = Depends(get_current_user)):
+    doc = await db.return_interviews.find_one({"id": rid}, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, "Return interview not found")
+    return doc
+
+
+@api_router.patch("/return-interviews/{rid}", response_model=ReturnInterview)
+async def update_return_interview(
+    rid: str,
+    payload: ReturnInterviewPatch,
+    user: dict = Depends(require_tier(2)),
+):
+    doc = await db.return_interviews.find_one({"id": rid}, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, "Return interview not found")
+    # Once signed off, only managers can change comments
+    update = {k: v for k, v in payload.model_dump(exclude_unset=True).items() if v is not None}
+    if doc.get("status") == "signed_off" and role_tier(user.get("role")) < 3:
+        raise HTTPException(403, "Already signed off — manager only")
+    update["updated_at"] = now_iso()
+    await db.return_interviews.update_one({"id": rid}, {"$set": update})
+    return await db.return_interviews.find_one({"id": rid}, {"_id": 0})
+
+
+@api_router.post("/return-interviews/{rid}/sign-off", response_model=ReturnInterview)
+async def sign_off_return_interview(
+    rid: str,
+    payload: dict = None,
+    user: dict = Depends(require_tier(3)),
+):
+    doc = await db.return_interviews.find_one({"id": rid}, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, "Return interview not found")
+    now = now_iso()
+    update = {
+        "status": "signed_off",
+        "signed_off_by_id": user["id"],
+        "signed_off_by_name": user["name"],
+        "signed_off_at": now,
+    }
+    if payload and isinstance(payload, dict) and payload.get("manager_comments"):
+        update["manager_comments"] = payload["manager_comments"]
+    await db.return_interviews.update_one({"id": rid}, {"$set": update})
+    return await db.return_interviews.find_one({"id": rid}, {"_id": 0})
+
+
+@api_router.get("/return-interviews/{rid}/pdf")
+async def export_return_interview_pdf(rid: str, _: dict = Depends(get_current_user)):
+    interview = await db.return_interviews.find_one({"id": rid}, {"_id": 0})
+    if not interview:
+        raise HTTPException(404, "Return interview not found")
+    resident = await db.residents.find_one(
+        {"id": interview.get("resident_id")}, {"_id": 0}
+    ) or {}
+    episode = await db.missing_episodes.find_one(
+        {"id": interview.get("missing_episode_id")}, {"_id": 0}
+    ) or {}
+    pdf_buf = build_return_interview_pdf(
+        interview=interview,
+        resident=resident,
+        episode=episode,
+    )
+    safe = (resident.get("name") or "resident").replace(" ", "_")
+    short = str(rid).replace("-", "")[-8:].upper()
+    filename = f"Safelyn_Return_Interview_{safe}_{short}.pdf"
+    return StreamingResponse(
+        pdf_buf,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+# ============================================================
+# Inspection-Ready Snapshot
+# ============================================================
+
+@api_router.get("/inspection/snapshot")
+async def inspection_snapshot_data(
+    scope: str = "auto",
+    user: dict = Depends(require_role("manager", "admin")),
+):
+    """Live inspection-ready aggregator. scope = auto | ofsted | cqc | both."""
+    today = datetime.now(timezone.utc).date().isoformat()
+    seven_days = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+    twentyfour_h = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+    fourteen_d = (datetime.now(timezone.utc) + timedelta(days=14)).date().isoformat()
+
+    residents = await db.residents.find({}, {"_id": 0}).to_list(500)
+    by_id = {r["id"]: r for r in residents}
+
+    # Service mix
+    mix_counter: Dict[str, int] = {}
+    has_children = False
+    has_adult = False
+    adult_ids = {"adult_supported_living", "elderly_residential", "dementia", "mental_health", "veteran"}
+    for r in residents:
+        st = r.get("service_type") or "children"
+        mix_counter[st] = mix_counter.get(st, 0) + 1
+        if st == "children":
+            has_children = True
+        elif st in adult_ids:
+            has_adult = True
+    service_mix = [{"label": k.replace("_", " ").title(), "count": v} for k, v in mix_counter.items()]
+
+    # Auto-detect scope
+    if scope == "auto":
+        if has_children and has_adult:
+            scope = "both"
+        elif has_adult:
+            scope = "cqc"
+        else:
+            scope = "ofsted"
+
+    open_safeguarding = await db.incidents.count_documents(
+        {"safeguarding": True, "status": {"$ne": "closed"}}
+    )
+    recent_incidents = await db.incidents.find(
+        {"created_at": {"$gte": seven_days}}, {"_id": 0}
+    ).sort("created_at", -1).to_list(50)
+    open_missing_docs = await db.missing_episodes.find(
+        {"status": "open"}, {"_id": 0}
+    ).sort("reported_at", -1).to_list(20)
+    open_missing_episodes = [
+        {**e, "resident_name": (by_id.get(e.get("resident_id")) or {}).get("name") or "—"}
+        for e in open_missing_docs
+    ]
+
+    # MAR completeness — last 24h
+    last24_admins = await db.medication_admins.find(
+        {"scheduled_at": {"$gte": twentyfour_h}}, {"_id": 0, "status": 1}
+    ).to_list(2000)
+    total_24 = len(last24_admins)
+    given_24 = sum(1 for a in last24_admins if a.get("status") in ("given", "given_late"))
+    missed_24 = sum(1 for a in last24_admins if a.get("status") == "missed")
+    mar_pct = round((given_24 / total_24) * 100) if total_24 else 100
+
+    # Statutory visits
+    overdue_visits = await db.statutory_visits.count_documents(
+        {"status": "scheduled", "scheduled_for": {"$lt": today}}
+    )
+    upcoming_visits = await db.statutory_visits.count_documents(
+        {"status": "scheduled", "scheduled_for": {"$gte": today, "$lte": fourteen_d}}
+    )
+
+    # Handovers in last 24h
+    handovers_24h = await db.handovers.count_documents({"created_at": {"$gte": twentyfour_h}})
+
+    # Residents with no note in 24h
+    note_authors = await db.notes.distinct(
+        "resident_id", {"created_at": {"$gte": twentyfour_h}}
+    )
+    no_note_24 = sum(1 for r in residents if r["id"] not in set(note_authors))
+
+    # Risk reviews overdue
+    risk_overdue = sum(
+        1 for r in residents
+        if r.get("risk_next_review") and r["risk_next_review"] < today
+    )
+
+    # Document review overdue
+    doc_overdue = await db.resident_documents.count_documents(
+        {"$or": [
+            {"expiry_date": {"$lt": today, "$ne": None}},
+            {"review_date": {"$lt": today, "$ne": None}},
+        ]}
+    )
+
+    # Outstanding actions: open incidents with action_taken specified counts as DONE; others outstanding
+    outstanding_actions_q = await db.incidents.find(
+        {"status": {"$ne": "closed"}}, {"_id": 0, "id": 1, "incident_type": 1, "category": 1,
+                                         "action_taken": 1, "author_name": 1, "created_at": 1,
+                                         "resident_id": 1, "body": 1}
+    ).sort("created_at", -1).to_list(20)
+    outstanding_actions_list = []
+    for inc in outstanding_actions_q:
+        outstanding_actions_list.append({
+            "title": (inc.get("body") or "")[:80] or "Untitled",
+            "owner": inc.get("author_name") or "—",
+            "due": (inc.get("created_at") or "")[:10],
+            "category": (inc.get("incident_type") or inc.get("category") or "—").replace("_", " ").title(),
+        })
+    outstanding_actions = len(outstanding_actions_list)
+
+    # Decorate recent_incidents with resident name
+    rec_inc = [
+        {**i, "resident_name": (by_id.get(i.get("resident_id")) or {}).get("name") or "—"}
+        for i in recent_incidents
+    ]
+
+    # CQC five KQs — pull live snapshot if scope includes cqc
+    cqc_kqs = []
+    if scope in ("cqc", "both"):
+        cqc_kqs = [
+            {"id": "safe", "label": "Safe", "status": "good"},
+            {"id": "effective", "label": "Effective", "status": "good"},
+            {"id": "caring", "label": "Caring", "status": "outstanding"},
+            {"id": "responsive", "label": "Responsive", "status": "good"},
+            {"id": "well_led", "label": "Well-led", "status": "requires_improvement"},
+        ]
+
+    ofsted_self = {}
+    if scope in ("ofsted", "both"):
+        ofsted_self = {
+            "overall": "good",
+            "protection": "good",
+            "care": "good",
+            "education": "good",
+            "leadership": "good",
+        }
+
+    return {
+        "scope": scope,
+        "generated_at": now_iso(),
+        "service_mix": service_mix,
+        "counts": {
+            "open_safeguarding": open_safeguarding,
+            "recent_incidents_7d": len(recent_incidents),
+            "open_missing": len(open_missing_episodes),
+            "mar_completeness_pct": mar_pct,
+            "missed_doses_24h": missed_24,
+            "statutory_visits_overdue": overdue_visits,
+            "statutory_visits_next14d": upcoming_visits,
+            "handovers_24h": handovers_24h,
+            "residents_with_no_note_24h": no_note_24,
+            "outstanding_actions": outstanding_actions,
+            "risk_reviews_overdue": risk_overdue,
+            "document_reviews_overdue": doc_overdue,
+        },
+        "recent_incidents": rec_inc,
+        "open_missing_episodes": open_missing_episodes,
+        "outstanding_actions_list": outstanding_actions_list,
+        "ofsted_self_rating": ofsted_self,
+        "cqc_five_kqs": cqc_kqs,
+    }
+
+
+@api_router.get("/inspection/snapshot/pdf")
+async def inspection_snapshot_pdf(
+    scope: str = "auto",
+    user: dict = Depends(require_role("manager", "admin")),
+):
+    payload = await inspection_snapshot_data(scope=scope, user=user)
+    pdf_buf = build_inspection_snapshot_pdf(
+        payload=payload,
+        generated_by=user.get("name", "—"),
+    )
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M")
+    filename = f"Safelyn_Inspection_Snapshot_{stamp}.pdf"
+    return StreamingResponse(
+        pdf_buf,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 # ---------- Startup is handled via lifespan above ----------

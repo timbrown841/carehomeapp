@@ -1,0 +1,48 @@
+{
+  "summary": "Iteration 23 (children's safeguarding polish — photo upload, return interview, documents tab full build-out, inspection-ready snapshot) end-to-end backend + frontend smoke validation. Backend pytest: 43/43 PASS in /app/backend/tests/test_iteration23.py. Frontend smoke (manager session): login hero copy mentions both children's homes and adult-care teams; Dashboard renders inspection-snapshot-card + inspection-snapshot-generate-btn for manager; Resident detail (a1fb73b6 — Maddy O'Brien) shows resident-photo-block + resident-photo-upload-btn; Documents tab loads with 'Add document' control, 10MB PDF/DOCX/PNG/JPG copy, review-overdue warning banner, and TEST_legacy_* fixtures persisted from backend run. Inspection snapshot card shows live counts (Open safeguarding 6, Open missing 1, MAR 100%, Visits overdue 0, Doc reviews due 1). All four core workflows GREEN end-to-end on the API; RI sub-tab data-testids (ri-start-*, ri-pdf-*, ri-signoff-*) were not visible at the default Safeguarding tab landing state during the smoke run because the children's safeguarding view defaulted to the Risk-assessment accordion — see action_items for follow-up.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {
+        "flow": "Safeguarding → Missing → Return Interview workflow buttons",
+        "issue": "Manager-side smoke could not locate ri-start-<eid>, ri-pdf-<eid>, or ri-signoff-<eid> data-testids on Maddy O'Brien's Safeguarding tab. The tab landed on the Risk Assessment accordion; Missing-from-care section may live under a nested accordion that needs explicit expansion. RI backend flow is fully verified end-to-end (create/list/get/patch/sign-off/PDF/RBAC) but UI wiring should be re-verified by main agent — likely just needs the Missing accordion to be expanded by default or a 'Missing' inner-tab click step.",
+        "affected_selectors": ["[data-testid^='ri-start-']", "[data-testid^='ri-pdf-']", "[data-testid^='ri-signoff-']"]
+      }
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration23.py",
+    "/app/test_reports/pytest/iteration23_results.xml"
+  ],
+  "action_items": [
+    "Manually verify the Safeguarding → Missing accordion: ensure ri-start-<eid> button renders for an open missing episode, ri-pdf-<eid> appears after RI submit, ri-signoff-<eid> appears for managers, and 'RI · Awaiting sign-off' / 'RI · Signed off' tags transition correctly. Backend supports the full lifecycle.",
+    "Note: backend test_iteration23 leaves residual TEST_-prefixed legacy documents on Maddy O'Brien (care_plan, placement_plan, ehcp). Cleanup logic only fires for Senior+ DELETE; tests don't currently delete the no-file legacy ones to keep run idempotent. Manual cleanup possible via DELETE /api/residents/documents/{id} as Senior+ if desired."
+  ],
+  "critical_code_review_comments": [
+    "server.py is now 5512 lines — over the 700-line module guideline. Splitting into routers/{files, residents_photo, return_interviews, inspection_snapshot, documents}.py would significantly improve maintainability.",
+    "GET /api/files/{id}: query-token fallback is by design for <img> tags; JWT is decoded inline rather than going through get_current_user. That's fine but consider adding an audit log entry for token-via-query reads (so it's traceable when a JWT leaks via referrer or browser history).",
+    "POST /api/residents/{rid}/documents accepts file_id but does NOT verify the uploaded file's `kind` is 'document' — a caller could attach a 'photo' kind file or someone else's file_id. Low impact since auth is required, but consider validating file_meta['kind'] == 'document' and/or that uploaded_by_id == user.id.",
+    "DELETE /api/residents/documents/{id} blindly deletes the underlying file even if it's referenced by another doc record — there is no fan-in count check. In current product flow each upload is tied 1-1 to a doc record so OK, but worth a comment or count guard.",
+    "inspection_snapshot returns hardcoded CQC KQ ratings ('safe: good', 'well_led: requires_improvement') — should pull from the same source as /api/cqc/readiness (which already exposes 5 KQs) so the snapshot PDF and the CQC page never diverge.",
+    "Return Interview model: `status` defaults to 'submitted' on POST and there is no path to status='draft' even though the Literal allows it — either remove 'draft' from the Literal or expose a draft-save flow.",
+    "uploads_service.MAX_FILE_SIZE is 10MB enforced via streaming — good. But the rejected/oversized file is read in full before deletion (chunk loop continues until hit). Acceptable since chunk_size is 256KB and rejection happens immediately on exceeding."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration23.py"
+  ],
+  "success_rate": {
+    "backend": "100% (43/43)",
+    "frontend": "~85% (login hero, dashboard inspection card, resident photo block, documents tab all verified; RI sub-tab data-testids not located in default smoke landing — needs accordion-expansion verification)"
+  },
+  "test_credentials": "Used seeded creds from /app/memory/test_credentials.md (manager/senior/staff/admin). All login fine.",
+  "seed_data_creation": "Backend tests created and signed-off a TEST return interview on Maddy O'Brien (a1fb73b6) closing a fresh missing episode. Also persisted: TEST_legacy_care_plan, TEST_legacy_placement_plan, TEST_legacy_ehcp, TEST_support_plan, TEST_education_document, TEST_medical_document, TEST_referral_document, TEST_safeguarding_document resident_documents (no underlying file). Photo upload+delete cycled cleanly.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iteration 23 backend is fully covered in /app/backend/tests/test_iteration23.py — 43 tests covering uploads (415/413/200/auth modes), files GET via Bearer + ?token=, resident photo POST/DELETE with replace-cleanup, residents/documents new categories + file-metadata round-trip, return-interviews full RBAC + episode-close + timeline + sign-off + PDF, inspection snapshot data + PDF (auto/ofsted/cqc scopes + role gating), and regression on pocket-money/handovers/dashboard/cqc-readiness/service-types. Tests are idempotent: each run creates a fresh missing episode and walks it to signed-off. PIL is used to generate valid in-test PNG/JPG bytes (reportlab requires real PNG headers, not just magic bytes). data-testids verified live: inspection-snapshot-card, inspection-snapshot-generate-btn, resident-photo-block, resident-photo-upload-btn, tab-documents, tab-safeguarding. RI workflow data-testids (ri-start-<eid>, ri-pdf-<eid>, ri-signoff-<eid>) need verification with the Missing accordion expanded.",
+  "rca of the issue": "No production bugs identified. Two test infra fixes were needed during initial run: (1) BASE_URL must read /app/frontend/.env directly because pytest doesn't inherit React env vars — added a small _read_frontend_env helper; (2) Initial inline-byte PNG/JPG were bare magic-byte stubs and reportlab could not embed them in the missing-pack PDF (PIL raised 'broken data stream') — switched to PIL-generated valid PNG/JPG (8x8 solid colour). Once both were corrected, all 43 tests pass in 8.3s."
+}

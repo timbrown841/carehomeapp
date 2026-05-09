@@ -12,6 +12,8 @@ import VisitsTab from "@/components/resident/VisitsTab";
 import PocketMoneyTab from "@/components/resident/PocketMoneyTab";
 import IndependenceTracker from "@/components/resident/IndependenceTracker";
 import DocumentsTab from "@/components/resident/DocumentsTab";
+import ResidentPhoto from "@/components/resident/ResidentPhoto";
+import ReturnInterviewModal from "@/components/resident/ReturnInterviewModal";
 import AlertsAndRisksBar, { useResidentAlerts } from "@/components/resident/AlertsAndRisksBar";
 import QuickActionsPanel from "@/components/resident/QuickActionsPanel";
 import { AccordionSection } from "@/components/resident/Accordion";
@@ -30,6 +32,7 @@ import {
   CheckCircle2,
   Loader2,
   Siren,
+  ShieldCheck,
   Send,
   Copy,
   Download,
@@ -160,6 +163,29 @@ export default function ResidentDetail() {
     };
   }, [id, nav]);
 
+  const loadResident = async () => {
+    try {
+      const r = await api.get(`/residents/${id}`);
+      setResident(r.data);
+    } catch (err) {
+      // ignore
+    }
+  };
+
+  // Refresh episodes when a return interview is submitted (closes the episode)
+  useEffect(() => {
+    const handler = async () => {
+      try {
+        const e = await api.get(`/residents/${id}/missing`);
+        setEpisodes(e.data || []);
+      } catch (err) {
+        // ignore
+      }
+    };
+    window.addEventListener("safelyn:missing-refresh", handler);
+    return () => window.removeEventListener("safelyn:missing-refresh", handler);
+  }, [id]);
+
   const persona = useMemo(
     () => (resident ? personaColor(resident.name) : { hex: "#1E4D5C", soft: "#1E4D5C10", on: "#1E4D5C" }),
     [resident]
@@ -223,12 +249,12 @@ export default function ResidentDetail() {
         style={{ borderLeftColor: persona.hex }}
       >
         <div className="flex items-start gap-5 flex-wrap">
-          <div
-            className="w-20 h-20 sm:w-24 sm:h-24 rounded-2xl flex items-center justify-center font-display font-black text-2xl sm:text-3xl shrink-0"
-            style={{ background: persona.soft, color: persona.on }}
-          >
-            {personaInitials(resident.name)}
-          </div>
+          <ResidentPhoto
+            resident={resident}
+            persona={persona}
+            initials={personaInitials(resident.name)}
+            onUpdated={loadResident}
+          />
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
               <span className="text-xs font-bold uppercase tracking-wider text-stone-500">
@@ -718,34 +744,196 @@ function MissingTab({ resident, episodes, onOpen }) {
         ) : (
           <ul className="mt-3 space-y-2" data-testid="missing-episodes-list">
             {episodes.map((ep) => (
-              <li
+              <MissingEpisodeRow
                 key={ep.id}
-                className="border divider-soft rounded-xl p-3.5 flex items-start gap-3"
-              >
-                <span
-                  className={`w-2.5 h-2.5 rounded-full shrink-0 mt-2 ${
-                    ep.returned_at ? "bg-[#3A5A40]" : "bg-[#B23A48] animate-pulse"
-                  }`}
-                />
-                <div className="flex-1 min-w-0">
-                  <div className="font-semibold text-sm text-stone-900">
-                    {ep.returned_at ? "Returned safely" : "OPEN — still missing"}
-                  </div>
-                  <div className="text-xs text-stone-500 mt-0.5">
-                    Reported {formatFullTimestamp(ep.reported_at)} by {ep.reported_by_name}
-                  </div>
-                  {ep.last_seen_location && (
-                    <div className="text-xs text-stone-700 mt-1">
-                      Last seen: {ep.last_seen_location}
-                    </div>
-                  )}
-                </div>
-              </li>
+                episode={ep}
+                resident={resident}
+              />
             ))}
           </ul>
         )}
       </div>
     </div>
+  );
+}
+
+function MissingEpisodeRow({ episode, resident }) {
+  const { isManagerOrAbove } = useAuth();
+  const [interview, setInterview] = useState(null);
+  const [loadedOnce, setLoadedOnce] = useState(false);
+  const [showRI, setShowRI] = useState(false);
+  const [signing, setSigning] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    if (!episode.return_interview && !loadedOnce) {
+      // No interview reference; still try once via resident-level list to be safe
+      api
+        .get(`/residents/${resident.id}/return-interviews`)
+        .then((r) => {
+          if (!alive) return;
+          const found = (r.data || []).find((x) => x.missing_episode_id === episode.id);
+          setInterview(found || null);
+          setLoadedOnce(true);
+        })
+        .catch(() => setLoadedOnce(true));
+    } else if (episode.return_interview) {
+      api
+        .get(`/return-interviews/${episode.return_interview}`)
+        .then((r) => {
+          if (alive) setInterview(r.data);
+        })
+        .catch(() => {});
+    }
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [episode.id]);
+
+  const downloadRI = () => {
+    if (!interview?.id) return;
+    const token = localStorage.getItem("cc_token") || "";
+    const url = `${api.defaults.baseURL}/return-interviews/${interview.id}/pdf?token=${encodeURIComponent(token)}`;
+    // PDF endpoint requires Bearer header — use api.get with blob to handle properly
+    api
+      .get(`/return-interviews/${interview.id}/pdf`, { responseType: "blob" })
+      .then((resp) => {
+        const blobUrl = URL.createObjectURL(resp.data);
+        const a = document.createElement("a");
+        a.href = blobUrl;
+        a.download = `Safelyn_Return_Interview_${(resident.name || "").replace(/\s+/g, "_")}.pdf`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(blobUrl);
+      })
+      .catch(() => toast.error("Could not download PDF"));
+  };
+
+  const signOff = async () => {
+    if (!interview?.id) return;
+    const note = window.prompt("Optional manager comments to record on sign-off:") || "";
+    setSigning(true);
+    try {
+      const r = await api.post(`/return-interviews/${interview.id}/sign-off`, {
+        manager_comments: note,
+      });
+      setInterview(r.data);
+      toast.success("Return interview signed off");
+    } catch (err) {
+      toast.error(formatApiError(err.response?.data?.detail) || "Sign-off failed");
+    } finally {
+      setSigning(false);
+    }
+  };
+
+  const isOpen = !episode.returned_at && episode.status === "open";
+  const tone = isOpen ? "#A8273A" : "#3A5A40";
+  return (
+    <li
+      className="border-l-4 border-y border-r divider-soft rounded-xl p-3.5"
+      style={{ borderLeftColor: tone }}
+      data-testid={`missing-episode-${episode.id}`}
+    >
+      <div className="flex items-start gap-3">
+        <span
+          className={`w-2.5 h-2.5 rounded-full shrink-0 mt-2 ${
+            episode.returned_at ? "bg-[#3A5A40]" : "bg-[#B23A48] animate-pulse"
+          }`}
+        />
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="font-semibold text-sm text-stone-900">
+              {episode.returned_at ? "Returned safely" : "OPEN — still missing"}
+            </span>
+            {interview && (
+              <span
+                className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded ${
+                  interview.status === "signed_off"
+                    ? "bg-[#3A5A40]/15 text-[#3A5A40]"
+                    : "bg-[#B8772F]/15 text-[#B8772F]"
+                }`}
+                data-testid={`ri-status-${episode.id}`}
+              >
+                {interview.status === "signed_off" ? "RI · Signed off" : "RI · Awaiting sign-off"}
+              </span>
+            )}
+            {!interview && episode.returned_at && (
+              <span className="text-[10px] font-bold uppercase tracking-wider text-[#A8273A] bg-[#A8273A]/10 px-2 py-0.5 rounded">
+                RI not yet captured
+              </span>
+            )}
+          </div>
+          <div className="text-xs text-stone-500 mt-0.5">
+            Reported {formatFullTimestamp(episode.reported_at)} by {episode.reported_by_name}
+          </div>
+          {episode.last_seen_location && (
+            <div className="text-xs text-stone-700 mt-1">
+              Last seen: {episode.last_seen_location}
+            </div>
+          )}
+          {interview && (
+            <div className="text-xs text-stone-600 mt-1">
+              Interview by <b>{interview.conducted_by_name}</b> ·{" "}
+              {formatFullTimestamp(interview.conducted_at)}
+              {interview.signed_off_at && (
+                <>
+                  {" "}· Signed off by <b>{interview.signed_off_by_name}</b> at{" "}
+                  {formatFullTimestamp(interview.signed_off_at)}
+                </>
+              )}
+            </div>
+          )}
+        </div>
+        <div className="flex items-center gap-1.5 flex-wrap shrink-0">
+          {!interview && (
+            <button
+              type="button"
+              onClick={() => setShowRI(true)}
+              data-testid={`ri-start-${episode.id}`}
+              className="inline-flex items-center gap-1 bg-[#0e3b4a] hover:bg-[#0a2c38] text-white text-xs font-semibold rounded-lg px-2.5 py-1.5"
+            >
+              <ShieldCheck size={11} /> Mark returned & start interview
+            </button>
+          )}
+          {interview && (
+            <button
+              type="button"
+              onClick={downloadRI}
+              data-testid={`ri-pdf-${episode.id}`}
+              className="inline-flex items-center gap-1 border divider-soft hover:bg-stone-50 text-xs font-semibold rounded-lg px-2.5 py-1.5"
+            >
+              <Download size={11} /> RI PDF
+            </button>
+          )}
+          {interview && interview.status !== "signed_off" && isManagerOrAbove && (
+            <button
+              type="button"
+              onClick={signOff}
+              disabled={signing}
+              data-testid={`ri-signoff-${episode.id}`}
+              className="inline-flex items-center gap-1 bg-[#3A5A40] hover:bg-[#2C4630] text-white text-xs font-semibold rounded-lg px-2.5 py-1.5 disabled:opacity-50"
+            >
+              {signing ? <Loader2 size={11} className="animate-spin" /> : <ShieldCheck size={11} />}
+              Sign off
+            </button>
+          )}
+        </div>
+      </div>
+      {showRI && (
+        <ReturnInterviewModal
+          episode={episode}
+          residentName={resident.name}
+          onClose={() => setShowRI(false)}
+          onSaved={(ri) => {
+            setInterview(ri);
+            // The episode is now closed server-side; trigger a parent refresh on next mount
+            window.dispatchEvent(new CustomEvent("safelyn:missing-refresh"));
+          }}
+        />
+      )}
+    </li>
   );
 }
 

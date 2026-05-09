@@ -55,8 +55,9 @@ export default function Login() {
             Empowering staff.
           </h1>
           <p className="text-white/70 max-w-md leading-relaxed">
-            A calmer way for children's home and supported-living teams to log daily
-            notes and incidents. Just speak — we'll handle the rest.
+            A calmer way for children's homes and adult-care teams to log daily
+            notes, manage safeguarding and stay inspection-ready. Just speak — we'll
+            handle the rest.
           </p>
 
           <div className="mt-12 grid grid-cols-3 gap-4 max-w-lg">

@@ -27,7 +27,10 @@ import {
   Zap,
   Lock,
   Sparkles,
+  FileCheck2,
+  Loader2,
 } from "lucide-react";
+import { toast } from "sonner";
 
 function greeting() {
   const h = new Date().getHours();
@@ -281,6 +284,8 @@ export default function Dashboard() {
           Here's your current risk and activity overview.
         </p>
       </header>
+
+      <InspectionSnapshotCard />
 
       {/* Live attention strip — pulled from Ofsted readiness */}
       <AttentionNow />
@@ -683,5 +688,105 @@ export default function Dashboard() {
       {/* Sticky FAB for mobile/tablet */}
       <LogIncidentFAB />
     </div>
+  );
+}
+
+
+function InspectionSnapshotCard() {
+  const { isManagerOrAbove } = useAuth();
+  const [busy, setBusy] = useState(false);
+  const [meta, setMeta] = useState(null);
+
+  useEffect(() => {
+    if (!isManagerOrAbove) return;
+    api
+      .get("/inspection/snapshot?scope=auto")
+      .then((r) => setMeta(r.data))
+      .catch(() => {});
+  }, [isManagerOrAbove]);
+
+  if (!isManagerOrAbove) return null;
+
+  const generate = async () => {
+    setBusy(true);
+    try {
+      const r = await api.get("/inspection/snapshot/pdf?scope=auto", {
+        responseType: "blob",
+      });
+      const blobUrl = URL.createObjectURL(r.data);
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      const stamp = new Date().toISOString().slice(0, 16).replace("T", "_");
+      a.download = `Safelyn_Inspection_Snapshot_${stamp}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(blobUrl);
+      toast.success("Inspection snapshot generated");
+    } catch (e) {
+      toast.error("Could not generate snapshot");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const counts = meta?.counts || {};
+  const scopeLabel = {
+    ofsted: "Ofsted scope",
+    cqc: "CQC scope",
+    both: "Ofsted + CQC scope",
+  }[meta?.scope] || "Auto-detected scope";
+
+  return (
+    <section
+      data-testid="inspection-snapshot-card"
+      className="rounded-2xl bg-gradient-to-br from-[#FAF7F2] via-[#F4EDE0] to-[#F8E4C7] border border-[#B8772F]/30 p-4 sm:p-5 flex items-start gap-4 flex-wrap"
+    >
+      <div className="w-12 h-12 rounded-xl bg-[#B8772F]/15 text-[#8C5A20] flex items-center justify-center shrink-0">
+        <FileCheck2 size={22} />
+      </div>
+      <div className="flex-1 min-w-[240px]">
+        <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#8C5A20]">
+          Inspection-Ready · Manager-only
+        </div>
+        <h3 className="font-display font-semibold text-lg text-[#0F1115] mt-0.5">
+          One-click regulatory snapshot
+        </h3>
+        <p className="text-xs text-[#5d6068] mt-1 max-w-2xl">
+          Generates a professional inspection PDF: open safeguarding, recent incidents,
+          missing records, MAR completeness, statutory visit status, 24-hour handovers,
+          and outstanding actions — auto-scoped to your service mix ({scopeLabel}).
+        </p>
+        {meta && (
+          <div className="text-[11px] text-[#5d6068] mt-1.5 flex flex-wrap gap-x-3 gap-y-1">
+            <span>
+              Open safeguarding: <b className="text-[#A8273A]">{counts.open_safeguarding ?? 0}</b>
+            </span>
+            <span>
+              Open missing: <b className="text-[#A8273A]">{counts.open_missing ?? 0}</b>
+            </span>
+            <span>
+              MAR: <b>{counts.mar_completeness_pct ?? 100}%</b>
+            </span>
+            <span>
+              Visits overdue: <b>{counts.statutory_visits_overdue ?? 0}</b>
+            </span>
+            <span>
+              Doc reviews due: <b>{counts.document_reviews_overdue ?? 0}</b>
+            </span>
+          </div>
+        )}
+      </div>
+      <button
+        type="button"
+        onClick={generate}
+        disabled={busy}
+        data-testid="inspection-snapshot-generate-btn"
+        className="bg-[#B8772F] hover:bg-[#9C611F] disabled:opacity-50 text-white font-semibold rounded-xl px-4 py-2.5 inline-flex items-center justify-center gap-2 self-center shrink-0"
+      >
+        {busy ? <Loader2 size={15} className="animate-spin" /> : <FileCheck2 size={15} />}
+        Generate snapshot
+      </button>
+    </section>
   );
 }
