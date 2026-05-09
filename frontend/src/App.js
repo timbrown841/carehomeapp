@@ -30,6 +30,7 @@ import KeyWorkSessionEditor from "@/pages/KeyWorkSessionEditor";
 import KeyWorkSessionDetail from "@/pages/KeyWorkSessionDetail";
 import { FrameworksList, FrameworkDetail } from "@/pages/Frameworks";
 import { ResourcesList, ResourcePackDetail } from "@/pages/Resources";
+import HomeOperations from "@/pages/HomeOperations";
 
 function Protected({ children }) {
   const { user, loading } = useAuth();
@@ -128,6 +129,7 @@ function App() {
               <Route path="/frameworks/:id" element={<FrameworkDetail />} />
               <Route path="/resources" element={<ResourcesList />} />
               <Route path="/resources/:id" element={<ResourcePackDetail />} />
+              <Route path="/operations" element={<HomeOperations />} />
               <Route
                 path="/reports"
                 element={

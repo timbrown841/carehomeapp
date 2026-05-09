@@ -20,6 +20,7 @@ import {
   ShieldCheck,
   HeartPulse,
   History,
+  Building2,
   LogOut,
   Menu,
   X,
@@ -48,6 +49,12 @@ const groups = [
     label: "Shift Handover",
     items: [
       { to: "/handover", label: "Shift Handover", icon: ClipboardList, testid: "nav-handover" },
+    ],
+  },
+  {
+    label: "Home Operations",
+    items: [
+      { to: "/operations", label: "Home Operations", icon: Building2, testid: "nav-operations" },
     ],
   },
   {

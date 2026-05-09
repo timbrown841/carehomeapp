@@ -40,6 +40,8 @@ from seed_therapeutic import (
     KEY_WORK_TOPICS,
     GUIDED_PROMPTS,
 )
+from home_operations_seed import CHECK_TYPES, evaluate_status
+from home_operations_pdf import build_compliance_snapshot_pdf
 import secrets as _secrets
 
 
@@ -97,6 +99,10 @@ async def lifespan(_app: FastAPI):
     await db.resource_packs.create_index("id", unique=True)
     await db.key_work_topics.create_index("id", unique=True)
     await db.guided_prompts.create_index("id", unique=True)
+    await db.compliance_check_types.create_index("id", unique=True)
+    await db.compliance_logs.create_index([("check_type_id", 1), ("performed_at", -1)])
+    await db.compliance_logs.create_index([("home_id", 1), ("performed_at", -1)])
+    await db.maintenance_issues.create_index([("home_id", 1), ("status", 1), ("reported_at", -1)])
 
     # Idempotent therapeutic content seed
     for fw in FRAMEWORKS:
@@ -107,6 +113,10 @@ async def lifespan(_app: FastAPI):
         await db.key_work_topics.replace_one({"id": tp["id"]}, tp, upsert=True)
     for pr in GUIDED_PROMPTS:
         await db.guided_prompts.replace_one({"id": pr["id"]}, pr, upsert=True)
+
+    # Idempotent compliance check-type seed (always replace — config, not user data)
+    for ct in CHECK_TYPES:
+        await db.compliance_check_types.replace_one({"id": ct["id"]}, ct, upsert=True)
 
     admin_email = os.environ.get("ADMIN_EMAIL", "admin@care.local").lower()
     admin_password = os.environ.get("ADMIN_PASSWORD", "Admin@123")
@@ -6251,6 +6261,371 @@ async def resident_audit(
         {"resident_id": rid}, {"_id": 0}
     ).sort("at", -1).to_list(limit)
     return items
+
+
+# ============================================================
+# Home Operations & Compliance (Iteration 26)
+# ============================================================
+
+DEFAULT_HOME_ID = "default"
+
+
+def _check_status_for_row(last_done_iso: Optional[str], frequency_days: int) -> tuple[str, Optional[str], Optional[int]]:
+    """Return (status, next_due_iso, days_until_due). status: never|overdue|due_soon|ok."""
+    if not last_done_iso:
+        return "never", None, None
+    try:
+        d = datetime.fromisoformat(last_done_iso.replace("Z", "+00:00"))
+    except Exception:
+        return "never", None, None
+    next_due = d + timedelta(days=int(frequency_days or 1))
+    now = datetime.now(timezone.utc)
+    days = (next_due - now).total_seconds() / 86400
+    next_due_iso = next_due.isoformat()
+    if days < 0:
+        return "overdue", next_due_iso, int(days)
+    if days <= 2:
+        return "due_soon", next_due_iso, int(days)
+    return "ok", next_due_iso, int(days)
+
+
+class ComplianceLogIn(BaseModel):
+    check_type_id: str
+    home_id: Optional[str] = DEFAULT_HOME_ID
+    values: Dict = Field(default_factory=dict)
+    notes: Optional[str] = None
+    photo_file_ids: List[str] = Field(default_factory=list)
+    performed_at: Optional[str] = None  # accepts override; defaults to now
+
+
+class ComplianceLog(ComplianceLogIn):
+    id: str
+    status: Literal["ok", "action_needed", "fail"]
+    performed_by_id: Optional[str] = None
+    performed_by_name: Optional[str] = None
+    manager_signed_off_by: Optional[str] = None
+    manager_signed_off_at: Optional[str] = None
+    created_at: str
+
+
+class MaintenanceIssueIn(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+    description: Optional[str] = Field(None, max_length=4000)
+    category: Literal["repair", "hazard", "cleaning", "vehicle", "room"] = "repair"
+    severity: Literal["low", "medium", "high", "urgent"] = "medium"
+    home_id: Optional[str] = DEFAULT_HOME_ID
+    photo_file_ids: List[str] = Field(default_factory=list)
+
+
+class MaintenanceIssuePatch(BaseModel):
+    title: Optional[str] = Field(None, min_length=1, max_length=200)
+    description: Optional[str] = Field(None, max_length=4000)
+    category: Optional[Literal["repair", "hazard", "cleaning", "vehicle", "room"]] = None
+    severity: Optional[Literal["low", "medium", "high", "urgent"]] = None
+    status: Optional[Literal["reported", "in_progress", "resolved"]] = None
+    resolution_notes: Optional[str] = Field(None, max_length=4000)
+    photo_file_ids: Optional[List[str]] = None
+
+
+@api_router.get("/compliance/check-types")
+async def list_check_types(_: dict = Depends(get_current_user)):
+    items = await db.compliance_check_types.find({}, {"_id": 0}).to_list(200)
+    # Stable order from seed file
+    order = {ct["id"]: i for i, ct in enumerate(CHECK_TYPES)}
+    items.sort(key=lambda c: order.get(c.get("id"), 999))
+    return items
+
+
+@api_router.get("/compliance/dashboard")
+async def compliance_dashboard(
+    home_id: str = DEFAULT_HOME_ID,
+    _: dict = Depends(get_current_user),
+):
+    """Per-check-type compliance status for the home + counts."""
+    types = await db.compliance_check_types.find({}, {"_id": 0}).to_list(200)
+    order = {ct["id"]: i for i, ct in enumerate(CHECK_TYPES)}
+    types.sort(key=lambda c: order.get(c.get("id"), 999))
+
+    rows: list = []
+    for ct in types:
+        last = await db.compliance_logs.find_one(
+            {"check_type_id": ct["id"], "home_id": home_id},
+            {"_id": 0},
+            sort=[("performed_at", -1)],
+        )
+        last_iso = (last or {}).get("performed_at")
+        status, next_due, days_until = _check_status_for_row(last_iso, ct.get("frequency_days") or 1)
+        rows.append({
+            "check_type_id": ct["id"],
+            "name": ct.get("name"),
+            "group": ct.get("group"),
+            "category": ct.get("category"),
+            "icon": ct.get("icon"),
+            "frequency_days": ct.get("frequency_days"),
+            "last_done": last_iso,
+            "last_status": (last or {}).get("status"),
+            "last_performed_by": (last or {}).get("performed_by_name"),
+            "next_due": next_due,
+            "days_until_due": days_until,
+            "status": status,
+        })
+
+    counts = {
+        "overdue": sum(1 for r in rows if r["status"] == "overdue"),
+        "due_soon": sum(1 for r in rows if r["status"] == "due_soon"),
+        "ok": sum(1 for r in rows if r["status"] == "ok"),
+        "never": sum(1 for r in rows if r["status"] == "never"),
+        "total": len(rows),
+    }
+
+    open_issues = await db.maintenance_issues.count_documents(
+        {"home_id": home_id, "status": {"$in": ["reported", "in_progress"]}}
+    )
+    urgent_issues = await db.maintenance_issues.count_documents(
+        {"home_id": home_id, "status": {"$in": ["reported", "in_progress"]}, "severity": "urgent"}
+    )
+
+    return {
+        "home_id": home_id,
+        "counts": counts,
+        "rows": rows,
+        "open_issues": open_issues,
+        "urgent_issues": urgent_issues,
+    }
+
+
+@api_router.get("/compliance/logs")
+async def list_compliance_logs(
+    check_type_id: Optional[str] = None,
+    home_id: str = DEFAULT_HOME_ID,
+    status: Optional[str] = None,
+    limit: int = 200,
+    _: dict = Depends(get_current_user),
+):
+    q: dict = {"home_id": home_id}
+    if check_type_id:
+        q["check_type_id"] = check_type_id
+    if status in ("ok", "action_needed", "fail"):
+        q["status"] = status
+    items = await db.compliance_logs.find(q, {"_id": 0}).sort("performed_at", -1).to_list(min(max(limit, 1), 1000))
+    return items
+
+
+@api_router.post("/compliance/logs")
+async def create_compliance_log(
+    payload: ComplianceLogIn,
+    user: dict = Depends(get_current_user),
+):
+    ct = await db.compliance_check_types.find_one({"id": payload.check_type_id}, {"_id": 0})
+    if not ct:
+        raise HTTPException(404, "Check type not found")
+
+    # Validate required fields
+    for f in ct.get("fields") or []:
+        if f.get("required") and (payload.values.get(f["key"]) in (None, "", [])):
+            raise HTTPException(400, f"Missing required field: {f.get('label') or f.get('key')}")
+
+    status = evaluate_status(ct, payload.values or {})
+    performed_at = payload.performed_at or now_iso()
+    doc = {
+        "id": str(uuid.uuid4()),
+        "check_type_id": payload.check_type_id,
+        "home_id": payload.home_id or DEFAULT_HOME_ID,
+        "values": payload.values or {},
+        "notes": payload.notes,
+        "photo_file_ids": payload.photo_file_ids or [],
+        "performed_at": performed_at,
+        "performed_by_id": user["id"],
+        "performed_by_name": user["name"],
+        "status": status,
+        "manager_signed_off_by": None,
+        "manager_signed_off_at": None,
+        "created_at": now_iso(),
+    }
+    await db.compliance_logs.insert_one(doc)
+    doc.pop("_id", None)
+
+    await record_audit(
+        db, actor=user, action="compliance_log_create",
+        object_type="compliance_log", object_id=doc["id"],
+        summary=f"{ct.get('name')} logged ({status})",
+        metadata={"check_type_id": ct["id"], "status": status, "home_id": doc["home_id"]},
+    )
+    return doc
+
+
+@api_router.post("/compliance/logs/{log_id}/sign-off")
+async def sign_off_compliance_log(
+    log_id: str,
+    user: dict = Depends(require_tier(3)),
+):
+    log = await db.compliance_logs.find_one({"id": log_id}, {"_id": 0})
+    if not log:
+        raise HTTPException(404, "Log not found")
+    when = now_iso()
+    await db.compliance_logs.update_one(
+        {"id": log_id},
+        {"$set": {"manager_signed_off_by": user["name"], "manager_signed_off_at": when}},
+    )
+    await record_audit(
+        db, actor=user, action="compliance_log_signoff",
+        object_type="compliance_log", object_id=log_id,
+        summary=f"Compliance log signed off by {user['name']}",
+    )
+    log["manager_signed_off_by"] = user["name"]
+    log["manager_signed_off_at"] = when
+    return log
+
+
+@api_router.delete("/compliance/logs/{log_id}")
+async def delete_compliance_log(
+    log_id: str,
+    user: dict = Depends(require_tier(3)),
+):
+    res = await db.compliance_logs.delete_one({"id": log_id})
+    if res.deleted_count:
+        await record_audit(
+            db, actor=user, action="compliance_log_delete",
+            object_type="compliance_log", object_id=log_id,
+            summary="Compliance log deleted",
+        )
+    return {"deleted": res.deleted_count}
+
+
+@api_router.get("/maintenance")
+async def list_maintenance(
+    home_id: str = DEFAULT_HOME_ID,
+    status: Optional[str] = None,
+    limit: int = 200,
+    _: dict = Depends(get_current_user),
+):
+    q: dict = {"home_id": home_id}
+    if status in ("reported", "in_progress", "resolved"):
+        q["status"] = status
+    items = await db.maintenance_issues.find(q, {"_id": 0}).sort("reported_at", -1).to_list(min(max(limit, 1), 1000))
+    return items
+
+
+@api_router.post("/maintenance")
+async def create_maintenance(
+    payload: MaintenanceIssueIn,
+    user: dict = Depends(get_current_user),
+):
+    doc = {
+        "id": str(uuid.uuid4()),
+        "title": payload.title,
+        "description": payload.description,
+        "category": payload.category,
+        "severity": payload.severity,
+        "home_id": payload.home_id or DEFAULT_HOME_ID,
+        "photo_file_ids": payload.photo_file_ids or [],
+        "status": "reported",
+        "reported_by_id": user["id"],
+        "reported_by_name": user["name"],
+        "reported_at": now_iso(),
+        "resolved_by_name": None,
+        "resolved_at": None,
+        "resolution_notes": None,
+    }
+    await db.maintenance_issues.insert_one(doc)
+    doc.pop("_id", None)
+    await record_audit(
+        db, actor=user, action="maintenance_create",
+        object_type="maintenance_issue", object_id=doc["id"],
+        summary=f"Maintenance issue reported: {payload.title}",
+        metadata={"severity": payload.severity, "category": payload.category},
+    )
+    return doc
+
+
+@api_router.patch("/maintenance/{iid}")
+async def update_maintenance(
+    iid: str,
+    payload: MaintenanceIssuePatch,
+    user: dict = Depends(get_current_user),
+):
+    existing = await db.maintenance_issues.find_one({"id": iid}, {"_id": 0})
+    if not existing:
+        raise HTTPException(404, "Issue not found")
+    update = payload.model_dump(exclude_unset=True)
+    if update.get("status") == "resolved" and not existing.get("resolved_at"):
+        update["resolved_at"] = now_iso()
+        update["resolved_by_name"] = user["name"]
+    await db.maintenance_issues.update_one({"id": iid}, {"$set": update})
+    doc = await db.maintenance_issues.find_one({"id": iid}, {"_id": 0})
+    await record_audit(
+        db, actor=user, action="maintenance_update",
+        object_type="maintenance_issue", object_id=iid,
+        summary=f"Maintenance issue updated: {doc.get('title')}",
+        before=existing, after=doc,
+    )
+    return doc
+
+
+@api_router.delete("/maintenance/{iid}")
+async def delete_maintenance(
+    iid: str,
+    user: dict = Depends(require_tier(3)),
+):
+    res = await db.maintenance_issues.delete_one({"id": iid})
+    if res.deleted_count:
+        await record_audit(
+            db, actor=user, action="maintenance_delete",
+            object_type="maintenance_issue", object_id=iid,
+            summary="Maintenance issue deleted",
+        )
+    return {"deleted": res.deleted_count}
+
+
+@api_router.get("/compliance/snapshot.pdf")
+async def compliance_snapshot_pdf(
+    home_id: str = DEFAULT_HOME_ID,
+    user: dict = Depends(require_tier(3)),
+):
+    dash = await compliance_dashboard(home_id=home_id, _=user)  # reuse logic
+
+    types_by_id = {ct["id"]: ct for ct in await db.compliance_check_types.find({}, {"_id": 0}).to_list(200)}
+    recent_logs_raw = await db.compliance_logs.find(
+        {"home_id": home_id}, {"_id": 0}
+    ).sort("performed_at", -1).to_list(40)
+    recent_logs = []
+    for lg in recent_logs_raw:
+        ct = types_by_id.get(lg.get("check_type_id"), {})
+        # Compose a brief value summary
+        vals = lg.get("values") or {}
+        bits = []
+        for k, v in list(vals.items())[:3]:
+            bits.append(f"{k}={v}")
+        summary = "; ".join(bits)
+        if lg.get("notes"):
+            summary = (summary + " · " + lg["notes"]).strip(" ·")
+        recent_logs.append({
+            "at": lg.get("performed_at"),
+            "type_name": ct.get("name") or lg.get("check_type_id"),
+            "performed_by": lg.get("performed_by_name"),
+            "status": lg.get("status"),
+            "summary": summary,
+        })
+
+    open_issues = await db.maintenance_issues.find(
+        {"home_id": home_id, "status": {"$in": ["reported", "in_progress"]}},
+        {"_id": 0},
+    ).sort("reported_at", -1).to_list(50)
+
+    payload = {
+        "generated_at": now_iso(),
+        "generated_by": user["name"],
+        "rows": dash["rows"],
+        "recent_logs": recent_logs,
+        "open_issues": open_issues,
+    }
+    pdf_bytes = build_compliance_snapshot_pdf(payload)
+    fname = f"compliance-snapshot-{datetime.now().strftime('%Y%m%d-%H%M')}.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
 
 
 app.include_router(api_router)

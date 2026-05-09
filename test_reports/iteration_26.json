@@ -1,0 +1,36 @@
+{
+  "summary": "Iteration 26 Home Operations & Compliance module — full backend + frontend testing complete. Backend pytest: 15/15 PASS for test_iteration26.py. Regression: 105/106 passed (1 unrelated network timeout in test_iteration23 file-delete test). Frontend Playwright: all critical flows confirmed across manager / senior / staff / mobile viewports. RBAC, modal flows, sign-off, delete, PDF gating and check-tile/maintenance grids all verified working end-to-end against the public preview URL.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration26.py",
+    "/app/test_reports/pytest/iteration26_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "HomeOperations.jsx is 1056 lines — getting close to the 700-line guideline threshold. Recommend splitting QuickLogModal, MaintenanceModal, MaintenanceView, HistoryView, ChecksView, DashboardView each into their own file under /pages/operations/ for maintainability.",
+    "server.py is 6639 lines — long-standing concern; iteration 26 added ~370 lines under '# Home Operations & Compliance'. Consider extracting compliance/maintenance routers into separate FastAPI routers.",
+    "Sign-off button in HistoryView re-uses confirm() via window.confirm for delete — UX-OK for now, but consider moving to a shared Dialog primitive for consistency with rest of app.",
+    "PDF download is initiated via direct fetch + blob link (not navigation), which is correct, but the playwright `expect_download` test could not detect it — main agent may want to add data-testid='pdf-download-anchor' on the temporary <a> for future automation."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (15/15 iter26, 105/106 regression)", "frontend": "100% on tested flows"},
+  "test_credentials": "manager@care.local / Manager@123, senior@care.local / Senior@123, staff@care.local / Staff@123, admin@care.local / Admin@123 — all confirmed working",
+  "seed_data_creation": "Created one TEST_Broken light maintenance entry as manager during testing (not cleaned up — auto-prefixed with TEST_ for easy future cleanup). 16 compliance log entries already seeded by previous runs were used for sign-off/delete verification.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iteration 26 (Home Operations) is fully working. Selectors confirmed: ops-tab-{dashboard|checks|maintenance|history}, stat-{overdue|due-soon|ok|never}, quick-log-modal, maintenance-modal, maint-add (NOT 'maintenance-report-issue'), history-signoff-{id}, history-delete-{id}, maint-delete-{id}, log-{check_type_id}, ops-snapshot-pdf, nav-operations. RBAC: PDF + history signoff/delete + maintenance delete only visible for tier>=3 (manager/admin). Senior CAN add/edit maintenance but cannot delete. Staff CAN add/edit maintenance but cannot delete. nav-operations is visible to all roles. The pytest file at /app/backend/tests/test_iteration26.py covers 15 backend tests and is the regression source-of-truth.",
+  "rca_of_the_issue": "N/A — no bugs found in iteration 26. The single regression failure in test_iteration23.py::test_delete_file_staff_forbidden was a network-level ConnectTimeoutError to the preview URL, unrelated to iter26 changes; running it in isolation typically passes.",
+  "verified_flows": {
+    "manager": ["nav-operations sidebar visible", "Home Operations heading", "all 4 stat tiles populated (Overdue 0 / Due soon 1 / Up to date 2 / Never logged 12)", "all 4 tabs", "ops-snapshot-pdf button visible", "Compliance tab shows Needs attention panel + 5 grouped sections (Temperature, Water, Fire, Health & safety, Audits)", "15 check tiles render", "Safety checks tab — 15 log buttons with data-testid log-{check_id}", "quick-log-modal opens and submits successfully", "Maintenance tab — maint-add opens maintenance-modal, save creates record (rows 1→2)", "Manager sees 2 maint-delete buttons", "History tab — 16 rows, 16 sign-off buttons, 16 delete buttons", "Sign off click succeeds — 'Signed off' toast + ✓ Sarah Manager next to row"],
+    "senior": ["nav-operations visible", "ops-snapshot-pdf HIDDEN (correct)", "history signoff/delete HIDDEN (0/0)", "maint-add visible, maint-delete HIDDEN (0)"],
+    "staff": ["nav-operations visible", "ops-snapshot-pdf HIDDEN", "maintenance Delete HIDDEN", "history signoff/delete HIDDEN"],
+    "mobile_390x844": ["quick-log-modal opens as bottom sheet on mobile viewport"],
+    "backend_curl_verified": ["GET /api/compliance/check-types returns 15", "GET /api/compliance/dashboard returns counts {overdue:0,due_soon:1,ok:2,never:12,total:15} + 15 rows", "GET /api/maintenance returns list", "GET /api/compliance/snapshot.pdf returns 200 application/pdf with %PDF- magic bytes for manager"]
+  },
+  "mocked_apis_observed": ["Email notifications (notifications_service.py)", "SMS notifications (notifications_service.py)"]
+}
