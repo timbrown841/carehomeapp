@@ -30,7 +30,10 @@ import {
   ListChecks,
   History as HistoryIcon,
   CalendarClock,
+  HandCoins,
 } from "lucide-react";
+
+import PettyCashPage from "@/pages/PettyCashPage";
 
 const ICON_MAP = {
   Thermometer, Snowflake, Droplets, BellRing, Flame, Lightbulb, Siren,
@@ -589,6 +592,7 @@ export default function HomeOperations() {
           { id: "checks", label: "Safety checks", icon: ShieldCheck },
           { id: "maintenance", label: `Maintenance${issues.length ? ` (${issues.filter(i=>i.status!=="resolved").length})` : ""}`, icon: Wrench },
           { id: "history", label: "History", icon: HistoryIcon },
+          { id: "petty-cash", label: "Petty Cash", icon: HandCoins },
         ].map((t) => {
           const Icon = t.icon;
           const active = tab === t.id;
@@ -661,6 +665,12 @@ export default function HomeOperations() {
             } catch (e) { toast.error("Could not delete"); }
           }}
         />
+      )}
+
+      {!loading && tab === "petty-cash" && (
+        <div data-testid="petty-cash-view">
+          <PettyCashPage />
+        </div>
       )}
 
       {openCheck && (

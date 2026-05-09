@@ -1,0 +1,33 @@
+{
+  "summary": "Iteration 27 (Sidebar lockdown + Admin endpoints + Hub tabs) fully verified. Backend pytest (iter19-iter27 regression) 228 passed / 1 skipped, including all 8 iteration_27 tests. Frontend role-gating, hub tabs, deep-links, legacy routes, and admin CRUD UI all work as specified.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration27.py",
+    "/app/test_reports/pytest/iter27_results.xml",
+    "/app/test_reports/pytest/iter19_27_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "All requirements from review request met. Sidebar correctly locked at 6 items with proper role gating via minTier on nav-admin.",
+    "HubTabs deep-link via ?tab=<id> works correctly across ResidentsHub, StaffOperationsHub, ComplianceHub, HomeOperations - URL updates on click and reload preserves tab.",
+    "Role gating verified: staff hidden from nav-admin; staff redirected from /admin and /compliance; senior redirected from /admin; manager has nav-admin but no delete buttons; admin has delete buttons.",
+    "Admin endpoints: system-info correctly 403 for staff/senior, 200 for manager/admin; user create/delete RBAC correctly enforced; admin self-delete blocked; audit events recorded.",
+    "No mongodb _id leakage detected in Admin user list. Pydantic validation returns 422 for invalid email/short password. Duplicate email returns 400 as specified."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "admin@care.local/Admin@123, manager@care.local/Manager@123, senior@care.local/Senior@123, staff@care.local/Staff@123",
+  "seed_data_creation": "None - used existing seeded users and demo residents (Tom Whitfield adult_supported_living + Margaret Lewis elderly_residential keep CQC tab visible).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iteration 27 is GREEN end-to-end. Pytest suite for iter19-iter27 = 228 passed, 1 skipped (iter22 skip is intentional). Frontend confirmed: 6-item sidebar (nav-dashboard, nav-residents, nav-operations, nav-staff-operations, nav-compliance, nav-admin); admin minTier=3 via Layout.jsx NAV array. StaffOperationsHub uses testid prefix 'staffops-tab-' (NOT 'staff-ops-tab-'). ComplianceHub uses 'compliance-tab-'. ResidentsHub uses 'residents-tab-'. HomeOperations uses 'ops-tab-'. Pre-existing iter15+iter17 stale-date fixture failures remain but are out-of-scope per user note.",
+  "rca of the issue": "N/A - no failures."
+}

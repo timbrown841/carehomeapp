@@ -1,26 +1,13 @@
 import { Outlet, NavLink, useLocation } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
-import { useEffect, useState } from "react";
-import api from "@/lib/api";
+import { useState } from "react";
 import {
   LayoutDashboard,
   Users,
-  NotebookPen,
-  ShieldAlert,
-  FileText,
-  UserCog,
-  ClipboardCheck,
-  BadgeCheck,
-  Pill,
-  CalendarCheck,
-  Wallet,
-  HandCoins,
-  ClipboardList,
-  GraduationCap,
-  ShieldCheck,
-  HeartPulse,
-  History,
   Building2,
+  UserCog,
+  ShieldCheck,
+  Settings,
   LogOut,
   Menu,
   X,
@@ -28,78 +15,15 @@ import {
 import Logo from "@/components/Logo";
 import NotificationBell from "@/components/NotificationBell";
 
-const groups = [
-  {
-    label: "Overview",
-    items: [
-      { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true, testid: "nav-dashboard" },
-    ],
-  },
-  {
-    label: "Care",
-    items: [
-      { to: "/residents", label: "Residents", icon: Users, testid: "nav-residents" },
-      { to: "/notes", label: "Daily Notes", icon: NotebookPen, testid: "nav-notes" },
-      { to: "/incidents", label: "Incidents", icon: ShieldAlert, testid: "nav-incidents" },
-      { to: "/medications", label: "Medications", icon: Pill, testid: "nav-medications" },
-      { to: "/visits", label: "Statutory Visits", icon: CalendarCheck, testid: "nav-visits" },
-    ],
-  },
-  {
-    label: "Shift Handover",
-    items: [
-      { to: "/handover", label: "Shift Handover", icon: ClipboardList, testid: "nav-handover" },
-    ],
-  },
-  {
-    label: "Home Operations",
-    items: [
-      { to: "/operations", label: "Home Operations", icon: Building2, testid: "nav-operations" },
-    ],
-  },
-  {
-    label: "Staff Operations",
-    items: [
-      { to: "/staff", label: "Rota & Shifts", icon: UserCog, testid: "nav-staff" },
-    ],
-  },
-  {
-    label: "Training & Development",
-    items: [
-      { to: "/training", label: "Training Matrix", labelByTier: { 1: "My Training" }, icon: GraduationCap, testid: "nav-training" },
-      { to: "/supervisions", label: "Supervisions", icon: ClipboardCheck, testid: "nav-supervisions" },
-    ],
-  },
-  {
-    label: "Safer Recruitment & HR",
-    minTier: 3,
-    items: [
-      { to: "/hr", label: "Safer Recruitment", icon: ShieldCheck, testid: "nav-hr", minTier: 3 },
-    ],
-  },
-  {
-    label: "Finance",
-    items: [
-      { to: "/pocket-money", label: "Pocket Money", icon: Wallet, testid: "nav-pocket-money" },
-      { to: "/petty-cash", label: "Petty Cash", icon: HandCoins, testid: "nav-petty-cash" },
-    ],
-  },
-  {
-    label: "Compliance",
-    items: [
-      { to: "/ofsted", label: "Ofsted Readiness", icon: BadgeCheck, testid: "nav-ofsted" },
-      { to: "/audit", label: "Audit Log", icon: History, testid: "nav-audit", minTier: 2 },
-      { to: "/reports", label: "Reports", icon: FileText, testid: "nav-reports", minTier: 3 },
-    ],
-  },
-  {
-    label: "Adult Services",
-    minTier: 2,
-    requiresAdultSector: true,
-    items: [
-      { to: "/cqc-readiness", label: "CQC Readiness", icon: HeartPulse, testid: "nav-cqc-readiness" },
-    ],
-  },
+// Six locked operational areas. Sidebar must NEVER grow beyond these without
+// explicit product approval. Sub-workflows live inside their hub page.
+const NAV = [
+  { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true, testid: "nav-dashboard" },
+  { to: "/residents", label: "Residents", icon: Users, testid: "nav-residents" },
+  { to: "/operations", label: "Home Operations", icon: Building2, testid: "nav-operations" },
+  { to: "/staff-operations", label: "Staff Operations", icon: UserCog, testid: "nav-staff-operations" },
+  { to: "/compliance", label: "Compliance & Oversight", icon: ShieldCheck, testid: "nav-compliance" },
+  { to: "/admin", label: "Admin", icon: Settings, testid: "nav-admin", minTier: 3 },
 ];
 
 function NavItem({ link, onClick }) {
@@ -111,14 +35,14 @@ function NavItem({ link, onClick }) {
       data-testid={link.testid}
       onClick={onClick}
       className={({ isActive }) =>
-        `group flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13px] font-medium transition-all duration-150 ${
+        `group flex items-center gap-3 px-3 py-2.5 rounded-lg text-[14px] font-medium transition-all duration-150 ${
           isActive
             ? "bg-[#0e3b4a] text-white shadow-sm"
             : "text-[#2f3038] hover:bg-[#0e3b4a]/8 hover:text-[#0e3b4a]"
         }`
       }
     >
-      <Icon size={16} className="shrink-0" />
+      <Icon size={17} className="shrink-0" />
       <span className="truncate">{link.label}</span>
     </NavLink>
   );
@@ -128,22 +52,6 @@ export default function Layout() {
   const { user, logout, tier } = useAuth();
   const location = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [hasAdultSector, setHasAdultSector] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-    api
-      .get("/service-types/active")
-      .then((r) => {
-        if (cancelled) return;
-        const sectors = r.data?.all_active_sectors || [];
-        setHasAdultSector(sectors.includes("adult"));
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   const close = () => setMobileOpen(false);
 
@@ -154,6 +62,8 @@ export default function Layout() {
     admin: { label: "Admin", tone: "#A8273A" },
   };
   const badge = ROLE_BADGE[user?.role] || { label: user?.role || "—", tone: "#5d6068" };
+
+  const visibleNav = NAV.filter((l) => !l.minTier || tier >= l.minTier);
 
   return (
     <div className="min-h-screen bg-canvas">
@@ -185,34 +95,10 @@ export default function Layout() {
             <Logo />
             <NotificationBell />
           </div>
-          <nav className="p-3 space-y-4">
-            {groups.map((g) => {
-              if (g.minTier && tier < g.minTier) return null;
-              if (g.requiresAdultSector && !hasAdultSector) return null;
-              const items = g.items.filter(
-                (l) => (!l.roles || l.roles.includes(user?.role)) && (!l.minTier || tier >= l.minTier)
-              );
-              if (items.length === 0) return null;
-              return (
-                <div key={g.label}>
-                  <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#8a8d95] px-3 mb-1.5">
-                    {g.label}
-                  </div>
-                  <div className="space-y-0.5">
-                    {items.map((l) => (
-                      <NavItem
-                        key={l.to}
-                        link={{
-                          ...l,
-                          label: (l.labelByTier && l.labelByTier[tier]) || l.label,
-                        }}
-                        onClick={close}
-                      />
-                    ))}
-                  </div>
-                </div>
-              );
-            })}
+          <nav className="p-3 space-y-1">
+            {visibleNav.map((l) => (
+              <NavItem key={l.to} link={l} onClick={close} />
+            ))}
           </nav>
           <div className="p-3 mt-auto border-t divider-soft sticky bottom-0 bg-white">
             <div

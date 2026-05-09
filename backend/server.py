@@ -1923,6 +1923,78 @@ async def user_picker(_: dict = Depends(get_current_user)):
     return users
 
 
+# ---------- Admin (manager+admin) ----------
+@api_router.post("/admin/users", response_model=UserOut)
+async def admin_create_user(
+    payload: RegisterIn,
+    actor: dict = Depends(require_role("admin", "manager")),
+):
+    email = payload.email.lower()
+    if await db.users.find_one({"email": email}):
+        raise HTTPException(status_code=400, detail="Email already registered")
+    # Managers cannot create admins
+    if actor["role"] == "manager" and payload.role == "admin":
+        raise HTTPException(status_code=403, detail="Only admins can create admin users")
+    user_doc = {
+        "id": str(uuid.uuid4()),
+        "email": email,
+        "password_hash": hash_password(payload.password),
+        "name": payload.name,
+        "role": payload.role,
+        "created_at": now_iso(),
+    }
+    await db.users.insert_one(user_doc)
+    user_doc.pop("password_hash", None)
+    user_doc.pop("_id", None)
+    await record_audit(
+        db, actor=actor, action="admin_user_create",
+        object_type="user", object_id=user_doc["id"],
+        summary=f"User created: {email} ({payload.role})",
+    )
+    return user_doc
+
+
+@api_router.delete("/admin/users/{uid}")
+async def admin_delete_user(uid: str, actor: dict = Depends(require_role("admin"))):
+    if uid == actor["id"]:
+        raise HTTPException(400, "Cannot delete yourself")
+    target = await db.users.find_one({"id": uid}, {"_id": 0, "email": 1, "role": 1})
+    if not target:
+        return {"deleted": 0}
+    res = await db.users.delete_one({"id": uid})
+    if res.deleted_count:
+        await record_audit(
+            db, actor=actor, action="admin_user_delete",
+            object_type="user", object_id=uid,
+            summary=f"User deleted: {target.get('email')} ({target.get('role')})",
+        )
+    return {"deleted": res.deleted_count}
+
+
+@api_router.get("/admin/system-info")
+async def admin_system_info(_: dict = Depends(require_role("admin", "manager"))):
+    """Aggregate platform stats for the Admin landing page."""
+    users = await db.users.count_documents({})
+    by_role = {}
+    async for r in db.users.aggregate([{"$group": {"_id": "$role", "n": {"$sum": 1}}}]):
+        by_role[r["_id"]] = r["n"]
+    residents = await db.residents.count_documents({})
+    incidents = await db.incidents.count_documents({})
+    notes = await db.notes.count_documents({})
+    audit_events = await db.audit_events.count_documents({})
+    compliance_logs = await db.compliance_logs.count_documents({})
+    return {
+        "users_total": users,
+        "users_by_role": by_role,
+        "residents_total": residents,
+        "incidents_total": incidents,
+        "notes_total": notes,
+        "audit_events_total": audit_events,
+        "compliance_logs_total": compliance_logs,
+        "now": now_iso(),
+    }
+
+
 # ---------- Residents ----------
 @api_router.get("/residents", response_model=List[Resident])
 async def list_residents(
