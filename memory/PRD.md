@@ -179,6 +179,24 @@ A simple and fast care management app for children's homes and supported living.
 - Incident trend charts per resident
 - Witness picker — replace free-text witness with real staff selection (uses /auth/users; staff-role read access required)
 
+## Implemented (2026-02-09 — Iteration 27 — Sidebar Lockdown + Hub Architecture + Admin)
+- **Sidebar locked to 6 operational areas** (architectural commit — must NOT grow without explicit product approval): Dashboard · Residents · Home Operations · Staff Operations · Compliance & Oversight · Admin. Group headers removed (each area is a single nav item). Admin gated `minTier: 3`.
+- **Resident-as-HUB philosophy**: every resident-specific workflow (Daily Notes / Incidents / Medication / Statutory Visits / Risk / Missing-from-care / Return Interviews / Body Maps / Key Work / Health / Education / Finance / Documents / Timeline / Therapeutic Practice / Support Plans / Care Plans) lives inside the 8-tab Resident Profile. Staff feel "I'm supporting THIS young person" instead of "I'm jumping between disconnected modules."
+- **`HubTabs` primitive** (`/components/HubTabs.jsx`): reusable tab strip with `?tab=<id>` deep-linkable URL, role-aware `hidden` flag per tab.
+- **`/residents` Residents Hub** (5 tabs, `?tab=` deep-link): All Residents (default) · Medication Round · Incidents · Statutory Visits · Cross-home Finance. Existing cross-home pages embedded directly — no rewriting required. Operational hub for the home; opening a young person navigates to the full 8-tab profile.
+- **`/staff-operations` Staff Ops Hub** (5 tabs): Rota & Shifts · Shift Handover · Supervisions · Training · Safer Recruitment (manager+ only). Handover ALSO remains a Dashboard quick-action tile (used every shift).
+- **`/compliance` Compliance & Oversight Hub** (senior+ only, 4 tabs role-aware): Ofsted Readiness · CQC Readiness (auto-shown when adult sector active) · Audit Log (senior+) · AI Reports (manager+).
+- **`/operations` Home Operations** gained a 5th tab: **Petty Cash** — moved out of the sidebar/Finance group (it's a home-wide cash-float workflow, not resident-specific).
+- **`/admin` Admin landing page** (manager+admin):
+  - System overview stat tiles: Users · Residents · Incidents · Daily Notes · Compliance Logs · Audit Events + Users-by-role pills.
+  - User CRUD: Create user (managers cannot create admins; admins can create any role); Delete user (admin only, cannot self-delete).
+  - Roles & Permissions reference matrix (4 tier cards explaining what each tier can do).
+- **Backend additions**:
+  - `POST /api/admin/users` (manager+, blocks manager-creating-admin), `DELETE /api/admin/users/{uid}` (admin-only, blocks self-delete), `GET /api/admin/system-info` (manager+ counts aggregator).
+  - All admin actions audit-logged (`admin_user_create`, `admin_user_delete`).
+- **Legacy routes preserved** (`/medications`, `/incidents`, `/visits`, `/pocket-money`, `/petty-cash`, `/staff`, `/handover`, `/training`, `/supervisions`, `/hr`, `/ofsted`, `/cqc-readiness`, `/audit`, `/reports`, `/key-work`) — kept alive in `App.js` so all pre-existing `<Link>`s and bookmarks still work, but removed from the sidebar.
+- **Tested**: testing_agent_v3_fork iteration 27 — backend 228 passed / 1 skipped (iter19→iter27), frontend 100% across all hubs, role gating, deep-links, tabs, admin CRUD. See `/app/test_reports/iteration_27.json`.
+
 ## Implemented (2026-02-09 — Iteration 26 — Home Operations & Compliance)
 - **Dedicated Home Operations sidebar area** (`/operations`) — strictly home-wide, never pollutes Resident Profile or sidebar with resident-level workflows. Resident-specific workflows continue to live inside the 8-tab Resident Profile.
 - **Unified compliance schema** (one config-driven backend, NOT 14 separate CRUDs):
@@ -258,21 +276,26 @@ A simple and fast care management app for children's homes and supported living.
 
 ## Roadmap
 
-### P0 — Polish & integration (next focus)
-- ✅ ~~Iteration 26: Home Operations & Compliance module~~ (2026-02-09)
-- TBD with user — could be: photo-attach on compliance logs · operations widgets on Dashboard · per-home/multi-home support (currently single `default` home).
+### P0 — User-locked architecture (DO NOT REGRESS)
+- Sidebar MUST stay at 6 hubs: Dashboard · Residents · Home Operations · Staff Operations · Compliance & Oversight · Admin.
+- Resident-specific workflows live INSIDE the 8-tab Resident Profile (never in the sidebar).
+- Home-wide workflows live ONLY in Home Operations.
+
+### P0 — Next focus (TBD with user)
+- ✅ ~~Iteration 27: Sidebar lockdown + hub architecture~~ (2026-02-09)
+- Likely candidates: Resident Profile UI polish (improve the 8-tab Overview alerts panel, mobile-first quick actions, faster note entry) · Dashboard "what needs attention right now" rebuild · Native deployment readiness pass.
 
 ### P1
-- Phase D — Staff Operations expansion (sleep-in tracking, shift swaps, leave, clock in/out, daily staffing overview).
-- Phase F — Safer Recruitment & HR build-out (DBS, right-to-work, interviews, SCR).
+- Phase D — Staff Operations expansion inside the hub (sleep-in tracking, shift swaps, leave, clock in/out, daily staffing overview) — adds tabs to `/staff-operations`.
+- Phase F — Safer Recruitment & HR build-out inside the existing Recruitment tab (DBS, right-to-work, interviews, SCR).
 - Adult Services deepening (support plans, welfare/wellbeing, mood logs, hospital admissions, deeper CQC analytics).
 - Phase B — full multi-tenant 9-role RBAC + organisation table (deferred).
 
 ### P2
 - Phase E — Training/CPD certificate uploads.
 - Real Email/SMS notifications (currently mocked).
-- Refactor `server.py` (~6,640 lines) into `/app/backend/routes/` modules — compliance + maintenance routers would be the natural first slice.
-- Refactor `HomeOperations.jsx` (~1,056 lines) into `/pages/operations/*` (DashboardView / ChecksView / MaintenanceView / HistoryView / QuickLogModal / MaintenanceModal).
+- Refactor `server.py` (~6,700 lines) into `/app/backend/routes/` modules — admin + compliance + maintenance routers natural first slice.
+- Refactor `HomeOperations.jsx` (~1,070 lines) into `/pages/operations/*`.
 - Refactor `ResidentDetail.jsx` (~1,800 lines) into per-tab files.
 
 ## Test Credentials
