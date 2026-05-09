@@ -179,6 +179,30 @@ A simple and fast care management app for children's homes and supported living.
 - Incident trend charts per resident
 - Witness picker — replace free-text witness with real staff selection (uses /auth/users; staff-role read access required)
 
+## Implemented (2026-02-09 — Iteration 26 — Home Operations & Compliance)
+- **Dedicated Home Operations sidebar area** (`/operations`) — strictly home-wide, never pollutes Resident Profile or sidebar with resident-level workflows. Resident-specific workflows continue to live inside the 8-tab Resident Profile.
+- **Unified compliance schema** (one config-driven backend, NOT 14 separate CRUDs):
+  - `compliance_check_types` (15 seeded, idempotent on startup): each defines fields (number/text/checkbox), `frequency_days`, `status_rules` (ok/warn bounds + `all_required_true` mode), `requires_manager_review`, group + icon. Adding new check types is config-only.
+  - `compliance_logs` (entries) with auto-evaluated status (`ok` / `action_needed` / `fail`), values dict, performed_by, manager sign-off fields, audit trail.
+  - `maintenance_issues` with severity (low→urgent), status (reported→in_progress→resolved), category (repair/hazard/cleaning/vehicle/room).
+- **Seeded check types** (15): fridge_temperature · freezer_temperature · water_temp_hot · water_temp_cold · legionella_flush · fire_alarm_test · smoke_alarm_check · emergency_lighting · fire_drill · sharps_check · window_restrictor_check · vehicle_check · cleaning_audit · hs_audit · room_inspection.
+- **Endpoints**:
+  - `GET /api/compliance/check-types` (any auth) · `GET /api/compliance/dashboard` (rows + counts) · `GET /api/compliance/logs` (filter check_type_id, status) · `POST /api/compliance/logs` (any auth — staff record during shifts) · `POST /api/compliance/logs/{id}/sign-off` (manager+) · `DELETE /api/compliance/logs/{id}` (manager+)
+  - `GET/POST /api/maintenance` (any auth create) · `PATCH /api/maintenance/{id}` (auto-stamps resolved_at + resolved_by_name when status=resolved) · `DELETE /api/maintenance/{id}` (manager+)
+  - `GET /api/compliance/snapshot.pdf` (manager+ only) — inspection-ready compliance snapshot PDF with status strip, per-check-type table, recent activity, open maintenance issues, audit hash.
+- **Audit integration**: every compliance_log_create/sign-off/delete + maintenance_create/update/delete writes an `audit_events` row.
+- **Frontend `/operations` hub** (single sidebar entry, 4 tabs):
+  1. **Compliance** — "Needs attention" panel (overdue + due-soon, sorted by urgency) + grouped check tiles by category (Temperature & food safety, Water hygiene, Fire safety, Health & safety, Audits). Each tile shows last-done relative time + RAG status pill; click to open Quick-Log modal.
+  2. **Safety checks** — full grid of all 15 checks with description + "Log check" button.
+  3. **Maintenance** — Open/Resolved/All filter pills, urgent-issues banner, mobile-first issue rows, manager-only Delete; create/edit modal with severity + category + status + resolution notes.
+  4. **History** — table of all logs with manager-only sign-off / delete actions.
+- **Mobile-first quick-entry modal**: bottom-sheet on mobile, dialog on desktop. Per-check-type field schema drives the form. Sticky save/cancel footer.
+- **RBAC**:
+  - All staff (tier 1+): record checks, create + edit maintenance issues (operational reality during shifts).
+  - Senior (tier 2+): same.
+  - Manager+ (tier 3+): sign-off compliance logs, delete logs, delete maintenance, download Compliance Snapshot PDF.
+- **Tested**: testing_agent_v3_fork iteration 26 — backend 15/15 PASS in `test_iteration26.py`, regression 105/106 (1 unrelated network timeout). Frontend Playwright GREEN across manager / senior / staff / mobile (390×844). RBAC verified: ops-snapshot-pdf, history signoff/delete, maint-delete all correctly hidden for staff & senior; nav-operations visible to all roles. See `/app/test_reports/iteration_26.json`.
+
 ## Implemented (2026-02-09 — Iteration 25 — Therapeutic Practice & Key Work)
 - **Therapeutic content seed** (`seed_therapeutic.py`, idempotent on startup): 9 frameworks (Bronfenbrenner, Attachment, Trauma-Informed, Contextual Safeguarding, PACE, Restorative, Maslow, Social Learning, Child Development), 9 themed resource packs (EBD / Trauma / Emotional regulation / CSE awareness / Missing-from-care prevention / Identity / Healthy relationships / Independence / Education engagement) each with `session_idea`/`worksheet`/`activity`/`reflection_prompt`/`discussion_prompt` sections, 9 key-work topics with framework+resource+prompt defaults, 12 guided prompts indexed by `context` (key_work_planning|recording|risk_assessment|support_plan) and theme tags.
 - **Key Work Sessions** (`/api/key-work/sessions`): Senior+ create/edit; combined plan→run→review document with goals, follow-up actions, frameworks_applied[], resource_pack_ids[], prompt_responses{}, mood_before/after (1-5), young_person_voice, staff_reflection, outcomes, review_date, safeguarding_flag. Manager+ sign-off required for safeguarding-flagged or high-risk topics. Once `signed_off_at` is set, Senior cannot PATCH (Manager+ only). PDF export with frameworks/resources/prompts inline. Audit-recorded.
@@ -234,8 +258,9 @@ A simple and fast care management app for children's homes and supported living.
 
 ## Roadmap
 
-### P0 — Children's-side polish (next focus)
-- User-confirmed: return to perfecting the children's side before Phase D. Specifics TBD with user.
+### P0 — Polish & integration (next focus)
+- ✅ ~~Iteration 26: Home Operations & Compliance module~~ (2026-02-09)
+- TBD with user — could be: photo-attach on compliance logs · operations widgets on Dashboard · per-home/multi-home support (currently single `default` home).
 
 ### P1
 - Phase D — Staff Operations expansion (sleep-in tracking, shift swaps, leave, clock in/out, daily staffing overview).
@@ -246,8 +271,9 @@ A simple and fast care management app for children's homes and supported living.
 ### P2
 - Phase E — Training/CPD certificate uploads.
 - Real Email/SMS notifications (currently mocked).
-- Refactor `server.py` (~5,000 lines) into `/app/backend/routes/` modules.
-- Refactor `ResidentDetail.jsx` (~1,360 lines) into per-tab files.
+- Refactor `server.py` (~6,640 lines) into `/app/backend/routes/` modules — compliance + maintenance routers would be the natural first slice.
+- Refactor `HomeOperations.jsx` (~1,056 lines) into `/pages/operations/*` (DashboardView / ChecksView / MaintenanceView / HistoryView / QuickLogModal / MaintenanceModal).
+- Refactor `ResidentDetail.jsx` (~1,800 lines) into per-tab files.
 
 ## Test Credentials
 See `/app/memory/test_credentials.md`.
