@@ -42,6 +42,8 @@ from seed_therapeutic import (
 )
 from home_operations_seed import CHECK_TYPES, evaluate_status
 from home_operations_pdf import build_compliance_snapshot_pdf
+from timeline_service import build_chronology, detect_patterns, CATEGORY_META
+from chronology_pdf import build_chronology_pdf
 import secrets as _secrets
 
 
@@ -2139,43 +2141,151 @@ async def update_resident(
 
 
 @api_router.get("/residents/{rid}/timeline")
-async def resident_timeline(rid: str, _: dict = Depends(get_current_user)):
-    incidents = await db.incidents.find({"resident_id": rid}, {"_id": 0}).sort("created_at", -1).to_list(100)
-    notes = await db.notes.find({"resident_id": rid}, {"_id": 0}).sort("created_at", -1).to_list(100)
-    episodes = await db.missing_episodes.find({"resident_id": rid}, {"_id": 0}).sort("reported_at", -1).to_list(50)
-    items = []
-    for inc in incidents:
-        items.append({
-            "kind": "incident",
-            "id": inc["id"],
-            "at": inc.get("created_at"),
-            "title": (inc.get("incident_type") or inc.get("category") or "incident").title(),
-            "severity": inc.get("severity"),
-            "safeguarding": bool(inc.get("safeguarding")),
-            "body": (inc.get("structured_report") or inc.get("body") or "")[:240],
-            "author": inc.get("author_name"),
-        })
-    for n in notes:
-        items.append({
-            "kind": "note",
-            "id": n["id"],
-            "at": n.get("created_at"),
-            "title": (n.get("category") or "note").title(),
-            "body": (n.get("body") or "")[:240],
-            "author": n.get("author_name"),
-        })
-    for ep in episodes:
-        items.append({
-            "kind": "missing",
-            "id": ep["id"],
-            "at": ep.get("reported_at"),
-            "title": "Missing episode" + (" · returned" if ep.get("returned_at") else " · open"),
-            "body": ep.get("last_seen_location") or "",
-            "author": ep.get("reported_by_name"),
-            "share_token": ep.get("share_token"),
-        })
-    items.sort(key=lambda x: x.get("at") or "", reverse=True)
-    return {"items": items[:120]}
+async def resident_timeline(
+    rid: str,
+    categories: Optional[str] = None,
+    from_at: Optional[str] = None,
+    to_at: Optional[str] = None,
+    q: Optional[str] = None,
+    safeguarding_only: bool = False,
+    limit: int = 500,
+    _: dict = Depends(get_current_user),
+):
+    """Aggregated chronology — flagship safeguarding chronology view.
+
+    Filters:
+      - categories: comma-separated list (incident, missing, safeguarding, …)
+      - from_at / to_at: ISO datetimes
+      - q: free-text search over title/summary/actor/tags/location/police_ref/associates
+      - safeguarding_only: limits to safeguarding-flagged events
+    """
+    cats = None
+    if categories:
+        cats = [c.strip() for c in categories.split(",") if c.strip()]
+    events = await build_chronology(
+        db, rid,
+        categories=cats,
+        from_at=from_at,
+        to_at=to_at,
+        q=q,
+        safeguarding_only=safeguarding_only,
+        limit=max(1, min(int(limit or 500), 1000)),
+    )
+    counts: dict = {}
+    for e in events:
+        c = e["category"]
+        counts[c] = counts.get(c, 0) + 1
+    return {
+        "items": events,
+        "counts_by_category": counts,
+        "total": len(events),
+        "category_meta": CATEGORY_META,
+    }
+
+
+@api_router.get("/residents/{rid}/timeline/patterns")
+async def resident_timeline_patterns(
+    rid: str,
+    _: dict = Depends(get_current_user),
+):
+    """Rules-based pattern detection (no AI)."""
+    events = await build_chronology(db, rid, limit=1000)
+    return {"patterns": detect_patterns(events)}
+
+
+@api_router.get("/residents/{rid}/timeline.pdf")
+async def resident_timeline_pdf(
+    rid: str,
+    categories: Optional[str] = None,
+    from_at: Optional[str] = None,
+    to_at: Optional[str] = None,
+    q: Optional[str] = None,
+    safeguarding_only: bool = False,
+    scope: Optional[str] = None,  # "full" | "safeguarding" | "missing" | "incidents" | "police" | "custom"
+    user: dict = Depends(require_tier(2)),
+):
+    """Inspection-ready chronology PDF."""
+    resident = await db.residents.find_one({"id": rid}, {"_id": 0})
+    if not resident:
+        raise HTTPException(404, "Resident not found")
+
+    cats = None
+    sg_only = bool(safeguarding_only)
+    label_map = {
+        "full": "Full chronology",
+        "safeguarding": "Safeguarding chronology",
+        "missing": "Missing-from-care chronology",
+        "incidents": "Incident chronology",
+        "police": "Police-involvement chronology",
+        "custom": "Custom chronology",
+    }
+    scope_label = label_map.get(scope or "full", "Chronology")
+
+    # Scope shortcuts
+    if scope == "safeguarding":
+        sg_only = True
+    elif scope == "missing":
+        cats = ["missing", "return_interview"]
+    elif scope == "incidents":
+        cats = ["incident", "safeguarding", "self_harm", "restraint", "exploitation"]
+    elif scope == "police":
+        # Police filter handled via tag match below — fetch all and post-filter
+        pass
+
+    if categories:
+        cats = [c.strip() for c in categories.split(",") if c.strip()]
+
+    events = await build_chronology(
+        db, rid,
+        categories=cats,
+        from_at=from_at,
+        to_at=to_at,
+        q=q,
+        safeguarding_only=sg_only,
+        limit=1000,
+    )
+    if scope == "police":
+        events = [e for e in events if "police" in (e.get("tags") or [])]
+
+    counts: dict = {}
+    for e in events:
+        c = e["category"]
+        counts[c] = counts.get(c, 0) + 1
+
+    # Patterns based on FULL chronology, not the filter — gives leadership insight
+    full_events = await build_chronology(db, rid, limit=1000)
+    patterns = detect_patterns(full_events)
+
+    filter_bits = []
+    if from_at:
+        filter_bits.append(f"from {from_at[:10]}")
+    if to_at:
+        filter_bits.append(f"to {to_at[:10]}")
+    if q:
+        filter_bits.append(f"search: \"{q}\"")
+    if cats:
+        filter_bits.append("types: " + ", ".join(cats))
+
+    payload = {
+        "generated_at": now_iso(),
+        "generated_by": user["name"],
+        "resident_name": resident.get("name"),
+        "resident_dob": resident.get("dob"),
+        "resident_id": rid,
+        "service_type": resident.get("service_type"),
+        "scope_label": scope_label,
+        "filter_summary": " · ".join(filter_bits) if filter_bits else None,
+        "events": events,
+        "patterns": patterns,
+        "counts_by_category": counts,
+    }
+    pdf_bytes = build_chronology_pdf(payload)
+    fname = f"chronology-{(resident.get('name') or rid).replace(' ', '_')}-{datetime.now().strftime('%Y%m%d')}.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
 
 
 # ---------- Missing-from-Care / Rapid Response Pack ----------

@@ -179,6 +179,25 @@ A simple and fast care management app for children's homes and supported living.
 - Incident trend charts per resident
 - Witness picker — replace free-text witness with real staff selection (uses /auth/users; staff-role read access required)
 
+## Implemented (2026-02-09 — Iteration 28 — Chronology / Timeline rebuild · flagship safeguarding chronology)
+- **Replaces basic 3-source timeline with a full operational chronology** built from 9 source collections: incidents · missing_episodes · return_interviews · body_maps · medication_admins (refused/withheld only) · statutory_visits · key_work_sessions · health_appointments · notes. Each source is normalised into a unified event shape (id · at · category · severity · title · summary · actor_name · tags · metadata · category_label · category_colour · category_icon).
+- **Backend `timeline_service.py`**:
+  - `build_chronology(db, rid, categories, from_at, to_at, q, safeguarding_only, limit)` aggregates + filters + sorts.
+  - 18 colour-coded categories with icons (`CATEGORY_META`): safeguarding · missing · police · incident · restraint · self_harm · exploitation · body_map · health · medication · education · professional · key_work · therapeutic · achievement · review · note · return_interview · placement.
+  - `detect_patterns(events)` — 9 deterministic non-AI rules: repeat missing (3+/30d) · recurring missing location · recurring associates · police clustering (3+/60d) · self-harm cluster (2+/30d) · medication refusal spike (3+/14d) · aggression escalation (3+/30d) · night-time incidents (3+/30d, 22:00-06:00) · active safeguarding period (2+/14d).
+- **Endpoints**:
+  - `GET /api/residents/{rid}/timeline` — filters: categories, from_at, to_at, q, safeguarding_only, limit. Returns items + counts_by_category + total + category_meta.
+  - `GET /api/residents/{rid}/timeline/patterns` — rules-based pattern insights.
+  - `GET /api/residents/{rid}/timeline.pdf` — Senior+ inspection-ready chronology PDF with 6 scope shortcuts: full · safeguarding · missing · incidents · police · custom (uses current frontend filters). Includes patterns banner, counts strip, full event table, audit hash.
+- **Backend `chronology_pdf.py`** — A4 portrait, colour-coded events, severity tones, patterns table, audit hash, scope/filter summary line.
+- **Frontend `ChronologyTab.jsx`** (replaces old `TimelineTab` inside Resident Profile · Timeline tab):
+  - Sticky filter strip: search (debounced 300ms) · date range · 12 toggle chips (Safeguarding / Missing / Incidents / Self-harm / Restraint / Police / Medication / Health / Key work / Therapeutic / Professionals / Achievements) with live counts · Clear button.
+  - **Patterns banner**: red-tinted alert card showing each detected pattern with severity pill + title + message; dismissible.
+  - **Day-grouped event cards**: colour-coded left bar by category, icon, severity pill, tag chips (police / self-harm / etc.), expandable to show metadata (location, associates, police ref, exploitation indicators, frameworks, signed-off-by) + deep-link to source incident.
+  - **Export menu** (6 scopes): Full · Safeguarding only · Missing-from-care · Incidents · Police involvement · Use current filters. Auth via Bearer token (Senior+ enforced server-side).
+- **URL deep-link preserved**: `/residents/:id?tab=timeline` lands directly in the chronology view.
+- **Tested**: 12/12 backend pytest in `test_iteration28.py` (aggregation · filter combos · safeguarding-only · search · date range · patterns shape · 4 PDF scopes · staff RBAC 403 · 404 unknown resident · CATEGORY_META completeness). 70/70 PASS across iter25-28. Frontend Playwright smoke confirmed 93 events grouped over 8 days, 5 patterns surfaced, safeguarding filter narrows to 17, export menu opens.
+
 ## Implemented (2026-02-09 — Iteration 27 — Sidebar Lockdown + Hub Architecture + Admin)
 - **Sidebar locked to 6 operational areas** (architectural commit — must NOT grow without explicit product approval): Dashboard · Residents · Home Operations · Staff Operations · Compliance & Oversight · Admin. Group headers removed (each area is a single nav item). Admin gated `minTier: 3`.
 - **Resident-as-HUB philosophy**: every resident-specific workflow (Daily Notes / Incidents / Medication / Statutory Visits / Risk / Missing-from-care / Return Interviews / Body Maps / Key Work / Health / Education / Finance / Documents / Timeline / Therapeutic Practice / Support Plans / Care Plans) lives inside the 8-tab Resident Profile. Staff feel "I'm supporting THIS young person" instead of "I'm jumping between disconnected modules."
@@ -282,8 +301,8 @@ A simple and fast care management app for children's homes and supported living.
 - Home-wide workflows live ONLY in Home Operations.
 
 ### P0 — Next focus (TBD with user)
-- ✅ ~~Iteration 27: Sidebar lockdown + hub architecture~~ (2026-02-09)
-- Likely candidates: Resident Profile UI polish (improve the 8-tab Overview alerts panel, mobile-first quick actions, faster note entry) · Dashboard "what needs attention right now" rebuild · Native deployment readiness pass.
+- ✅ ~~Iteration 28: Timeline / Chronology rebuild~~ (2026-02-09)
+- 🔜 **Iteration 29 candidate**: Sector-aware Resident Profile (children-vs-adult Quick Actions, Daily Care content, operational Overview). Plus the Key Work re-placement: surface Key Work in Resident Quick Actions and remove the standalone PracticeAttentionCard from Dashboard.
 
 ### P1
 - Phase D — Staff Operations expansion inside the hub (sleep-in tracking, shift swaps, leave, clock in/out, daily staffing overview) — adds tabs to `/staff-operations`.

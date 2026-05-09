@@ -12,6 +12,7 @@ import VisitsTab from "@/components/resident/VisitsTab";
 import PocketMoneyTab from "@/components/resident/PocketMoneyTab";
 import IndependenceTracker from "@/components/resident/IndependenceTracker";
 import DocumentsTab from "@/components/resident/DocumentsTab";
+import ChronologyTab from "@/components/resident/ChronologyTab";
 import ResidentPhoto from "@/components/resident/ResidentPhoto";
 import ReturnInterviewModal from "@/components/resident/ReturnInterviewModal";
 import InlineField from "@/components/resident/InlineField";
@@ -507,7 +508,7 @@ export default function ResidentDetail() {
 
         {tab === "finance" && <PocketMoneyTab resident={resident} />}
         {tab === "documents" && <DocumentsTab resident={resident} />}
-        {tab === "timeline" && <TimelineTab items={timeline} />}
+        {tab === "timeline" && <ChronologyTab residentId={id} />}
       </section>
 
       {missingOpen && (
@@ -1227,68 +1228,6 @@ function AdultProfileSection({ resident }) {
         fullWidth
       />
     </div>
-  );
-}
-
-// ---------------- Timeline ----------------
-function TimelineTab({ items }) {
-  if (!items.length)
-    return (
-      <div className="text-sm text-stone-500 italic py-6 text-center">
-        No incidents or notes recorded yet.
-      </div>
-    );
-  return (
-    <ul className="space-y-3" data-testid="timeline-content">
-      {items.map((it) => {
-        const tone =
-          it.kind === "missing"
-            ? "#B23A48"
-            : it.kind === "incident"
-            ? it.safeguarding
-              ? "#B23A48"
-              : it.severity === "high"
-              ? "#B23A48"
-              : it.severity === "medium"
-              ? "#D4A373"
-              : "#3A5A40"
-            : "#1E4D5C";
-        return (
-          <li
-            key={`${it.kind}-${it.id}`}
-            className="border-l-4 border divider-soft rounded-xl p-3.5 bg-white"
-            style={{ borderLeftColor: tone }}
-            data-testid={`timeline-item-${it.kind}`}
-          >
-            <div className="flex items-start justify-between gap-3 flex-wrap">
-              <div className="flex-1 min-w-0">
-                <div className="text-[10px] font-bold uppercase tracking-wider text-stone-500">
-                  {it.kind} · {it.title}
-                  {it.safeguarding && (
-                    <span className="ml-2 text-[#B23A48]">SAFEGUARDING</span>
-                  )}
-                </div>
-                <div className="text-sm text-stone-800 mt-1 leading-relaxed line-clamp-3">
-                  {it.body}
-                </div>
-              </div>
-              <div className="text-xs text-stone-500 shrink-0">
-                <div>{formatFullTimestamp(it.at)}</div>
-                <div className="text-stone-400 text-right">{it.author}</div>
-              </div>
-            </div>
-            {it.kind === "incident" && (
-              <Link
-                to={`/incidents/${it.id}`}
-                className="text-xs text-[#1E4D5C] hover:underline mt-2 inline-flex items-center gap-1"
-              >
-                View incident <ChevronRight size={12} />
-              </Link>
-            )}
-          </li>
-        );
-      })}
-    </ul>
   );
 }
 
