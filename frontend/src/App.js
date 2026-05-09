@@ -25,6 +25,11 @@ import Handover from "@/pages/Handover";
 import SaferRecruitment from "@/pages/SaferRecruitment";
 import CQCReadiness from "@/pages/CQCReadiness";
 import AuditLog from "@/pages/AuditLog";
+import KeyWorkHub from "@/pages/KeyWorkHub";
+import KeyWorkSessionEditor from "@/pages/KeyWorkSessionEditor";
+import KeyWorkSessionDetail from "@/pages/KeyWorkSessionDetail";
+import { FrameworksList, FrameworkDetail } from "@/pages/Frameworks";
+import { ResourcesList, ResourcePackDetail } from "@/pages/Resources";
 
 function Protected({ children }) {
   const { user, loading } = useAuth();
@@ -101,6 +106,28 @@ function App() {
                   </SeniorOrAbove>
                 }
               />
+              <Route path="/key-work" element={<KeyWorkHub />} />
+              <Route
+                path="/key-work/new"
+                element={
+                  <SeniorOrAbove>
+                    <KeyWorkSessionEditor />
+                  </SeniorOrAbove>
+                }
+              />
+              <Route path="/key-work/:id" element={<KeyWorkSessionDetail />} />
+              <Route
+                path="/key-work/:id/edit"
+                element={
+                  <SeniorOrAbove>
+                    <KeyWorkSessionEditor />
+                  </SeniorOrAbove>
+                }
+              />
+              <Route path="/frameworks" element={<FrameworksList />} />
+              <Route path="/frameworks/:id" element={<FrameworkDetail />} />
+              <Route path="/resources" element={<ResourcesList />} />
+              <Route path="/resources/:id" element={<ResourcePackDetail />} />
               <Route
                 path="/reports"
                 element={

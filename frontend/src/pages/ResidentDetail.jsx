@@ -34,6 +34,7 @@ import {
   Loader2,
   Siren,
   ShieldCheck,
+  Sparkles,
   Send,
   Copy,
   Download,
@@ -394,6 +395,13 @@ export default function ResidentDetail() {
               testid="acc-care"
             >
               <CareTab resident={resident} />
+            </AccordionSection>
+            <AccordionSection
+              title="Therapeutic key work"
+              subtitle="Plan, run and reflect — supported by frameworks & resources"
+              testid="acc-key-work"
+            >
+              <KeyWorkPanel resident={resident} />
             </AccordionSection>
             <AccordionSection
               title="Recent daily notes"
@@ -862,6 +870,112 @@ function MissingTab({ resident, episodes, onOpen }) {
     </div>
   );
 }
+
+function KeyWorkPanel({ resident }) {
+  const [sessions, setSessions] = useState([]);
+  const [recs, setRecs] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const { isSeniorOrAbove } = useAuth();
+  const nav = useNavigate();
+
+  useEffect(() => {
+    Promise.all([
+      api.get(`/key-work/sessions?resident_id=${resident.id}`),
+      isSeniorOrAbove
+        ? api.get(`/residents/${resident.id}/key-work/recommendations`)
+        : Promise.resolve({ data: [] }),
+    ])
+      .then(([s, r]) => {
+        setSessions(s.data || []);
+        setRecs(r.data || []);
+      })
+      .finally(() => setLoading(false));
+  }, [resident.id, isSeniorOrAbove]);
+
+  return (
+    <div className="space-y-3" data-testid="resident-key-work-panel">
+      {recs.length > 0 && (
+        <div
+          className="bg-[#FAF7F2] border-l-4 border border-[#5a3d8c]/40 rounded-xl p-3"
+          style={{ borderLeftColor: "#5a3d8c" }}
+          data-testid="resident-kw-recs"
+        >
+          <div className="text-[10px] font-bold uppercase tracking-wider text-[#5a3d8c] mb-1">
+            Practice recommendations · {recs.length}
+          </div>
+          <ul className="space-y-1">
+            {recs.slice(0, 3).map((r, i) => (
+              <li
+                key={i}
+                data-testid={`resident-kw-rec-${r.id}`}
+                className="text-xs"
+              >
+                <b>{r.title}</b>
+                <span className="text-[#5d6068]"> — {r.body}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <div className="flex items-center justify-between">
+        <span className="text-[11px] font-bold uppercase tracking-wider text-[#5d6068]">
+          Recent sessions ({sessions.length})
+        </span>
+        {isSeniorOrAbove && (
+          <button
+            type="button"
+            onClick={() => nav(`/key-work/new?resident_id=${resident.id}`)}
+            data-testid="resident-kw-plan-btn"
+            className="text-xs bg-[#5a3d8c] hover:bg-[#3f2a64] text-white font-semibold rounded-lg px-2.5 py-1 inline-flex items-center gap-1"
+          >
+            <Sparkles size={11} /> Plan a session
+          </button>
+        )}
+      </div>
+
+      {loading ? (
+        <div className="text-center py-4 text-stone-500">
+          <Loader2 className="animate-spin inline" size={14} />
+        </div>
+      ) : sessions.length === 0 ? (
+        <p className="text-xs text-[#5d6068] italic">
+          No key work sessions yet for this young person.
+        </p>
+      ) : (
+        <ul className="space-y-1.5">
+          {sessions.slice(0, 5).map((s) => (
+            <li key={s.id} data-testid={`resident-kw-session-${s.id}`}>
+              <Link
+                to={`/key-work/${s.id}`}
+                className="block bg-white border divider-soft rounded-lg p-2.5 text-xs hover:bg-stone-50"
+              >
+                <div className="flex items-center gap-2">
+                  <span
+                    className={`text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded ${
+                      s.status === "completed"
+                        ? "bg-[#3A5A40]/10 text-[#3A5A40]"
+                        : s.status === "cancelled"
+                        ? "bg-stone-100 text-stone-500"
+                        : "bg-[#5a3d8c]/10 text-[#5a3d8c]"
+                    }`}
+                  >
+                    {s.status}
+                  </span>
+                  <span className="font-semibold text-stone-800">{s.topic_label || "Session"}</span>
+                  <span className="text-stone-500 ml-auto">
+                    {(s.completed_at || s.planned_for || "").slice(0, 10)}
+                  </span>
+                </div>
+              </Link>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 
 function MissingEpisodeRow({ episode, resident }) {
   const { isManagerOrAbove } = useAuth();

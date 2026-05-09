@@ -28,6 +28,7 @@ import {
   Lock,
   Sparkles,
   FileCheck2,
+  HeartHandshake,
   Loader2,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -286,6 +287,8 @@ export default function Dashboard() {
       </header>
 
       <InspectionSnapshotCard />
+
+      <PracticeAttentionCard />
 
       {/* Live attention strip — pulled from Ofsted readiness */}
       <AttentionNow />
@@ -790,3 +793,78 @@ function InspectionSnapshotCard() {
     </section>
   );
 }
+
+function PracticeAttentionCard() {
+  const { isSeniorOrAbove } = useAuth();
+  const nav = useNavigate();
+  const [recs, setRecs] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!isSeniorOrAbove) {
+      setLoading(false);
+      return;
+    }
+    api
+      .get("/key-work/recommendations")
+      .then((r) => setRecs(r.data || []))
+      .finally(() => setLoading(false));
+  }, [isSeniorOrAbove]);
+
+  if (!isSeniorOrAbove) return null;
+  const high = recs.filter((r) => r.severity === "high").length;
+  const medium = recs.filter((r) => r.severity === "medium").length;
+
+  return (
+    <section
+      data-testid="practice-attention-card"
+      className="rounded-2xl bg-gradient-to-br from-[#FAF7F2] via-[#EDE5F2] to-[#D8C9E8] border border-[#5a3d8c]/30 p-4 sm:p-5 flex items-start gap-4 flex-wrap"
+    >
+      <div className="w-12 h-12 rounded-xl bg-[#5a3d8c]/15 text-[#3f2a64] flex items-center justify-center shrink-0">
+        <HeartHandshake size={22} />
+      </div>
+      <div className="flex-1 min-w-[240px]">
+        <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#3f2a64]">
+          Practice attention · Senior + Manager
+        </div>
+        <h3 className="font-display font-semibold text-lg text-[#0F1115] mt-0.5">
+          Therapeutic key-work recommendations
+        </h3>
+        <p className="text-xs text-[#5d6068] mt-1 max-w-2xl">
+          Live, rules-based suggestions across the home — never AI-generated content. Use these as a starting point for the next round of key work.
+        </p>
+        {loading ? (
+          <div className="text-xs text-[#5d6068] mt-2 inline-flex items-center gap-1">
+            <Loader2 size={12} className="animate-spin" /> Loading…
+          </div>
+        ) : (
+          <div className="text-[11px] text-[#5d6068] mt-1.5 flex flex-wrap gap-x-3 gap-y-1">
+            <span>
+              High: <b className="text-[#A8273A]">{high}</b>
+            </span>
+            <span>
+              Medium: <b className="text-[#B8772F]">{medium}</b>
+            </span>
+            <span>
+              Total: <b>{recs.length}</b>
+            </span>
+            {recs.slice(0, 2).map((r, i) => (
+              <span key={i} className="inline-flex items-center gap-1">
+                · <b className="text-[#0F1115]">{r.resident_name}</b>: {r.title}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+      <button
+        type="button"
+        onClick={() => nav("/key-work")}
+        data-testid="practice-attention-open-btn"
+        className="bg-[#5a3d8c] hover:bg-[#3f2a64] text-white font-semibold rounded-xl px-4 py-2.5 inline-flex items-center justify-center gap-2 self-center shrink-0"
+      >
+        <HeartHandshake size={15} /> Open key-work
+      </button>
+    </section>
+  );
+}
+

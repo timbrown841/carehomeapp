@@ -33,6 +33,13 @@ from inspection_snapshot_pdf import build_inspection_snapshot_pdf
 from notifications_service import send_email, send_sms, recipient_for
 from uploads_service import save_upload, disk_path, public_meta
 from audit_service import record_audit
+from key_work_session_pdf import build_key_work_session_pdf
+from seed_therapeutic import (
+    FRAMEWORKS,
+    RESOURCE_PACKS,
+    KEY_WORK_TOPICS,
+    GUIDED_PROMPTS,
+)
 import secrets as _secrets
 
 
@@ -83,6 +90,23 @@ async def lifespan(_app: FastAPI):
     await db.audit_events.create_index("actor_id")
     await db.audit_events.create_index("object_type")
     await db.audit_events.create_index("action")
+    await db.key_work_sessions.create_index([("resident_id", 1), ("planned_for", -1)])
+    await db.key_work_sessions.create_index("status")
+    await db.key_work_sessions.create_index("facilitator_id")
+    await db.frameworks.create_index("id", unique=True)
+    await db.resource_packs.create_index("id", unique=True)
+    await db.key_work_topics.create_index("id", unique=True)
+    await db.guided_prompts.create_index("id", unique=True)
+
+    # Idempotent therapeutic content seed
+    for fw in FRAMEWORKS:
+        await db.frameworks.replace_one({"id": fw["id"]}, fw, upsert=True)
+    for rp in RESOURCE_PACKS:
+        await db.resource_packs.replace_one({"id": rp["id"]}, rp, upsert=True)
+    for tp in KEY_WORK_TOPICS:
+        await db.key_work_topics.replace_one({"id": tp["id"]}, tp, upsert=True)
+    for pr in GUIDED_PROMPTS:
+        await db.guided_prompts.replace_one({"id": pr["id"]}, pr, upsert=True)
 
     admin_email = os.environ.get("ADMIN_EMAIL", "admin@care.local").lower()
     admin_password = os.environ.get("ADMIN_PASSWORD", "Admin@123")
@@ -5698,6 +5722,455 @@ async def inspection_snapshot_pdf(
 
 
 # ---------- Startup is handled via lifespan above ----------
+
+
+# ============================================================
+# Therapeutic Practice & Key Work
+# ============================================================
+
+@api_router.get("/frameworks")
+async def list_frameworks(_: dict = Depends(get_current_user)):
+    return await db.frameworks.find({}, {"_id": 0}).sort("name", 1).to_list(50)
+
+
+@api_router.get("/frameworks/{fid}")
+async def get_framework(fid: str, _: dict = Depends(get_current_user)):
+    fw = await db.frameworks.find_one({"id": fid}, {"_id": 0})
+    if not fw:
+        raise HTTPException(404, "Framework not found")
+    return fw
+
+
+@api_router.get("/resource-packs")
+async def list_resource_packs(theme: Optional[str] = None, _: dict = Depends(get_current_user)):
+    query = {"theme": theme} if theme else {}
+    return await db.resource_packs.find(query, {"_id": 0}).sort("title", 1).to_list(100)
+
+
+@api_router.get("/resource-packs/{rid}")
+async def get_resource_pack(rid: str, _: dict = Depends(get_current_user)):
+    rp = await db.resource_packs.find_one({"id": rid}, {"_id": 0})
+    if not rp:
+        raise HTTPException(404, "Resource pack not found")
+    return rp
+
+
+@api_router.get("/key-work/topics")
+async def list_key_work_topics(_: dict = Depends(get_current_user)):
+    return await db.key_work_topics.find({}, {"_id": 0}).sort("label", 1).to_list(100)
+
+
+@api_router.get("/guided-prompts")
+async def list_guided_prompts(
+    context: Optional[str] = None,
+    theme: Optional[str] = None,
+    _: dict = Depends(get_current_user),
+):
+    query: dict = {}
+    if context:
+        query["context"] = context
+    if theme:
+        query["theme_tags"] = theme
+    return await db.guided_prompts.find(query, {"_id": 0}).sort("text", 1).to_list(200)
+
+
+# ----- Key Work Sessions -----
+
+class KeyWorkGoal(BaseModel):
+    id: Optional[str] = None
+    text: str = Field(..., max_length=400)
+    status: Literal["open", "progress", "met", "unmet"] = "open"
+
+
+class KeyWorkAction(BaseModel):
+    text: str = Field(..., max_length=400)
+    owner_id: Optional[str] = None
+    owner_name: Optional[str] = None
+    due_date: Optional[str] = None
+    status: Literal["open", "done"] = "open"
+
+
+class KeyWorkSessionIn(BaseModel):
+    resident_id: str
+    status: Literal["planned", "completed", "cancelled"] = "planned"
+    planned_for: Optional[str] = None
+    completed_at: Optional[str] = None
+    facilitator_id: Optional[str] = None
+    facilitator_name: Optional[str] = None
+    topic_id: Optional[str] = None
+    topic_label: Optional[str] = None
+    frameworks_applied: List[str] = Field(default_factory=list)
+    resource_pack_ids: List[str] = Field(default_factory=list)
+    goals: List[KeyWorkGoal] = Field(default_factory=list)
+    plan: Optional[str] = None
+    discussion: Optional[str] = None
+    young_person_voice: Optional[str] = None
+    staff_reflection: Optional[str] = None
+    outcomes: Optional[str] = None
+    follow_up_actions: List[KeyWorkAction] = Field(default_factory=list)
+    review_date: Optional[str] = None
+    mood_before: Optional[int] = Field(None, ge=1, le=5)
+    mood_after: Optional[int] = Field(None, ge=1, le=5)
+    linked_incident_ids: List[str] = Field(default_factory=list)
+    linked_missing_episode_ids: List[str] = Field(default_factory=list)
+    prompt_responses: Dict[str, str] = Field(default_factory=dict)
+    safeguarding_flag: bool = False
+
+
+class KeyWorkSession(KeyWorkSessionIn):
+    id: str
+    planner_id: str
+    planner_name: str
+    created_at: str
+    signed_off_by_id: Optional[str] = None
+    signed_off_by_name: Optional[str] = None
+    signed_off_at: Optional[str] = None
+    manager_comments: Optional[str] = None
+
+
+def _session_requires_signoff(session: dict) -> bool:
+    """High-risk topics + safeguarding-flagged require manager sign-off."""
+    if session.get("safeguarding_flag"):
+        return True
+    topic_id = session.get("topic_id")
+    return topic_id in {"topic_safeguarding_exploitation", "topic_missing_prevention"}
+
+
+@api_router.post("/key-work/sessions", response_model=KeyWorkSession)
+async def create_key_work_session(
+    payload: KeyWorkSessionIn,
+    user: dict = Depends(require_tier(2)),
+):
+    if not await db.residents.find_one({"id": payload.resident_id}, {"_id": 0, "id": 1}):
+        raise HTTPException(404, "Resident not found")
+    now = now_iso()
+    # Assign a generated id to each goal that lacks one
+    body = payload.model_dump()
+    for g in body.get("goals") or []:
+        if not g.get("id"):
+            g["id"] = str(uuid.uuid4())
+    doc = {
+        **body,
+        "id": str(uuid.uuid4()),
+        "planner_id": user["id"],
+        "planner_name": user["name"],
+        "facilitator_id": body.get("facilitator_id") or user["id"],
+        "facilitator_name": body.get("facilitator_name") or user["name"],
+        "created_at": now,
+        "signed_off_by_id": None,
+        "signed_off_by_name": None,
+        "signed_off_at": None,
+        "manager_comments": None,
+    }
+    await db.key_work_sessions.insert_one(doc)
+    doc.pop("_id", None)
+    await record_audit(
+        db, actor=user, action="create", object_type="key_work_session",
+        object_id=doc["id"], resident_id=doc["resident_id"],
+        summary=f"Key work session created · {doc.get('topic_label') or '—'} ({doc.get('status')})",
+        metadata={
+            "topic_id": doc.get("topic_id"),
+            "safeguarding_flag": doc.get("safeguarding_flag"),
+            "frameworks": doc.get("frameworks_applied"),
+        },
+    )
+    return doc
+
+
+@api_router.get("/key-work/sessions")
+async def list_key_work_sessions(
+    resident_id: Optional[str] = None,
+    facilitator_id: Optional[str] = None,
+    status: Optional[str] = None,
+    mine: bool = False,
+    limit: int = 200,
+    user: dict = Depends(get_current_user),
+):
+    query: dict = {}
+    if resident_id:
+        query["resident_id"] = resident_id
+    if facilitator_id:
+        query["facilitator_id"] = facilitator_id
+    if mine:
+        query["facilitator_id"] = user["id"]
+    if status:
+        query["status"] = status
+    items = await db.key_work_sessions.find(query, {"_id": 0}).sort("planned_for", -1).to_list(limit)
+    return items
+
+
+@api_router.get("/key-work/sessions/{sid}", response_model=KeyWorkSession)
+async def get_key_work_session(sid: str, _: dict = Depends(get_current_user)):
+    doc = await db.key_work_sessions.find_one({"id": sid}, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, "Session not found")
+    return doc
+
+
+class KeyWorkSessionPatch(BaseModel):
+    status: Optional[Literal["planned", "completed", "cancelled"]] = None
+    planned_for: Optional[str] = None
+    completed_at: Optional[str] = None
+    facilitator_id: Optional[str] = None
+    facilitator_name: Optional[str] = None
+    topic_id: Optional[str] = None
+    topic_label: Optional[str] = None
+    frameworks_applied: Optional[List[str]] = None
+    resource_pack_ids: Optional[List[str]] = None
+    goals: Optional[List[KeyWorkGoal]] = None
+    plan: Optional[str] = None
+    discussion: Optional[str] = None
+    young_person_voice: Optional[str] = None
+    staff_reflection: Optional[str] = None
+    outcomes: Optional[str] = None
+    follow_up_actions: Optional[List[KeyWorkAction]] = None
+    review_date: Optional[str] = None
+    mood_before: Optional[int] = Field(None, ge=1, le=5)
+    mood_after: Optional[int] = Field(None, ge=1, le=5)
+    prompt_responses: Optional[Dict[str, str]] = None
+    safeguarding_flag: Optional[bool] = None
+
+
+@api_router.patch("/key-work/sessions/{sid}", response_model=KeyWorkSession)
+async def update_key_work_session(
+    sid: str,
+    payload: KeyWorkSessionPatch,
+    user: dict = Depends(require_tier(2)),
+):
+    before = await db.key_work_sessions.find_one({"id": sid}, {"_id": 0})
+    if not before:
+        raise HTTPException(404, "Session not found")
+    if before.get("status") == "completed" and before.get("signed_off_at") and role_tier(user.get("role")) < 3:
+        raise HTTPException(403, "Already signed off — manager only")
+    update = {k: v for k, v in payload.model_dump(exclude_unset=True).items() if v is not None}
+    if not update:
+        return before
+    if "goals" in update:
+        for g in update["goals"]:
+            if not g.get("id"):
+                g["id"] = str(uuid.uuid4())
+    update["updated_at"] = now_iso()
+    await db.key_work_sessions.update_one({"id": sid}, {"$set": update})
+    after = await db.key_work_sessions.find_one({"id": sid}, {"_id": 0})
+    audit_keys = [k for k in update.keys() if k != "updated_at"]
+    audit_before = {k: before.get(k) for k in audit_keys}
+    audit_after = {k: after.get(k) for k in audit_keys}
+    await record_audit(
+        db, actor=user, action="update", object_type="key_work_session",
+        object_id=sid, resident_id=after.get("resident_id"),
+        summary=f"Key work session updated ({', '.join(audit_keys)})",
+        before=audit_before, after=audit_after,
+    )
+    return after
+
+
+@api_router.post("/key-work/sessions/{sid}/sign-off", response_model=KeyWorkSession)
+async def sign_off_key_work_session(
+    sid: str,
+    payload: dict = None,
+    user: dict = Depends(require_role("manager", "admin")),
+):
+    doc = await db.key_work_sessions.find_one({"id": sid}, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, "Session not found")
+    now = now_iso()
+    update = {
+        "signed_off_by_id": user["id"],
+        "signed_off_by_name": user["name"],
+        "signed_off_at": now,
+    }
+    if payload and isinstance(payload, dict) and payload.get("manager_comments"):
+        update["manager_comments"] = payload["manager_comments"]
+    await db.key_work_sessions.update_one({"id": sid}, {"$set": update})
+    after = await db.key_work_sessions.find_one({"id": sid}, {"_id": 0})
+    await record_audit(
+        db, actor=user, action="sign_off", object_type="key_work_session",
+        object_id=sid, resident_id=after.get("resident_id"),
+        summary="Key work session signed off",
+        metadata={"manager_comments": update.get("manager_comments")},
+    )
+    return after
+
+
+@api_router.get("/key-work/sessions/{sid}/pdf")
+async def export_key_work_session_pdf(sid: str, _: dict = Depends(get_current_user)):
+    session = await db.key_work_sessions.find_one({"id": sid}, {"_id": 0})
+    if not session:
+        raise HTTPException(404, "Session not found")
+    resident = await db.residents.find_one({"id": session["resident_id"]}, {"_id": 0}) or {}
+    fw_list = await db.frameworks.find({}, {"_id": 0}).to_list(50)
+    rp_list = await db.resource_packs.find({}, {"_id": 0}).to_list(100)
+    pr_list = await db.guided_prompts.find({}, {"_id": 0}).to_list(200)
+    pdf = build_key_work_session_pdf(
+        session=session,
+        resident=resident,
+        framework_lookup={f["id"]: f for f in fw_list},
+        pack_lookup={r["id"]: r for r in rp_list},
+        prompt_lookup={p["id"]: p for p in pr_list},
+    )
+    safe = (resident.get("name") or "session").replace(" ", "_")
+    short = str(sid).replace("-", "")[-8:].upper()
+    filename = f"Safelyn_KeyWork_{safe}_{short}.pdf"
+    return StreamingResponse(
+        pdf, media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+# ----- Smart Recommendations (rules-based) -----
+
+async def _smart_recs_for_resident(resident: dict) -> List[dict]:
+    """Return rules-based recommendations for one resident.
+    Each rec: {id, severity, title, body, suggested_resource_pack_ids, suggested_framework_ids, suggested_topic_ids}
+    """
+    recs: List[dict] = []
+    rid = resident["id"]
+    today = datetime.now(timezone.utc)
+    cutoff_30 = (today - timedelta(days=30)).isoformat()
+    cutoff_60 = (today - timedelta(days=60)).isoformat()
+    cutoff_90 = (today - timedelta(days=90)).isoformat()
+    cutoff_21 = (today - timedelta(days=21)).isoformat()
+
+    # 1. Missing patterns
+    missing_60 = await db.missing_episodes.count_documents(
+        {"resident_id": rid, "reported_at": {"$gte": cutoff_60}}
+    )
+    if missing_60 >= 2:
+        recs.append({
+            "id": "rec_missing_pattern",
+            "severity": "high",
+            "title": "Repeat missing episodes — explore exploitation risk",
+            "body": f"{missing_60} missing-from-care episodes in 60 days. Apply contextual safeguarding lens; review extra-familial risks.",
+            "suggested_resource_pack_ids": ["rp_cse", "rp_mfc_prevention"],
+            "suggested_framework_ids": ["contextual_safeguarding", "trauma_informed"],
+            "suggested_topic_ids": ["topic_missing_prevention", "topic_safeguarding_exploitation"],
+        })
+
+    # 2. Behaviour incident pattern (non-safeguarding)
+    behaviour_30 = await db.incidents.count_documents(
+        {"resident_id": rid, "created_at": {"$gte": cutoff_30}, "safeguarding": {"$ne": True}}
+    )
+    if behaviour_30 >= 3:
+        recs.append({
+            "id": "rec_behaviour_pattern",
+            "severity": "medium",
+            "title": "Repeated behaviour incidents — review co-regulation strategy",
+            "body": f"{behaviour_30} non-safeguarding incidents in 30 days. Review triggers, window of tolerance and team response.",
+            "suggested_resource_pack_ids": ["rp_emotional_regulation", "rp_ebd"],
+            "suggested_framework_ids": ["pace", "trauma_informed", "social_learning"],
+            "suggested_topic_ids": ["topic_emotional_regulation", "topic_repair"],
+        })
+
+    # 3. Open safeguarding incident
+    open_sg = await db.incidents.count_documents(
+        {"resident_id": rid, "safeguarding": True, "status": {"$ne": "closed"}}
+    )
+    if open_sg > 0:
+        recs.append({
+            "id": "rec_open_safeguarding",
+            "severity": "high",
+            "title": "Open safeguarding concern — apply trauma-informed practice",
+            "body": f"{open_sg} open safeguarding concern(s). Hold relational stance; check window of tolerance daily.",
+            "suggested_resource_pack_ids": ["rp_trauma", "rp_cse"],
+            "suggested_framework_ids": ["trauma_informed", "contextual_safeguarding"],
+            "suggested_topic_ids": ["topic_safeguarding_exploitation", "topic_wellbeing"],
+        })
+
+    # 4. High risk level
+    if (resident.get("risk_level") or "").lower() == "high":
+        recs.append({
+            "id": "rec_high_risk",
+            "severity": "medium",
+            "title": "High risk level — map ecological & protective factors",
+            "body": "Risk level recorded as HIGH. Use Bronfenbrenner mapping and review protective relationships.",
+            "suggested_resource_pack_ids": ["rp_relationships", "rp_identity"],
+            "suggested_framework_ids": ["bronfenbrenner", "attachment"],
+            "suggested_topic_ids": ["topic_relationships_friendship", "topic_identity_self_esteem"],
+        })
+
+    # 5. Self-harm tag in last 90d
+    self_harm = await db.incidents.count_documents(
+        {"resident_id": rid, "created_at": {"$gte": cutoff_90},
+         "$or": [{"category": "self-harm"}, {"tags": "self-harm"}]}
+    )
+    if self_harm > 0:
+        recs.append({
+            "id": "rec_self_harm",
+            "severity": "high",
+            "title": "Self-harm in last 90 days — emotional regulation focus",
+            "body": "Increase co-regulation moments; consider clinical referral; use grounding tools.",
+            "suggested_resource_pack_ids": ["rp_trauma", "rp_emotional_regulation", "rp_identity"],
+            "suggested_framework_ids": ["trauma_informed", "pace"],
+            "suggested_topic_ids": ["topic_wellbeing", "topic_emotional_regulation"],
+        })
+
+    # 6. No key-work session in 21+ days
+    last_session = await db.key_work_sessions.find_one(
+        {"resident_id": rid, "status": "completed"},
+        {"_id": 0, "completed_at": 1},
+        sort=[("completed_at", -1)],
+    )
+    last_at = (last_session or {}).get("completed_at") or ""
+    if not last_at or last_at < cutoff_21:
+        recs.append({
+            "id": "rec_session_overdue",
+            "severity": "low",
+            "title": "Key work session overdue",
+            "body": "No completed key-work session in the last 21 days. Plan one within the next week.",
+            "suggested_resource_pack_ids": [],
+            "suggested_framework_ids": [],
+            "suggested_topic_ids": [],
+        })
+
+    # 7. No YP voice captured in last session
+    if last_session:
+        last_full = await db.key_work_sessions.find_one(
+            {"resident_id": rid, "status": "completed"},
+            {"_id": 0},
+            sort=[("completed_at", -1)],
+        )
+        if last_full and not (last_full.get("young_person_voice") or "").strip():
+            recs.append({
+                "id": "rec_yp_voice_missing",
+                "severity": "low",
+                "title": "Young person's voice not captured last session",
+                "body": "Last completed key-work session has no recorded YP voice. Prioritise capturing their words next time.",
+                "suggested_resource_pack_ids": [],
+                "suggested_framework_ids": ["pace"],
+                "suggested_topic_ids": [],
+            })
+
+    return recs
+
+
+@api_router.get("/key-work/recommendations")
+async def home_smart_recommendations(_: dict = Depends(require_tier(2))):
+    """Aggregated smart recommendations across all residents (Senior+)."""
+    residents = await db.residents.find({}, {"_id": 0}).to_list(500)
+    out = []
+    for r in residents:
+        recs = await _smart_recs_for_resident(r)
+        for rc in recs:
+            out.append({
+                **rc,
+                "resident_id": r["id"],
+                "resident_name": r["name"],
+                "risk_level": r.get("risk_level"),
+            })
+    severity_order = {"high": 0, "medium": 1, "low": 2}
+    out.sort(key=lambda x: severity_order.get(x.get("severity"), 3))
+    return out
+
+
+@api_router.get("/residents/{rid}/key-work/recommendations")
+async def resident_smart_recommendations(rid: str, _: dict = Depends(require_tier(2))):
+    resident = await db.residents.find_one({"id": rid}, {"_id": 0})
+    if not resident:
+        raise HTTPException(404, "Resident not found")
+    return await _smart_recs_for_resident(resident)
 
 
 # ============================================================
