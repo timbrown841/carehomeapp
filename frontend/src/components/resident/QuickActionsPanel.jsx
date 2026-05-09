@@ -1,31 +1,61 @@
 import { Link } from "react-router-dom";
 import {
-  Mic,
-  NotebookPen,
-  AlertOctagon,
-  Pill,
-  Wallet,
-  ClipboardList,
-  PhoneCall,
-  Users as UsersIcon,
+  Mic, NotebookPen, AlertOctagon, Pill, Wallet, ClipboardList, PhoneCall,
+  Users as UsersIcon, MessageSquare, AlertTriangle, CalendarClock,
+  Activity, Footprints, ClipboardCheck, Eye,
 } from "lucide-react";
+import { isAdultService } from "@/lib/serviceTypes";
 
+/**
+ * Sector-aware Quick Actions panel.
+ *
+ * Children's services (safeguarding-first):
+ *   Daily note · Incident · Missing · Body map · Key Work · Medication · Pocket money · Handover
+ *
+ * Adult services (care-task / health-first):
+ *   Daily obs · Medication · Care task · Fall · Appointment · Welfare check · MCA · Contact
+ */
 export default function QuickActionsPanel({ resident, onTabChange, onAddNote, onLogIncident }) {
   if (!resident) return null;
-  const actions = [
-    { label: "Add daily note", icon: NotebookPen, tone: "#2F6A3A", onClick: onAddNote, testid: "qa-resident-note" },
-    { label: "Log incident", icon: Mic, tone: "#A8273A", onClick: onLogIncident, testid: "qa-resident-incident" },
-    { label: "Missing from care", icon: AlertOctagon, tone: "#A8273A", to: `/residents/${resident.id}?tab=safeguarding`, testid: "qa-resident-missing" },
-    { label: "Body map", icon: UsersIcon, tone: "#5d6068", to: `/residents/${resident.id}?tab=safeguarding`, testid: "qa-resident-bodymap" },
-    { label: "Medication", icon: Pill, tone: "#0e3b4a", to: `/residents/${resident.id}?tab=health`, testid: "qa-resident-meds" },
-    { label: "Pocket money", icon: Wallet, tone: "#0e3b4a", to: `/residents/${resident.id}?tab=finance`, testid: "qa-resident-finance" },
-    { label: "Handover note", icon: ClipboardList, tone: "#0e3b4a", to: "/handover", testid: "qa-resident-handover" },
-    { label: "Contact", icon: PhoneCall, tone: "#5d6068", onClick: () => onTabChange?.("overview"), testid: "qa-resident-contact" },
+  const adult = isAdultService(resident.service_type);
+  const rid = resident.id;
+
+  const children = [
+    { label: "Add daily note",   icon: NotebookPen,   tone: "#2F6A3A", onClick: onAddNote,        testid: "qa-resident-note" },
+    { label: "Log incident",     icon: Mic,           tone: "#A8273A", onClick: onLogIncident,    testid: "qa-resident-incident" },
+    { label: "Missing from care",icon: AlertOctagon,  tone: "#A8273A", to: `/residents/${rid}?tab=safeguarding`, testid: "qa-resident-missing" },
+    { label: "Body map",         icon: UsersIcon,     tone: "#7A4F8C", to: `/residents/${rid}?tab=safeguarding`, testid: "qa-resident-bodymap" },
+    { label: "Start key work",   icon: MessageSquare, tone: "#0E3B4A", to: `/key-work/new?resident_id=${rid}`,    testid: "qa-resident-keywork" },
+    { label: "Medication",       icon: Pill,          tone: "#7A4F8C", to: `/residents/${rid}?tab=health`,       testid: "qa-resident-meds" },
+    { label: "Pocket money",     icon: Wallet,        tone: "#0e3b4a", to: `/residents/${rid}?tab=finance`,      testid: "qa-resident-finance" },
+    { label: "Handover note",    icon: ClipboardList, tone: "#0e3b4a", to: "/handover",                          testid: "qa-resident-handover" },
   ];
+
+  const adults = [
+    { label: "Daily observation", icon: Eye,             tone: "#2F6A3A", onClick: onAddNote,      testid: "qa-resident-note" },
+    { label: "Medication",        icon: Pill,            tone: "#7A4F8C", to: `/residents/${rid}?tab=health`,    testid: "qa-resident-meds" },
+    { label: "Care task",         icon: ClipboardList,   tone: "#0E3B4A", onClick: onAddNote,      testid: "qa-resident-care-task" },
+    { label: "Log fall",          icon: Footprints,      tone: "#A8273A", onClick: onLogIncident,  testid: "qa-resident-fall" },
+    { label: "Appointment",       icon: CalendarClock,   tone: "#1C5C8C", to: `/residents/${rid}?tab=health`,    testid: "qa-resident-appointment" },
+    { label: "Welfare check",     icon: Activity,        tone: "#2F6A3A", onClick: onAddNote,      testid: "qa-resident-welfare" },
+    { label: "MCA / capacity",    icon: ClipboardCheck,  tone: "#3F4F8C", to: `/residents/${rid}?tab=safeguarding`, testid: "qa-resident-mca" },
+    { label: "Contact",           icon: PhoneCall,       tone: "#5d6068", onClick: () => onTabChange?.("overview"), testid: "qa-resident-contact" },
+  ];
+
+  const actions = adult ? adults : children;
+
   return (
-    <div data-testid="quick-actions-panel">
-      <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#5d6068] px-1 mb-2">
-        Quick actions
+    <div data-testid="quick-actions-panel" data-sector={adult ? "adult" : "children"}>
+      <div className="flex items-center justify-between mb-2 px-1">
+        <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#5d6068]">
+          Quick actions
+        </div>
+        <span
+          className="text-[9px] font-bold uppercase tracking-[0.14em] px-1.5 py-0.5 rounded"
+          style={{ background: adult ? "#3F4F8C18" : "#0e3b4a18", color: adult ? "#3F4F8C" : "#0e3b4a" }}
+        >
+          {adult ? "Adult services" : "Children's services"}
+        </span>
       </div>
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
         {actions.map((a) => {

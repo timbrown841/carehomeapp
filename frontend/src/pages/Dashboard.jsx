@@ -288,8 +288,6 @@ export default function Dashboard() {
 
       <InspectionSnapshotCard />
 
-      <PracticeAttentionCard />
-
       {/* Live attention strip — pulled from Ofsted readiness */}
       <AttentionNow />
 

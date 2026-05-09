@@ -4,6 +4,7 @@ import { useState } from "react";
 import {
   LayoutDashboard,
   Users,
+  HeartHandshake,
   Building2,
   UserCog,
   ShieldCheck,
@@ -15,11 +16,12 @@ import {
 import Logo from "@/components/Logo";
 import NotificationBell from "@/components/NotificationBell";
 
-// Six locked operational areas. Sidebar must NEVER grow beyond these without
+// Seven locked operational areas. Sidebar must NEVER grow beyond these without
 // explicit product approval. Sub-workflows live inside their hub page.
 const NAV = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true, testid: "nav-dashboard" },
-  { to: "/residents", label: "Residents", icon: Users, testid: "nav-residents" },
+  { to: "/children", label: "Children's Services", icon: Users, testid: "nav-children" },
+  { to: "/adults", label: "Adult Services", icon: HeartHandshake, testid: "nav-adults" },
   { to: "/operations", label: "Home Operations", icon: Building2, testid: "nav-operations" },
   { to: "/staff-operations", label: "Staff Operations", icon: UserCog, testid: "nav-staff-operations" },
   { to: "/compliance", label: "Compliance & Oversight", icon: ShieldCheck, testid: "nav-compliance" },

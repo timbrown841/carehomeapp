@@ -14,18 +14,20 @@ const RISK_LABEL = {
   low: { bg: "#3A5A40", label: "LOW" },
 };
 
-export default function Residents() {
+export default function Residents({ sector }) {
   const { user } = useAuth();
   const [list, setList] = useState([]);
   const [open, setOpen] = useState(false);
-  const [form, setForm] = useState({ name: "", dob: "", room: "", notes: "", service_type: "children" });
+  const defaultServiceType = sector === "adult" ? "adult_supported_living" : "children";
+  const [form, setForm] = useState({ name: "", dob: "", room: "", notes: "", service_type: defaultServiceType });
   const [busy, setBusy] = useState(false);
   const canManage = user?.role === "manager" || user?.role === "admin";
 
-  const load = () => api.get("/residents").then((r) => setList(r.data));
+  const load = () =>
+    api.get("/residents", { params: sector ? { sector } : {} }).then((r) => setList(r.data));
   useEffect(() => {
     load();
-  }, []);
+  }, [sector]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const submit = async (e) => {
     e.preventDefault();
@@ -33,7 +35,7 @@ export default function Residents() {
     try {
       await api.post("/residents", form);
       setOpen(false);
-      setForm({ name: "", dob: "", room: "", notes: "", service_type: "children" });
+      setForm({ name: "", dob: "", room: "", notes: "", service_type: defaultServiceType });
       toast.success("Resident added");
       load();
     } catch (err) {
@@ -159,12 +161,12 @@ export default function Residents() {
                 data-testid="resident-service-type"
                 className="w-full bg-white border divider-soft rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-[#2D4A3E]"
               >
-                <option value="children">Children's Services</option>
-                <option value="adult_supported_living">Adult Supported Living</option>
-                <option value="elderly_residential">Elderly Residential</option>
-                <option value="dementia">Dementia Care</option>
-                <option value="mental_health">Mental Health Services</option>
-                <option value="veteran">Veteran / Ex-Military</option>
+                {sector !== "adult" && <option value="children">Children's Services</option>}
+                {sector !== "children" && <option value="adult_supported_living">Adult Supported Living</option>}
+                {sector !== "children" && <option value="elderly_residential">Elderly Residential</option>}
+                {sector !== "children" && <option value="dementia">Dementia Care</option>}
+                {sector !== "children" && <option value="mental_health">Mental Health Services</option>}
+                {sector !== "children" && <option value="veteran">Veteran / Ex-Military</option>}
               </select>
               <input
                 data-testid="resident-name-input"

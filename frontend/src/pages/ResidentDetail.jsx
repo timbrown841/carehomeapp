@@ -13,6 +13,7 @@ import PocketMoneyTab from "@/components/resident/PocketMoneyTab";
 import IndependenceTracker from "@/components/resident/IndependenceTracker";
 import DocumentsTab from "@/components/resident/DocumentsTab";
 import ChronologyTab from "@/components/resident/ChronologyTab";
+import OverviewOperational from "@/components/resident/OverviewOperational";
 import ResidentPhoto from "@/components/resident/ResidentPhoto";
 import ReturnInterviewModal from "@/components/resident/ReturnInterviewModal";
 import InlineField from "@/components/resident/InlineField";
@@ -359,8 +360,15 @@ export default function ResidentDetail() {
       {/* Tab body */}
       <section data-testid={`tab-body-${tab}`} className="bg-white border divider-soft rounded-2xl p-5 sm:p-6">
         {tab === "overview" && (
-          <div className="space-y-3">
-            <OverviewTab resident={resident} age={age} />
+          <div className="space-y-4">
+            <OverviewOperational resident={resident} onTabChange={setTab} />
+            <AccordionSection
+              title="Identity & demographics"
+              subtitle="Name, DOB, age, room, basic profile"
+              testid="acc-identity"
+            >
+              <OverviewTab resident={resident} age={age} />
+            </AccordionSection>
             {isAdultService(resident.service_type) && (
               <AccordionSection
                 title="Adult service profile"
@@ -391,28 +399,58 @@ export default function ResidentDetail() {
 
         {tab === "daily-care" && (
           <div className="space-y-3">
-            <AccordionSection
-              title="Care plan & wishes"
-              subtitle="Children's views, wishes, feelings, positive relationships"
-              defaultOpen
-              testid="acc-care"
-            >
-              <CareTab resident={resident} />
-            </AccordionSection>
-            <AccordionSection
-              title="Therapeutic key work"
-              subtitle="Plan, run and reflect — supported by frameworks & resources"
-              testid="acc-key-work"
-            >
-              <KeyWorkPanel resident={resident} />
-            </AccordionSection>
-            <AccordionSection
-              title="Recent daily notes"
-              subtitle="Latest staff observations & welfare checks for this young person"
-              testid="acc-notes"
-            >
-              <RecentNotesPanel residentId={resident.id} />
-            </AccordionSection>
+            {isAdultService(resident.service_type) ? (
+              <>
+                <AccordionSection
+                  title="Care delivery & routines"
+                  subtitle="Personal preferences, daily routines, support delivery, mobility aids"
+                  tone="#3F4F8C"
+                  defaultOpen
+                  testid="acc-care"
+                >
+                  <CareTab resident={resident} />
+                </AccordionSection>
+                <AccordionSection
+                  title="Wellbeing observations"
+                  subtitle="Mood, engagement, sleep, hydration, nutrition — recent staff observations"
+                  testid="acc-notes"
+                >
+                  <RecentNotesPanel residentId={resident.id} />
+                </AccordionSection>
+                <AccordionSection
+                  title="Key working sessions"
+                  subtitle="Plan, run and reflect — supported by frameworks &amp; resources"
+                  testid="acc-key-work"
+                >
+                  <KeyWorkPanel resident={resident} />
+                </AccordionSection>
+              </>
+            ) : (
+              <>
+                <AccordionSection
+                  title="Care plan & wishes"
+                  subtitle="Children&rsquo;s views, wishes, feelings, positive relationships"
+                  defaultOpen
+                  testid="acc-care"
+                >
+                  <CareTab resident={resident} />
+                </AccordionSection>
+                <AccordionSection
+                  title="Therapeutic key work"
+                  subtitle="Plan, run and reflect — supported by frameworks &amp; resources"
+                  testid="acc-key-work"
+                >
+                  <KeyWorkPanel resident={resident} />
+                </AccordionSection>
+                <AccordionSection
+                  title="Recent daily notes"
+                  subtitle="Latest staff observations &amp; welfare checks for this young person"
+                  testid="acc-notes"
+                >
+                  <RecentNotesPanel residentId={resident.id} />
+                </AccordionSection>
+              </>
+            )}
           </div>
         )}
 

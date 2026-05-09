@@ -179,6 +179,32 @@ A simple and fast care management app for children's homes and supported living.
 - Incident trend charts per resident
 - Witness picker — replace free-text witness with real staff selection (uses /auth/users; staff-role read access required)
 
+## Implemented (2026-02-09 — Iteration 30 — Sidebar split: Children's vs Adult Services)
+- **Sidebar grew from 6 to 7 locked operational areas** (user-mandated): Dashboard · **Children's Services** · **Adult Services** · Home Operations · Staff Operations · Compliance & Oversight · Admin. Adult Services now has its own dedicated sidebar entry — never blended with Children's again.
+- **`ChildrensServicesHub`** (`/children`) — "OFSTED REGULATED" ribbon, 5 tabs: All Children · Medication Round · Incidents · Statutory Visits · Pocket Money. Pre-filters all embedded views to `sector=children`.
+- **`AdultServicesHub`** (`/adults`) — "CQC REGULATED" ribbon, 5 tabs: All Residents · Medication Round · **Wellbeing &amp; Incidents** · **Appointments &amp; Visits** · Finance. Adult-appropriate terminology in every tab label. Pre-filters embedded views to `sector=adult`.
+- **`Residents.jsx` accepts `sector` prop** — pre-filters list, restricts service-type dropdown when adding (no accidentally adding an adult under Children's hub or vice versa). Default service-type defaults to first allowed sector option.
+- **Backend `/api/residents?sector=children` bug fix**: now also includes legacy residents with `service_type=null` or missing field (was excluding 4 demo children residents seeded before the field existed). Sector partitioning is now strictly disjoint with zero overlap.
+- **Legacy `/residents` URL → 301 to `/children`** (most-common case) so existing bookmarks and `<Link>`s still work.
+- **Tested**: 4/4 new tests in `test_iteration30.py` (sector includes legacy nulls · adult excludes children · invalid sector graceful · zero overlap between sectors). 22/22 PASS for iter28-30 combined. Frontend smoke confirmed 7-item sidebar, 4 children in `/children`, 2 adults in `/adults`, legacy redirect working.
+
+## Implemented (2026-02-09 — Iteration 29 — Sector-aware Resident Profile (Children's vs Adult))
+- **Sector-aware Quick Actions panel**:
+  - Children: Add daily note · Log incident · Missing from care · Body map · **Start key work** ✨ (NEW — user-flagged) · Medication · Pocket money · Handover note.
+  - Adult: Daily observation · Medication · Care task · **Log fall** · Appointment · Welfare check · MCA / capacity · Contact.
+  - Sector ribbon ("Children's services" / "Adult services") visible at top-right of QA panel.
+- **Operational Overview** (`OverviewOperational.jsx`) — replaces the old static demographic-heavy Overview body with a "What staff need to know RIGHT NOW" command-centre. Sector-aware widget set:
+  - Children widgets: safeguarding (14d) · incidents (7d) · missing (30d) · body maps (30d) · return interviews outstanding · key work (days since last).
+  - Adult widgets: active medications · med refusals (14d) · appointments (next 7d) · falls (30d) · MCA / capacity status · daily observations (7d).
+  - Live alerts row (urgent severity tone) for: currently missing · risk review overdue · falls pattern.
+  - Each widget has a deep-link to the relevant tab; severity-coloured left-border (high=red / medium=amber / low=green).
+- **Sector-aware Daily Care tab content**:
+  - Children: Care plan & wishes · Therapeutic key work · Recent daily notes.
+  - Adult: Care delivery & routines · Wellbeing observations · Key working sessions.
+- **`Dashboard.PracticeAttentionCard` removed** (user-flagged: Therapeutic Practice should not float on Dashboard — it lives inside Key Work now).
+- **Endpoint `GET /api/residents/{rid}/operational-summary`** — server-side aggregator. Single round-trip computes sector classification + alerts + sector-specific widgets from existing collections (no fabricated data). Audit-quality counts: refused medications, falls (text-search incident bodies for "fall"/"fell"), appointments by date range, MCA status by `capacity_status_at` age in days.
+- **Tested**: 6/6 backend tests in `test_iteration29.py` (children/adult widget shapes · widget field shape · currently_missing alert urgency · 404 unknown resident · 401 unauth). Frontend smoke confirmed sector ribbons, sector-correct quick actions on both Maddy (children) and Tom (adult), operational widgets render with correct severity colours.
+
 ## Implemented (2026-02-09 — Iteration 28 — Chronology / Timeline rebuild · flagship safeguarding chronology)
 - **Replaces basic 3-source timeline with a full operational chronology** built from 9 source collections: incidents · missing_episodes · return_interviews · body_maps · medication_admins (refused/withheld only) · statutory_visits · key_work_sessions · health_appointments · notes. Each source is normalised into a unified event shape (id · at · category · severity · title · summary · actor_name · tags · metadata · category_label · category_colour · category_icon).
 - **Backend `timeline_service.py`**:
@@ -296,13 +322,17 @@ A simple and fast care management app for children's homes and supported living.
 ## Roadmap
 
 ### P0 — User-locked architecture (DO NOT REGRESS)
-- Sidebar MUST stay at 6 hubs: Dashboard · Residents · Home Operations · Staff Operations · Compliance & Oversight · Admin.
+- **Sidebar locked to 7 hubs**: Dashboard · Children's Services · Adult Services · Home Operations · Staff Operations · Compliance & Oversight · Admin.
 - Resident-specific workflows live INSIDE the 8-tab Resident Profile (never in the sidebar).
 - Home-wide workflows live ONLY in Home Operations.
+- Children's & Adult sectors are strictly partitioned — zero resident overlap.
+- Resident Profile is sector-aware (Children's vs Adult — Quick Actions, Overview widgets, Daily Care content all branch).
 
 ### P0 — Next focus (TBD with user)
-- ✅ ~~Iteration 28: Timeline / Chronology rebuild~~ (2026-02-09)
-- 🔜 **Iteration 29 candidate**: Sector-aware Resident Profile (children-vs-adult Quick Actions, Daily Care content, operational Overview). Plus the Key Work re-placement: surface Key Work in Resident Quick Actions and remove the standalone PracticeAttentionCard from Dashboard.
+- ✅ ~~Iteration 28: Chronology / Timeline rebuild~~ (2026-02-09)
+- ✅ ~~Iteration 29: Sector-aware Resident Profile + Key Work in Quick Actions~~ (2026-02-09)
+- ✅ ~~Iteration 30: Sidebar split into Children's vs Adult Services~~ (2026-02-09)
+- 🔜 **Iteration 31 candidate**: Adult-specific module build-out (Care Tasks · Mobility · Falls · MCA · Wellbeing observations · Sleep · Nutrition · Hydration) OR pre-deploy health check to ship what we have.
 
 ### P1
 - Phase D — Staff Operations expansion inside the hub (sleep-in tracking, shift swaps, leave, clock in/out, daily staffing overview) — adds tabs to `/staff-operations`.

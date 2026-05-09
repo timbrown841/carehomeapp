@@ -2009,7 +2009,15 @@ async def list_residents(
         q["service_type"] = service_type
     elif sector:
         ids = [s["id"] for s in SERVICE_TYPE_REGISTRY if s["sector"] == sector]
-        q["service_type"] = {"$in": ids}
+        # For children sector, include legacy residents with null/missing service_type
+        if sector == "children":
+            q["$or"] = [
+                {"service_type": {"$in": ids}},
+                {"service_type": None},
+                {"service_type": {"$exists": False}},
+            ]
+        else:
+            q["service_type"] = {"$in": ids}
     docs = await db.residents.find(q, {"_id": 0}).sort("created_at", -1).to_list(500)
     # Normalise: any legacy resident without service_type is treated as 'children'
     for d in docs:
@@ -2138,6 +2146,278 @@ async def update_resident(
         after=audit_after,
     )
     return after
+
+
+@api_router.get("/residents/{rid}/operational-summary")
+async def resident_operational_summary(
+    rid: str,
+    user: dict = Depends(get_current_user),
+):
+    """Sector-aware 'what staff need to know RIGHT NOW' summary for the Resident Overview.
+
+    Returns sector ('children' | 'adult'), priority alerts, and a list of
+    operational widgets tailored to the sector. All counts are computed
+    from existing collections — no fabricated data.
+    """
+    resident = await db.residents.find_one({"id": rid}, {"_id": 0})
+    if not resident:
+        raise HTTPException(404, "Resident not found")
+
+    service_type = resident.get("service_type") or "children"
+    ADULT_TYPES = {"adult_supported_living", "elderly_residential", "dementia", "mental_health", "veteran"}
+    sector = "adult" if service_type in ADULT_TYPES else "children"
+
+    now = datetime.now(timezone.utc)
+    cutoff_7 = (now - timedelta(days=7)).isoformat()
+    cutoff_14 = (now - timedelta(days=14)).isoformat()
+    cutoff_30 = (now - timedelta(days=30)).isoformat()
+    next_7_days = (now + timedelta(days=7)).isoformat()
+
+    widgets: list = []
+    alerts: list = []
+
+    # -------- Shared: risk review status --------
+    next_review = resident.get("next_risk_review")
+    review_overdue = False
+    if next_review:
+        try:
+            d = datetime.fromisoformat(str(next_review).replace("Z", "+00:00"))
+            review_overdue = d < now
+        except Exception:
+            pass
+    if review_overdue:
+        alerts.append({
+            "id": "risk_review_overdue", "severity": "high",
+            "label": "Risk review overdue", "sublabel": "Action required",
+            "tab": "safeguarding",
+        })
+
+    if sector == "children":
+        # ---------- Children-specific operational widgets ----------
+        # Currently missing
+        active_missing = await db.missing_episodes.find_one(
+            {"resident_id": rid, "returned_at": None}, {"_id": 0},
+        )
+        if active_missing:
+            alerts.append({
+                "id": "currently_missing", "severity": "urgent",
+                "label": "Currently missing",
+                "sublabel": f"Reported {(active_missing.get('reported_at') or '')[:16].replace('T', ' ')}",
+                "tab": "safeguarding",
+            })
+
+        # Safeguarding events in last 14 days (uses chronology)
+        sg_14 = await db.incidents.count_documents({
+            "resident_id": rid, "safeguarding": True, "created_at": {"$gte": cutoff_14},
+        })
+        widgets.append({
+            "id": "safeguarding_14d",
+            "title": "Safeguarding events",
+            "value": sg_14, "sublabel": "last 14 days",
+            "severity": "high" if sg_14 >= 2 else "medium" if sg_14 else "low",
+            "icon": "ShieldAlert", "tab": "safeguarding",
+        })
+
+        # Recent incidents 7d
+        inc_7 = await db.incidents.count_documents({
+            "resident_id": rid, "created_at": {"$gte": cutoff_7},
+        })
+        widgets.append({
+            "id": "incidents_7d",
+            "title": "Incidents",
+            "value": inc_7, "sublabel": "last 7 days",
+            "severity": "high" if inc_7 >= 3 else "medium" if inc_7 else "low",
+            "icon": "AlertOctagon", "tab": "safeguarding",
+        })
+
+        # Missing episodes 30d
+        miss_30 = await db.missing_episodes.count_documents({
+            "resident_id": rid, "reported_at": {"$gte": cutoff_30},
+        })
+        widgets.append({
+            "id": "missing_30d",
+            "title": "Missing episodes",
+            "value": miss_30, "sublabel": "last 30 days",
+            "severity": "high" if miss_30 >= 3 else "medium" if miss_30 else "low",
+            "icon": "AlertTriangle", "tab": "safeguarding",
+        })
+
+        # Body maps 30d
+        bm_30 = await db.body_maps.count_documents({
+            "resident_id": rid, "recorded_at": {"$gte": cutoff_30},
+        })
+        widgets.append({
+            "id": "body_maps_30d",
+            "title": "Body maps",
+            "value": bm_30, "sublabel": "last 30 days",
+            "severity": "medium" if bm_30 >= 1 else "low",
+            "icon": "User", "tab": "safeguarding",
+        })
+
+        # Open return interview tasks (missing episodes >24h with no return interview)
+        all_missing = await db.missing_episodes.find(
+            {"resident_id": rid}, {"_id": 0, "id": 1, "returned_at": 1, "return_interview_id": 1, "reported_at": 1},
+        ).to_list(200)
+        outstanding_ri = sum(
+            1 for m in all_missing
+            if m.get("returned_at") and not m.get("return_interview_id")
+        )
+        widgets.append({
+            "id": "ri_outstanding",
+            "title": "Return interviews",
+            "value": outstanding_ri, "sublabel": "outstanding",
+            "severity": "high" if outstanding_ri >= 1 else "low",
+            "icon": "MessageCircle", "tab": "safeguarding",
+        })
+
+        # Last key work
+        last_kw = await db.key_work_sessions.find_one(
+            {"resident_id": rid}, {"_id": 0, "session_at": 1, "topic_label": 1},
+            sort=[("session_at", -1)],
+        )
+        days_since_kw = None
+        if last_kw and last_kw.get("session_at"):
+            try:
+                d = datetime.fromisoformat(last_kw["session_at"].replace("Z", "+00:00"))
+                days_since_kw = (now - d).days
+            except Exception:
+                pass
+        kw_severity = "low"
+        if days_since_kw is None:
+            kw_label, kw_value = "Not yet started", "—"
+            kw_severity = "medium"
+        else:
+            kw_value = f"{days_since_kw}d"
+            kw_label = "since last session"
+            if days_since_kw > 21:
+                kw_severity = "high"
+            elif days_since_kw > 14:
+                kw_severity = "medium"
+        widgets.append({
+            "id": "key_work_last",
+            "title": "Key work",
+            "value": kw_value, "sublabel": kw_label,
+            "severity": kw_severity,
+            "icon": "MessageSquare", "tab": "daily-care",
+        })
+
+    else:
+        # ---------- Adult-specific operational widgets ----------
+        # Active medications (count of active prescriptions)
+        active_meds = await db.medications.count_documents({
+            "resident_id": rid,
+            "$or": [{"end_date": None}, {"end_date": {"$gte": now.isoformat()[:10]}}],
+        })
+        widgets.append({
+            "id": "active_meds",
+            "title": "Active medications",
+            "value": active_meds, "sublabel": "prescribed",
+            "severity": "medium" if active_meds >= 4 else "low",
+            "icon": "Pill", "tab": "health",
+        })
+
+        # Recent medication refusals/withholds (14d)
+        med_refusals_14 = await db.medication_admins.count_documents({
+            "resident_id": rid,
+            "status": {"$in": ["refused", "withheld"]},
+            "scheduled_at": {"$gte": cutoff_14},
+        })
+        widgets.append({
+            "id": "med_refusals_14d",
+            "title": "Med refusals",
+            "value": med_refusals_14, "sublabel": "last 14 days",
+            "severity": "high" if med_refusals_14 >= 3 else "medium" if med_refusals_14 else "low",
+            "icon": "Pill", "tab": "health",
+        })
+
+        # Appointments next 7d
+        appt_next_7 = await db.health_appointments.count_documents({
+            "resident_id": rid,
+            "date": {"$gte": now.isoformat()[:10], "$lte": next_7_days[:10]},
+        })
+        widgets.append({
+            "id": "appt_next_7d",
+            "title": "Appointments",
+            "value": appt_next_7, "sublabel": "next 7 days",
+            "severity": "medium" if appt_next_7 >= 1 else "low",
+            "icon": "CalendarClock", "tab": "health",
+        })
+
+        # Falls in last 30d (incidents tagged 'fall' OR text contains 'fall')
+        falls_30_count = 0
+        async for inc in db.incidents.find({
+            "resident_id": rid, "created_at": {"$gte": cutoff_30},
+        }, {"_id": 0, "tags": 1, "structured_report": 1, "body": 1, "category": 1}):
+            blob = " ".join([
+                str(inc.get("structured_report") or ""),
+                str(inc.get("body") or ""),
+                str(inc.get("category") or ""),
+                " ".join(inc.get("tags") or []),
+            ]).lower()
+            if "fall" in blob or "fell" in blob:
+                falls_30_count += 1
+        widgets.append({
+            "id": "falls_30d",
+            "title": "Falls",
+            "value": falls_30_count, "sublabel": "last 30 days",
+            "severity": "high" if falls_30_count >= 2 else "medium" if falls_30_count else "low",
+            "icon": "AlertTriangle", "tab": "safeguarding",
+        })
+        if falls_30_count >= 2:
+            alerts.append({
+                "id": "falls_pattern", "severity": "high",
+                "label": "Falls pattern",
+                "sublabel": f"{falls_30_count} falls in 30 days",
+                "tab": "safeguarding",
+            })
+
+        # MCA / capacity status
+        capacity_at = resident.get("capacity_status_at")
+        capacity_severity = "low"
+        capacity_value = "Not assessed"
+        if capacity_at:
+            try:
+                d = datetime.fromisoformat(str(capacity_at).replace("Z", "+00:00"))
+                days_since = (now - d).days
+                if days_since > 365:
+                    capacity_severity = "high"
+                    capacity_value = f"{days_since}d ago"
+                elif days_since > 180:
+                    capacity_severity = "medium"
+                    capacity_value = f"{days_since}d ago"
+                else:
+                    capacity_value = f"{days_since}d ago"
+            except Exception:
+                capacity_value = str(capacity_at)[:10]
+        else:
+            capacity_severity = "medium"
+        widgets.append({
+            "id": "mca_status",
+            "title": "MCA / Capacity",
+            "value": capacity_value, "sublabel": "last assessed",
+            "severity": capacity_severity,
+            "icon": "ClipboardCheck", "tab": "safeguarding",
+        })
+
+        # Recent observations (7d) — using notes
+        obs_7 = await db.notes.count_documents({
+            "resident_id": rid, "created_at": {"$gte": cutoff_7},
+        })
+        widgets.append({
+            "id": "observations_7d",
+            "title": "Daily observations",
+            "value": obs_7, "sublabel": "last 7 days",
+            "severity": "low" if obs_7 >= 5 else "medium",
+            "icon": "NotebookPen", "tab": "daily-care",
+        })
+
+    return {
+        "resident_id": rid,
+        "service_type": service_type,
+        "sector": sector,
+        "alerts": alerts,
+        "widgets": widgets,
+    }
 
 
 @api_router.get("/residents/{rid}/timeline")

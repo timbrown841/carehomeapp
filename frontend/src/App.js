@@ -7,8 +7,9 @@ import Layout from "@/components/Layout";
 import Login from "@/pages/Login";
 import Dashboard from "@/pages/Dashboard";
 
-// Resident hub + detail
-import ResidentsHub from "@/pages/ResidentsHub";
+// Hubs (locked sidebar areas)
+import ChildrensServicesHub from "@/pages/ChildrensServicesHub";
+import AdultServicesHub from "@/pages/AdultServicesHub";
 import ResidentDetail from "@/pages/ResidentDetail";
 
 // Resident-scoped flows that need their own URL (deep-linked)
@@ -87,8 +88,11 @@ function App() {
             >
               <Route path="/" element={<Dashboard />} />
 
-              {/* === SIDEBAR: 6 LOCKED HUBS === */}
-              <Route path="/residents" element={<ResidentsHub />} />
+              {/* === SIDEBAR: 7 LOCKED HUBS === */}
+              <Route path="/children" element={<ChildrensServicesHub />} />
+              <Route path="/adults" element={<AdultServicesHub />} />
+              {/* Legacy /residents URL → children's hub (most common case) */}
+              <Route path="/residents" element={<Navigate to="/children" replace />} />
               <Route path="/operations" element={<HomeOperations />} />
               <Route path="/staff-operations" element={<StaffOperationsHub />} />
               <Route
@@ -100,7 +104,7 @@ function App() {
                 element={<ManagerOnly><Admin /></ManagerOnly>}
               />
 
-              {/* Resident detail — primary deep-link target */}
+              {/* Resident detail — primary deep-link target. URL pattern preserved. */}
               <Route path="/residents/:id" element={<ResidentDetail />} />
 
               {/* Resident-scoped sub-routes (deep-linked from inside profile) */}
