@@ -1,6 +1,7 @@
 import { Outlet, NavLink, useLocation } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import api from "@/lib/api";
 import {
   LayoutDashboard,
   Users,
@@ -17,6 +18,7 @@ import {
   ClipboardList,
   GraduationCap,
   ShieldCheck,
+  HeartPulse,
   LogOut,
   Menu,
   X,
@@ -81,6 +83,14 @@ const groups = [
       { to: "/reports", label: "Reports", icon: FileText, testid: "nav-reports", minTier: 3 },
     ],
   },
+  {
+    label: "Adult Services",
+    minTier: 2,
+    requiresAdultSector: true,
+    items: [
+      { to: "/cqc-readiness", label: "CQC Readiness", icon: HeartPulse, testid: "nav-cqc-readiness" },
+    ],
+  },
 ];
 
 function NavItem({ link, onClick }) {
@@ -109,6 +119,22 @@ export default function Layout() {
   const { user, logout, tier } = useAuth();
   const location = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [hasAdultSector, setHasAdultSector] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .get("/service-types/active")
+      .then((r) => {
+        if (cancelled) return;
+        const sectors = r.data?.all_active_sectors || [];
+        setHasAdultSector(sectors.includes("adult"));
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const close = () => setMobileOpen(false);
 
@@ -153,6 +179,7 @@ export default function Layout() {
           <nav className="p-3 space-y-4">
             {groups.map((g) => {
               if (g.minTier && tier < g.minTier) return null;
+              if (g.requiresAdultSector && !hasAdultSector) return null;
               const items = g.items.filter(
                 (l) => (!l.roles || l.roles.includes(user?.role)) && (!l.minTier || tier >= l.minTier)
               );

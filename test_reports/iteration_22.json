@@ -1,0 +1,41 @@
+{
+  "summary": "Iteration 22 (Adult Services modular overlay) end-to-end validation: backend 13/13 pytest pass (1 HR test skipped — endpoint discovery), frontend manual playwright pass on all critical flows. CQCReadiness route gated correctly (Senior+/Manager/Admin can load; staff redirected to /). 'Adult Services' sidebar group renders for manager and senior with nav-cqc-readiness link; hidden for staff (tier 1). CQC page renders cqc-readiness-page + cqc-stats + cqc-five-key-questions + cqc-audits and all 5 KQ tiles (safe/effective/caring/responsive/well_led). Service-types active endpoint returns both 'children' and 'adult' sectors; full registry exposes all 6 service types. Residents filter by service_type=children/adult_supported_living and sector=adult work as designed. Adult residents (Tom Whitfield supported_living, Margaret Lewis elderly_residential) render AdultProfileSection with NHS/GP/Tenancy/Mental-health fields plus correct ServiceBadge. Children resident (Maddy) does NOT render adult-profile-section, retains 8-tab structure (tab-overview, tab-daily-care, tab-safeguarding, tab-health, tab-education, tab-finance, tab-documents, tab-timeline) and alerts-and-risks-bar — children's workflows untouched. Pocket-money/visits/notes/incidents pages all load without errors. Note: review_request named the seeded adult resident 'Tom Bryant' but actual seed name is 'Tom Whitfield' — minor doc/seed mismatch, not a functional bug.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration22.py",
+    "/app/test_reports/pytest/iteration22_results.xml"
+  ],
+  "action_items": [
+    "(doc-only) Update review_request / seed comment: actual adult_supported_living seed name is 'Tom Whitfield', not 'Tom Bryant'. No functional impact.",
+    "(nice-to-have) HR endpoints aren't easily discoverable for automated role-gate testing — consider adding a clearly-named gated endpoint (e.g. GET /api/hr/applicants requiring tier>=3) so regression suites can verify senior 403 unambiguously."
+  ],
+  "critical_code_review_comments": [
+    "Layout.jsx: useEffect call to /service-types/active with cancelled-flag pattern is correct; silent catch means a backend outage will simply hide Adult Services group (acceptable graceful degradation). No retry/backoff but probably fine since single-fetch on mount.",
+    "App.js: SeniorOrAbove guard is implemented inline alongside ManagerOnly — consistent pattern, both redirect to '/' for non-permitted roles. Direct nav by staff to /cqc-readiness correctly redirects (verified).",
+    "ResidentDetail.jsx still ~1360+ lines (carryover from iter-21 review) — splitting into per-tab files would aid maintainability now that AdultProfileSection has been added inline at line 772. AdultProfileSection itself is conditional via isAdultService(resident.service_type) — clean and regression-safe.",
+    "serviceTypes.js fallback registry is duplicated with backend SERVICE_TYPE_REGISTRY — consider hydrating from /api/service-types on app start and falling back to local only on failure, to avoid drift. Currently both are in sync (verified via backend test).",
+    "Backend /api/cqc/readiness payload contract exact match to frontend expectations (5 KQs with id/label/status, 3 audits with name/due/status, integer counters). Auth required via require_user — 401 without bearer (verified).",
+    "Backend /api/residents accepts both ?service_type= (single value) and ?sector=adult (multi-type aggregation) — confirmed both filter correctly without leakage."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration22.py"
+  ],
+  "success_rate": {
+    "backend": "100% (13/13 ran; 1 skipped — HR endpoint not exposed for automated discovery)",
+    "frontend": "100% on iter-22 scope (sidebar gating, CQC page, AdultProfileSection conditional, regression on children's tabs/pages)"
+  },
+  "test_credentials": "Used seeded creds from /app/memory/test_credentials.md — manager/senior/staff/admin all login fine.",
+  "seed_data_creation": "None for this iteration. Existing seed includes Tom Whitfield (adult_supported_living) + Margaret Lewis (elderly_residential) plus children residents (Maddy O'Brien etc.).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iter-22 frontend wiring (CQCReadiness route + 'Adult Services' sidebar group with requiresAdultSector + minTier:2) is GREEN. Backend service-types/cqc/residents-filtering endpoints verified solid in /app/backend/tests/test_iteration22.py. If next iter expands CQC analytics or adult-services pages, extend that test file; key data-testids confirmed: cqc-readiness-page, cqc-stats, cqc-five-key-questions, cqc-audits, cqc-kq-{safe|effective|caring|responsive|well_led}, nav-cqc-readiness, adult-profile-section, service-badge-{adult_supported_living|elderly_residential|children}. Note that sidebar group label is rendered with CSS uppercase transform — use case-insensitive selectors / innerHTML when asserting group label text.",
+  "rca of the issue": "No bugs uncovered. Two minor noise items: (1) backend pocket-money list endpoint is GET /api/pocket-money (not /pocket-money/balances) and handovers list is GET /api/handovers (plural) — corrected in test file. (2) Seed adult name is 'Tom Whitfield' rather than 'Tom Bryant' as referenced in review_request — adjust documentation for consistency."
+}

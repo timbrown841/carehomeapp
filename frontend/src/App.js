@@ -23,6 +23,7 @@ import PocketMoney from "@/pages/PocketMoney";
 import PettyCashPage from "@/pages/PettyCashPage";
 import Handover from "@/pages/Handover";
 import SaferRecruitment from "@/pages/SaferRecruitment";
+import CQCReadiness from "@/pages/CQCReadiness";
 
 function Protected({ children }) {
   const { user, loading } = useAuth();
@@ -40,6 +41,13 @@ function ManagerOnly({ children }) {
   const { user } = useAuth();
   if (!user) return <Navigate to="/login" replace />;
   if (!["manager", "admin"].includes(user.role)) return <Navigate to="/" replace />;
+  return children;
+}
+
+function SeniorOrAbove({ children }) {
+  const { user } = useAuth();
+  if (!user) return <Navigate to="/login" replace />;
+  if (!["senior", "manager", "admin"].includes(user.role)) return <Navigate to="/" replace />;
   return children;
 }
 
@@ -76,6 +84,14 @@ function App() {
               <Route path="/visits" element={<Visits />} />
               <Route path="/pocket-money" element={<PocketMoney />} />
               <Route path="/ofsted" element={<OfstedReadiness />} />
+              <Route
+                path="/cqc-readiness"
+                element={
+                  <SeniorOrAbove>
+                    <CQCReadiness />
+                  </SeniorOrAbove>
+                }
+              />
               <Route
                 path="/reports"
                 element={
