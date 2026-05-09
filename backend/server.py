@@ -1609,11 +1609,11 @@ class WitnessRef(BaseModel):
     kind: Literal["staff", "resident", "external"] = "external"
     user_id: Optional[str] = None  # for staff
     resident_id: Optional[str] = None  # for resident
-    name: str
-    role: Optional[str] = None  # e.g. "Social Worker", "Police Officer"
-    organisation: Optional[str] = None
-    contact: Optional[str] = None  # phone/email for external
-    notes: Optional[str] = None
+    name: str = Field(..., max_length=200)
+    role: Optional[str] = Field(None, max_length=200)
+    organisation: Optional[str] = Field(None, max_length=200)
+    contact: Optional[str] = Field(None, max_length=200)
+    notes: Optional[str] = Field(None, max_length=2000)
 
 
 class IncidentIn(BaseModel):
@@ -5734,10 +5734,13 @@ async def list_audit_events(
             time_q["$lte"] = to_at
         query["at"] = time_q
     if q:
-        query["$or"] = [
-            {"summary": {"$regex": q, "$options": "i"}},
-            {"actor_name": {"$regex": q, "$options": "i"}},
-        ]
+        # Strip regex metacharacters to keep filter safe and predictable.
+        safe_q = "".join(c for c in q if c.isalnum() or c in " _-.,'/")
+        if safe_q.strip():
+            query["$or"] = [
+                {"summary": {"$regex": safe_q, "$options": "i"}},
+                {"actor_name": {"$regex": safe_q, "$options": "i"}},
+            ]
     limit = max(1, min(int(limit or 200), 1000))
     items = await db.audit_events.find(query, {"_id": 0}).sort("at", -1).to_list(limit)
     total = await db.audit_events.count_documents(query)
