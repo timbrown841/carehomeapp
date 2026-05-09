@@ -179,6 +179,25 @@ A simple and fast care management app for children's homes and supported living.
 - Incident trend charts per resident
 - Witness picker — replace free-text witness with real staff selection (uses /auth/users; staff-role read access required)
 
+## Implemented (2026-02-09 — Iteration 31 — Adult Services modules build-out)
+- **5 new collections** with full CRUD + RBAC + audit-logging:
+  - **`care_tasks`** — kind (morning/afternoon/evening routine, personal_care, hygiene_support, meal_support, medication_prompt, domestic_support, community_access, appointment_support, welfare_check), title, due_at, status (pending → completed / refused / missed), refused_reason, support_minutes. Staff complete; manager+ delete.
+  - **`falls`** — separate from generic incidents. occurred_at, location, witnessed, injury (none/minor/moderate/serious), hospital_involvement (none/ambulance/A&E/admitted), equipment_involved, action_taken, follow_up. Manager+ sign-off.
+  - **`mobility_assessments`** — mobility_level (independent/walking_aid/wheelchair/hoist/bedbound), falls_risk (low/medium/high), walking_aids[], moving_handling_needs, equipment_required[], staff_guidance, review_date.
+  - **`mca_assessments`** — Mental Capacity Act decision-specific assessment. decision_topic, can_understand/retain/weigh/communicate, capacity_outcome (has_capacity/lacks_capacity/fluctuating), best_interest_decision, advocate/family involvement, review_date. **Senior+ to create**, **manager+ to sign off**. Reflects to `residents.capacity_status`/`capacity_status_at` for downstream alerts.
+  - **`wellbeing_observations`** — mood (positive/stable/flat/low/agitated/withdrawn), hydration_level, nutrition_intake, sleep_quality (good/adequate/poor/disturbed), engagement, presentation, mental_health_concerns, self_neglect_concerns. Auto-computed `deterioration_flag` (server-side rule).
+- **Adult Resident Profile wiring** (sector-aware accordions inside the existing 8-tab structure):
+  - Daily Care → **Care tasks** (defaultOpen) · **Wellbeing observations** · Care delivery & routines · Recent daily notes.
+  - Health → Medical overview · Medications (MAR) · **Falls register** (defaultOpen, red-tinted) · **Mobility assessment** · Health & wellbeing.
+  - Safeguarding → Risk · Missing · Body maps · Recent incidents · **MCA / Capacity assessments**.
+- **Adult Quick Actions** updated to 8 deep-linking buttons: Care task · Wellbeing obs · Log fall · Medication · Mobility · Appointment · MCA / capacity · Welfare check.
+- **Operational summary upgraded for adults** — 9 widgets now compute against real data (was 6):
+  - **`care_tasks_due`** (today, pending) · **`care_tasks_missed_7d`** (with high-severity alert at 3+) · `active_meds` · `med_refusals_14d` · `appt_next_7d` · **`falls_30d`** (real count from falls collection now, not text-search) · **`mobility_risk`** (latest assessment) · `mca_status` (latest MCA assessment with outcome-based severity) · **`wellbeing_14d`** (with deterioration count + alert when 2+).
+- **Chronology integration** — 5 new event categories with colour/icon: `care_task` · `fall` · `mobility` · `mca` · `wellbeing`. All 5 collections feed the resident timeline + chronology PDF + pattern detection.
+- **3 new pattern rules**: Falls cluster (2+ in 30d) · Missed care tasks rising (3+ in 7d) · Wellbeing deterioration (2+ deterioration-flagged obs in 14d). Detected automatically from any adult resident chronology.
+- **Compliance integration** — every adult-module action records `audit_events` (care_task_create / fall_create / fall_signoff / mobility_create / mca_create / mca_signoff / wellbeing_create) with full before/after metadata.
+- **Tested**: 10/10 new tests in `test_iteration31.py`, 90/90 across iter25-31 combined, frontend smoke confirmed all 8 Adult Quick Actions render, Care Tasks panel embedded in Daily Care, Falls panel in Health, MCA panel in Safeguarding (collapsed), end-to-end care task creation flow.
+
 ## Implemented (2026-02-09 — Iteration 30 — Sidebar split: Children's vs Adult Services)
 - **Sidebar grew from 6 to 7 locked operational areas** (user-mandated): Dashboard · **Children's Services** · **Adult Services** · Home Operations · Staff Operations · Compliance & Oversight · Admin. Adult Services now has its own dedicated sidebar entry — never blended with Children's again.
 - **`ChildrensServicesHub`** (`/children`) — "OFSTED REGULATED" ribbon, 5 tabs: All Children · Medication Round · Incidents · Statutory Visits · Pocket Money. Pre-filters all embedded views to `sector=children`.
@@ -332,7 +351,8 @@ A simple and fast care management app for children's homes and supported living.
 - ✅ ~~Iteration 28: Chronology / Timeline rebuild~~ (2026-02-09)
 - ✅ ~~Iteration 29: Sector-aware Resident Profile + Key Work in Quick Actions~~ (2026-02-09)
 - ✅ ~~Iteration 30: Sidebar split into Children's vs Adult Services~~ (2026-02-09)
-- 🔜 **Iteration 31 candidate**: Adult-specific module build-out (Care Tasks · Mobility · Falls · MCA · Wellbeing observations · Sleep · Nutrition · Hydration) OR pre-deploy health check to ship what we have.
+- ✅ ~~Iteration 31: Adult Services modules build-out (Care Tasks, Falls, Mobility, MCA, Wellbeing)~~ (2026-02-09)
+- 🔜 **Iteration 32 candidates**: Pre-deploy health check · Strategy Meeting Pack PDF (chronology + risk + missing + body maps in 1 click) · Adult-services demo data seeding so adult residents arrive populated · Care task scheduler/template (recurring routines).
 
 ### P1
 - Phase D — Staff Operations expansion inside the hub (sleep-in tracking, shift swaps, leave, clock in/out, daily staffing overview) — adds tabs to `/staff-operations`.

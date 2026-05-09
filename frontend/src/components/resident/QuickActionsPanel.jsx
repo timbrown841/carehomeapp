@@ -32,14 +32,14 @@ export default function QuickActionsPanel({ resident, onTabChange, onAddNote, on
   ];
 
   const adults = [
-    { label: "Daily observation", icon: Eye,             tone: "#2F6A3A", onClick: onAddNote,      testid: "qa-resident-note" },
-    { label: "Medication",        icon: Pill,            tone: "#7A4F8C", to: `/residents/${rid}?tab=health`,    testid: "qa-resident-meds" },
-    { label: "Care task",         icon: ClipboardList,   tone: "#0E3B4A", onClick: onAddNote,      testid: "qa-resident-care-task" },
-    { label: "Log fall",          icon: Footprints,      tone: "#A8273A", onClick: onLogIncident,  testid: "qa-resident-fall" },
-    { label: "Appointment",       icon: CalendarClock,   tone: "#1C5C8C", to: `/residents/${rid}?tab=health`,    testid: "qa-resident-appointment" },
-    { label: "Welfare check",     icon: Activity,        tone: "#2F6A3A", onClick: onAddNote,      testid: "qa-resident-welfare" },
-    { label: "MCA / capacity",    icon: ClipboardCheck,  tone: "#3F4F8C", to: `/residents/${rid}?tab=safeguarding`, testid: "qa-resident-mca" },
-    { label: "Contact",           icon: PhoneCall,       tone: "#5d6068", onClick: () => onTabChange?.("overview"), testid: "qa-resident-contact" },
+    { label: "Care task",         icon: ClipboardList,   tone: "#3F4F8C", to: `/residents/${rid}?tab=daily-care`,      testid: "qa-resident-care-task" },
+    { label: "Wellbeing obs",     icon: Eye,             tone: "#2F6A3A", to: `/residents/${rid}?tab=daily-care`,      testid: "qa-resident-note" },
+    { label: "Log fall",          icon: Footprints,      tone: "#A8273A", to: `/residents/${rid}?tab=health`,          testid: "qa-resident-fall" },
+    { label: "Medication",        icon: Pill,            tone: "#7A4F8C", to: `/residents/${rid}?tab=health`,          testid: "qa-resident-meds" },
+    { label: "Mobility",          icon: Activity,        tone: "#3F4F8C", to: `/residents/${rid}?tab=health`,          testid: "qa-resident-mobility" },
+    { label: "Appointment",       icon: CalendarClock,   tone: "#1C5C8C", to: `/residents/${rid}?tab=health`,          testid: "qa-resident-appointment" },
+    { label: "MCA / capacity",    icon: ClipboardCheck,  tone: "#7A4F8C", to: `/residents/${rid}?tab=safeguarding`,    testid: "qa-resident-mca" },
+    { label: "Welfare check",     icon: PhoneCall,       tone: "#5d6068", onClick: onAddNote,                          testid: "qa-resident-welfare" },
   ];
 
   const actions = adult ? adults : children;

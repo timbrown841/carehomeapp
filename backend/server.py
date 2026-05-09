@@ -44,6 +44,11 @@ from home_operations_seed import CHECK_TYPES, evaluate_status
 from home_operations_pdf import build_compliance_snapshot_pdf
 from timeline_service import build_chronology, detect_patterns, CATEGORY_META
 from chronology_pdf import build_chronology_pdf
+from adult_services_models import (
+    CareTaskIn, CareTaskUpdate, FallIn, FallUpdate,
+    MobilityAssessmentIn, MCAAssessmentIn, WellbeingObservationIn,
+    is_deterioration,
+)
 import secrets as _secrets
 
 
@@ -105,6 +110,14 @@ async def lifespan(_app: FastAPI):
     await db.compliance_logs.create_index([("check_type_id", 1), ("performed_at", -1)])
     await db.compliance_logs.create_index([("home_id", 1), ("performed_at", -1)])
     await db.maintenance_issues.create_index([("home_id", 1), ("status", 1), ("reported_at", -1)])
+
+    # Adult-services collections (Iteration 31)
+    await db.care_tasks.create_index([("resident_id", 1), ("due_at", -1)])
+    await db.care_tasks.create_index([("resident_id", 1), ("status", 1), ("due_at", -1)])
+    await db.falls.create_index([("resident_id", 1), ("occurred_at", -1)])
+    await db.mobility_assessments.create_index([("resident_id", 1), ("assessed_at", -1)])
+    await db.mca_assessments.create_index([("resident_id", 1), ("assessed_at", -1)])
+    await db.wellbeing_observations.create_index([("resident_id", 1), ("observed_at", -1)])
 
     # Idempotent therapeutic content seed
     for fw in FRAMEWORKS:
@@ -2303,6 +2316,39 @@ async def resident_operational_summary(
 
     else:
         # ---------- Adult-specific operational widgets ----------
+        # Care tasks today (due today, status=pending)
+        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+        today_end = now.replace(hour=23, minute=59, second=59, microsecond=0).isoformat()
+        ct_due_today = await db.care_tasks.count_documents({
+            "resident_id": rid, "status": "pending",
+            "due_at": {"$gte": today_start, "$lte": today_end},
+        })
+        ct_missed_7 = await db.care_tasks.count_documents({
+            "resident_id": rid, "status": "missed",
+            "due_at": {"$gte": cutoff_7},
+        })
+        widgets.append({
+            "id": "care_tasks_due",
+            "title": "Care tasks today",
+            "value": ct_due_today, "sublabel": "still pending",
+            "severity": "high" if ct_due_today >= 5 else "medium" if ct_due_today else "low",
+            "icon": "ClipboardList", "tab": "daily-care",
+        })
+        widgets.append({
+            "id": "care_tasks_missed_7d",
+            "title": "Missed care tasks",
+            "value": ct_missed_7, "sublabel": "last 7 days",
+            "severity": "high" if ct_missed_7 >= 3 else "medium" if ct_missed_7 else "low",
+            "icon": "ClipboardList", "tab": "daily-care",
+        })
+        if ct_missed_7 >= 3:
+            alerts.append({
+                "id": "missed_care_pattern", "severity": "high",
+                "label": "Missed care tasks rising",
+                "sublabel": f"{ct_missed_7} missed in 7 days",
+                "tab": "daily-care",
+            })
+
         # Active medications (count of active prescriptions)
         active_meds = await db.medications.count_documents({
             "resident_id": rid,
@@ -2316,7 +2362,7 @@ async def resident_operational_summary(
             "icon": "Pill", "tab": "health",
         })
 
-        # Recent medication refusals/withholds (14d)
+        # Recent medication refusals (14d)
         med_refusals_14 = await db.medication_admins.count_documents({
             "resident_id": rid,
             "status": {"$in": ["refused", "withheld"]},
@@ -2343,73 +2389,102 @@ async def resident_operational_summary(
             "icon": "CalendarClock", "tab": "health",
         })
 
-        # Falls in last 30d (incidents tagged 'fall' OR text contains 'fall')
-        falls_30_count = 0
-        async for inc in db.incidents.find({
-            "resident_id": rid, "created_at": {"$gte": cutoff_30},
-        }, {"_id": 0, "tags": 1, "structured_report": 1, "body": 1, "category": 1}):
-            blob = " ".join([
-                str(inc.get("structured_report") or ""),
-                str(inc.get("body") or ""),
-                str(inc.get("category") or ""),
-                " ".join(inc.get("tags") or []),
-            ]).lower()
-            if "fall" in blob or "fell" in blob:
-                falls_30_count += 1
+        # Falls (real — from falls collection now, not text search)
+        falls_30 = await db.falls.count_documents({
+            "resident_id": rid, "occurred_at": {"$gte": cutoff_30},
+        })
         widgets.append({
             "id": "falls_30d",
             "title": "Falls",
-            "value": falls_30_count, "sublabel": "last 30 days",
-            "severity": "high" if falls_30_count >= 2 else "medium" if falls_30_count else "low",
-            "icon": "AlertTriangle", "tab": "safeguarding",
+            "value": falls_30, "sublabel": "last 30 days",
+            "severity": "high" if falls_30 >= 2 else "medium" if falls_30 else "low",
+            "icon": "Footprints", "tab": "health",
         })
-        if falls_30_count >= 2:
+        if falls_30 >= 2:
             alerts.append({
                 "id": "falls_pattern", "severity": "high",
-                "label": "Falls pattern",
-                "sublabel": f"{falls_30_count} falls in 30 days",
-                "tab": "safeguarding",
+                "label": "Recurrent falls",
+                "sublabel": f"{falls_30} falls in 30 days",
+                "tab": "health",
             })
 
-        # MCA / capacity status
-        capacity_at = resident.get("capacity_status_at")
+        # Latest mobility risk
+        last_mobility = await db.mobility_assessments.find_one(
+            {"resident_id": rid}, {"_id": 0, "falls_risk": 1, "mobility_level": 1},
+            sort=[("assessed_at", -1)],
+        )
+        mobility_risk = (last_mobility or {}).get("falls_risk") or "—"
+        widgets.append({
+            "id": "mobility_risk",
+            "title": "Mobility risk",
+            "value": mobility_risk.title() if mobility_risk != "—" else "—",
+            "sublabel": (last_mobility or {}).get("mobility_level", "Not assessed").replace("_", " "),
+            "severity": "high" if mobility_risk == "high" else "medium" if mobility_risk == "medium" else "low",
+            "icon": "Footprints", "tab": "health",
+        })
+
+        # MCA / capacity status — read latest MCA assessment, fallback to resident.capacity_status
+        last_mca = await db.mca_assessments.find_one(
+            {"resident_id": rid}, {"_id": 0, "capacity_outcome": 1, "assessed_at": 1, "decision_topic": 1},
+            sort=[("assessed_at", -1)],
+        )
         capacity_severity = "low"
-        capacity_value = "Not assessed"
-        if capacity_at:
-            try:
-                d = datetime.fromisoformat(str(capacity_at).replace("Z", "+00:00"))
-                days_since = (now - d).days
-                if days_since > 365:
-                    capacity_severity = "high"
-                    capacity_value = f"{days_since}d ago"
-                elif days_since > 180:
-                    capacity_severity = "medium"
-                    capacity_value = f"{days_since}d ago"
-                else:
-                    capacity_value = f"{days_since}d ago"
-            except Exception:
-                capacity_value = str(capacity_at)[:10]
+        if last_mca:
+            outcome = last_mca.get("capacity_outcome")
+            cap_value = outcome.replace("_", " ").title() if outcome else "—"
+            cap_sub = (last_mca.get("decision_topic") or "")[:40]
+            if outcome == "lacks_capacity":
+                capacity_severity = "high"
+            elif outcome == "fluctuating":
+                capacity_severity = "medium"
         else:
-            capacity_severity = "medium"
+            capacity_at = resident.get("capacity_status_at")
+            if capacity_at:
+                try:
+                    d = datetime.fromisoformat(str(capacity_at).replace("Z", "+00:00"))
+                    days_since = (now - d).days
+                    if days_since > 365:
+                        capacity_severity = "high"
+                    elif days_since > 180:
+                        capacity_severity = "medium"
+                    cap_value = (resident.get("capacity_status") or "—").replace("_", " ").title()
+                    cap_sub = f"{days_since}d ago"
+                except Exception:
+                    cap_value = "—"; cap_sub = "Not assessed"
+            else:
+                capacity_severity = "medium"
+                cap_value = "Not assessed"
+                cap_sub = "Action needed"
         widgets.append({
             "id": "mca_status",
             "title": "MCA / Capacity",
-            "value": capacity_value, "sublabel": "last assessed",
+            "value": cap_value, "sublabel": cap_sub,
             "severity": capacity_severity,
             "icon": "ClipboardCheck", "tab": "safeguarding",
         })
 
-        # Recent observations (7d) — using notes
-        obs_7 = await db.notes.count_documents({
-            "resident_id": rid, "created_at": {"$gte": cutoff_7},
+        # Wellbeing observations + deterioration in 14d
+        wb_14 = await db.wellbeing_observations.count_documents({
+            "resident_id": rid, "observed_at": {"$gte": cutoff_14},
+        })
+        det_14 = await db.wellbeing_observations.count_documents({
+            "resident_id": rid, "observed_at": {"$gte": cutoff_14},
+            "deterioration_flag": True,
         })
         widgets.append({
-            "id": "observations_7d",
-            "title": "Daily observations",
-            "value": obs_7, "sublabel": "last 7 days",
-            "severity": "low" if obs_7 >= 5 else "medium",
-            "icon": "NotebookPen", "tab": "daily-care",
+            "id": "wellbeing_14d",
+            "title": "Wellbeing checks",
+            "value": wb_14, "sublabel": f"{det_14} flagged" if det_14 else "last 14 days",
+            "severity": "high" if det_14 >= 2 else "medium" if det_14 else "low",
+            "icon": "Activity", "tab": "daily-care",
         })
+        if det_14 >= 2:
+            alerts.append({
+                "id": "wellbeing_deterioration", "severity": "high",
+                "label": "Wellbeing deterioration",
+                "sublabel": f"{det_14} flagged observations in 14 days",
+                "tab": "daily-care",
+            })
 
     return {
         "resident_id": rid,
@@ -2418,6 +2493,253 @@ async def resident_operational_summary(
         "alerts": alerts,
         "widgets": widgets,
     }
+
+
+# ============================================================
+# Adult Services modules (Iteration 31)
+# ============================================================
+
+# ---------- Care Tasks ----------
+@api_router.get("/residents/{rid}/care-tasks")
+async def list_care_tasks(
+    rid: str,
+    status: Optional[str] = None,
+    limit: int = 200,
+    _: dict = Depends(get_current_user),
+):
+    q: dict = {"resident_id": rid}
+    if status in ("pending", "completed", "refused", "missed"):
+        q["status"] = status
+    items = await db.care_tasks.find(q, {"_id": 0}).sort("due_at", -1).to_list(min(max(limit, 1), 1000))
+    return items
+
+
+@api_router.post("/residents/{rid}/care-tasks")
+async def create_care_task(rid: str, payload: CareTaskIn, user: dict = Depends(get_current_user)):
+    doc = {
+        "id": str(uuid.uuid4()),
+        "resident_id": rid,
+        "kind": payload.kind,
+        "title": payload.title,
+        "due_at": payload.due_at or now_iso(),
+        "notes": payload.notes,
+        "support_minutes": payload.support_minutes,
+        "status": "pending",
+        "created_at": now_iso(),
+        "created_by_id": user["id"],
+        "created_by_name": user["name"],
+        "completed_at": None,
+        "completed_by_name": None,
+        "refused_reason": None,
+    }
+    await db.care_tasks.insert_one(doc)
+    doc.pop("_id", None)
+    await record_audit(
+        db, actor=user, action="care_task_create",
+        object_type="care_task", object_id=doc["id"],
+        summary=f"Care task: {payload.title}",
+        metadata={"kind": payload.kind, "resident_id": rid},
+    )
+    return doc
+
+
+@api_router.patch("/care-tasks/{tid}")
+async def update_care_task(tid: str, payload: CareTaskUpdate, user: dict = Depends(get_current_user)):
+    existing = await db.care_tasks.find_one({"id": tid}, {"_id": 0})
+    if not existing:
+        raise HTTPException(404, "Care task not found")
+    update = payload.model_dump(exclude_unset=True)
+    if update.get("status") in ("completed", "refused", "missed") and not existing.get("completed_at"):
+        update["completed_at"] = now_iso()
+        update["completed_by_name"] = user["name"]
+    await db.care_tasks.update_one({"id": tid}, {"$set": update})
+    doc = await db.care_tasks.find_one({"id": tid}, {"_id": 0})
+    await record_audit(
+        db, actor=user, action="care_task_update",
+        object_type="care_task", object_id=tid,
+        summary=f"Care task {update.get('status', 'updated')}: {existing.get('title')}",
+        before=existing, after=doc,
+    )
+    return doc
+
+
+@api_router.delete("/care-tasks/{tid}")
+async def delete_care_task(tid: str, user: dict = Depends(require_tier(3))):
+    res = await db.care_tasks.delete_one({"id": tid})
+    if res.deleted_count:
+        await record_audit(db, actor=user, action="care_task_delete",
+                           object_type="care_task", object_id=tid, summary="Care task deleted")
+    return {"deleted": res.deleted_count}
+
+
+# ---------- Falls Register ----------
+@api_router.get("/residents/{rid}/falls")
+async def list_falls(rid: str, limit: int = 200, _: dict = Depends(get_current_user)):
+    items = await db.falls.find({"resident_id": rid}, {"_id": 0}).sort("occurred_at", -1).to_list(min(max(limit, 1), 1000))
+    return items
+
+
+@api_router.post("/residents/{rid}/falls")
+async def create_fall(rid: str, payload: FallIn, user: dict = Depends(get_current_user)):
+    doc = {
+        "id": str(uuid.uuid4()),
+        **payload.model_dump(),
+        "resident_id": rid,
+        "reported_by_id": user["id"],
+        "reported_by_name": user["name"],
+        "created_at": now_iso(),
+        "manager_signed_off_by": None,
+        "manager_signed_off_at": None,
+    }
+    await db.falls.insert_one(doc)
+    doc.pop("_id", None)
+    await record_audit(
+        db, actor=user, action="fall_create",
+        object_type="fall", object_id=doc["id"],
+        summary=f"Fall recorded: {payload.location} ({payload.injury})",
+        metadata={"resident_id": rid, "injury": payload.injury, "hospital": payload.hospital_involvement},
+    )
+    return doc
+
+
+@api_router.patch("/falls/{fid}")
+async def update_fall(fid: str, payload: FallUpdate, user: dict = Depends(get_current_user)):
+    existing = await db.falls.find_one({"id": fid}, {"_id": 0})
+    if not existing:
+        raise HTTPException(404, "Fall not found")
+    update = payload.model_dump(exclude_unset=True)
+    await db.falls.update_one({"id": fid}, {"$set": update})
+    doc = await db.falls.find_one({"id": fid}, {"_id": 0})
+    await record_audit(db, actor=user, action="fall_update",
+                       object_type="fall", object_id=fid,
+                       summary="Fall updated", before=existing, after=doc)
+    return doc
+
+
+@api_router.post("/falls/{fid}/sign-off")
+async def sign_off_fall(fid: str, user: dict = Depends(require_tier(3))):
+    when = now_iso()
+    res = await db.falls.update_one(
+        {"id": fid},
+        {"$set": {"manager_signed_off_by": user["name"], "manager_signed_off_at": when}},
+    )
+    if not res.matched_count:
+        raise HTTPException(404, "Fall not found")
+    doc = await db.falls.find_one({"id": fid}, {"_id": 0})
+    await record_audit(db, actor=user, action="fall_signoff",
+                       object_type="fall", object_id=fid,
+                       summary=f"Fall signed off by {user['name']}")
+    return doc
+
+
+# ---------- Mobility Assessments ----------
+@api_router.get("/residents/{rid}/mobility")
+async def list_mobility(rid: str, _: dict = Depends(get_current_user)):
+    items = await db.mobility_assessments.find({"resident_id": rid}, {"_id": 0}).sort("assessed_at", -1).to_list(50)
+    return items
+
+
+@api_router.post("/residents/{rid}/mobility")
+async def create_mobility(rid: str, payload: MobilityAssessmentIn, user: dict = Depends(get_current_user)):
+    doc = {
+        "id": str(uuid.uuid4()),
+        **payload.model_dump(),
+        "resident_id": rid,
+        "assessed_at": now_iso(),
+        "assessor_name": user["name"],
+        "created_at": now_iso(),
+    }
+    await db.mobility_assessments.insert_one(doc)
+    doc.pop("_id", None)
+    await record_audit(db, actor=user, action="mobility_create",
+                       object_type="mobility_assessment", object_id=doc["id"],
+                       summary=f"Mobility assessment ({payload.mobility_level}, falls risk: {payload.falls_risk})",
+                       metadata={"resident_id": rid})
+    return doc
+
+
+# ---------- MCA / Capacity Assessments ----------
+@api_router.get("/residents/{rid}/mca")
+async def list_mca(rid: str, _: dict = Depends(get_current_user)):
+    items = await db.mca_assessments.find({"resident_id": rid}, {"_id": 0}).sort("assessed_at", -1).to_list(50)
+    return items
+
+
+@api_router.post("/residents/{rid}/mca")
+async def create_mca(rid: str, payload: MCAAssessmentIn, user: dict = Depends(require_tier(2))):
+    doc = {
+        "id": str(uuid.uuid4()),
+        **payload.model_dump(),
+        "resident_id": rid,
+        "assessed_at": now_iso(),
+        "assessor_name": user["name"],
+        "manager_signed_off_by": None,
+        "manager_signed_off_at": None,
+        "created_at": now_iso(),
+    }
+    await db.mca_assessments.insert_one(doc)
+    doc.pop("_id", None)
+    await record_audit(db, actor=user, action="mca_create",
+                       object_type="mca_assessment", object_id=doc["id"],
+                       summary=f"MCA: {payload.decision_topic} ({payload.capacity_outcome})",
+                       metadata={"resident_id": rid, "outcome": payload.capacity_outcome})
+    # Reflect onto the resident record so AlertsAndRisks can read it
+    await db.residents.update_one(
+        {"id": rid},
+        {"$set": {
+            "capacity_status": payload.capacity_outcome,
+            "capacity_status_at": doc["assessed_at"],
+        }},
+    )
+    return doc
+
+
+@api_router.post("/mca/{mid}/sign-off")
+async def sign_off_mca(mid: str, user: dict = Depends(require_tier(3))):
+    when = now_iso()
+    res = await db.mca_assessments.update_one(
+        {"id": mid},
+        {"$set": {"manager_signed_off_by": user["name"], "manager_signed_off_at": when}},
+    )
+    if not res.matched_count:
+        raise HTTPException(404, "MCA not found")
+    doc = await db.mca_assessments.find_one({"id": mid}, {"_id": 0})
+    await record_audit(db, actor=user, action="mca_signoff",
+                       object_type="mca_assessment", object_id=mid,
+                       summary=f"MCA signed off by {user['name']}")
+    return doc
+
+
+# ---------- Wellbeing Observations ----------
+@api_router.get("/residents/{rid}/wellbeing")
+async def list_wellbeing(rid: str, limit: int = 200, _: dict = Depends(get_current_user)):
+    items = await db.wellbeing_observations.find(
+        {"resident_id": rid}, {"_id": 0}
+    ).sort("observed_at", -1).to_list(min(max(limit, 1), 500))
+    return items
+
+
+@api_router.post("/residents/{rid}/wellbeing")
+async def create_wellbeing(rid: str, payload: WellbeingObservationIn, user: dict = Depends(get_current_user)):
+    body = payload.model_dump()
+    deterioration = is_deterioration(body)
+    doc = {
+        "id": str(uuid.uuid4()),
+        **body,
+        "resident_id": rid,
+        "observed_at": now_iso(),
+        "observer_name": user["name"],
+        "deterioration_flag": deterioration,
+        "created_at": now_iso(),
+    }
+    await db.wellbeing_observations.insert_one(doc)
+    doc.pop("_id", None)
+    await record_audit(db, actor=user, action="wellbeing_create",
+                       object_type="wellbeing_observation", object_id=doc["id"],
+                       summary=f"Wellbeing observation (mood: {payload.mood})"
+                               + (" — DETERIORATION" if deterioration else ""),
+                       metadata={"resident_id": rid, "deterioration": deterioration})
+    return doc
 
 
 @api_router.get("/residents/{rid}/timeline")

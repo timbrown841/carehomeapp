@@ -14,6 +14,9 @@ import IndependenceTracker from "@/components/resident/IndependenceTracker";
 import DocumentsTab from "@/components/resident/DocumentsTab";
 import ChronologyTab from "@/components/resident/ChronologyTab";
 import OverviewOperational from "@/components/resident/OverviewOperational";
+import {
+  CareTasksPanel, FallsPanel, MobilityPanel, MCAPanel, WellbeingPanel,
+} from "@/components/resident/AdultModulePanels";
 import ResidentPhoto from "@/components/resident/ResidentPhoto";
 import ReturnInterviewModal from "@/components/resident/ReturnInterviewModal";
 import InlineField from "@/components/resident/InlineField";
@@ -402,27 +405,35 @@ export default function ResidentDetail() {
             {isAdultService(resident.service_type) ? (
               <>
                 <AccordionSection
-                  title="Care delivery & routines"
-                  subtitle="Personal preferences, daily routines, support delivery, mobility aids"
+                  title="Care tasks"
+                  subtitle="Daily routines, personal care, support delivery — log completed / refused / missed"
                   tone="#3F4F8C"
                   defaultOpen
+                  testid="acc-care-tasks"
+                >
+                  <CareTasksPanel residentId={resident.id} />
+                </AccordionSection>
+                <AccordionSection
+                  title="Wellbeing observations"
+                  subtitle="Mood, hydration, nutrition, sleep — auto-flags deterioration"
+                  tone="#2F6A3A"
+                  testid="acc-wellbeing"
+                >
+                  <WellbeingPanel residentId={resident.id} />
+                </AccordionSection>
+                <AccordionSection
+                  title="Care delivery & routines"
+                  subtitle="Personal preferences, routines, mobility aids guidance"
                   testid="acc-care"
                 >
                   <CareTab resident={resident} />
                 </AccordionSection>
                 <AccordionSection
-                  title="Wellbeing observations"
-                  subtitle="Mood, engagement, sleep, hydration, nutrition — recent staff observations"
+                  title="Recent daily notes"
+                  subtitle="Latest staff observations &amp; welfare checks"
                   testid="acc-notes"
                 >
                   <RecentNotesPanel residentId={resident.id} />
-                </AccordionSection>
-                <AccordionSection
-                  title="Key working sessions"
-                  subtitle="Plan, run and reflect — supported by frameworks &amp; resources"
-                  testid="acc-key-work"
-                >
-                  <KeyWorkPanel resident={resident} />
                 </AccordionSection>
               </>
             ) : (
@@ -493,6 +504,20 @@ export default function ResidentDetail() {
             >
               <RecentIncidentsPanel residentId={resident.id} />
             </AccordionSection>
+            {isAdultService(resident.service_type) && (
+              <AccordionSection
+                title="MCA / Capacity assessments"
+                subtitle="Decision-specific capacity · best interest · advocate · sign-off"
+                tone="#7A4F8C"
+                testid="acc-mca"
+              >
+                <MCAPanel
+                  residentId={resident.id}
+                  isSenior={["senior", "manager", "admin"].includes(user?.role)}
+                  isManager={["manager", "admin"].includes(user?.role)}
+                />
+              </AccordionSection>
+            )}
           </div>
         )}
 
@@ -513,6 +538,30 @@ export default function ResidentDetail() {
             >
               <MedicationsTab resident={resident} />
             </AccordionSection>
+            {isAdultService(resident.service_type) && (
+              <>
+                <AccordionSection
+                  title="Falls register"
+                  subtitle="Falls record · CQC notifiable · injury · hospital · sign-off"
+                  tone="#A8273A"
+                  defaultOpen
+                  testid="acc-falls"
+                >
+                  <FallsPanel
+                    residentId={resident.id}
+                    isManager={["manager", "admin"].includes(user?.role)}
+                  />
+                </AccordionSection>
+                <AccordionSection
+                  title="Mobility assessment"
+                  subtitle="Mobility level, falls risk, moving &amp; handling needs"
+                  tone="#3F4F8C"
+                  testid="acc-mobility"
+                >
+                  <MobilityPanel residentId={resident.id} />
+                </AccordionSection>
+              </>
+            )}
             <AccordionSection
               title="Health & wellbeing"
               subtitle="Immunisations, CAMHS, therapy, mental health, appointments"

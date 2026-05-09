@@ -43,6 +43,12 @@ CATEGORY_META = {
     "note":            {"colour": "#5d6068", "icon": "NotebookPen",   "label": "Daily note"},
     "return_interview":{"colour": "#D27D2D", "icon": "MessageCircle", "label": "Return interview"},
     "placement":       {"colour": "#1C1C1A", "icon": "Home",          "label": "Placement"},
+    # Adult-services categories (Iteration 31)
+    "care_task":       {"colour": "#3F4F8C", "icon": "ClipboardList", "label": "Care task"},
+    "fall":            {"colour": "#A8273A", "icon": "Footprints",    "label": "Fall"},
+    "mobility":        {"colour": "#3F4F8C", "icon": "Footprints",    "label": "Mobility review"},
+    "mca":             {"colour": "#7A4F8C", "icon": "ClipboardCheck","label": "MCA / Capacity"},
+    "wellbeing":       {"colour": "#2F6A3A", "icon": "Activity",      "label": "Wellbeing"},
 }
 
 
@@ -306,6 +312,132 @@ def _from_notes(docs: List[dict]) -> List[dict]:
     return out
 
 
+# ---------- Adult-services normalisers ----------
+
+def _from_care_tasks(docs: List[dict]) -> List[dict]:
+    out = []
+    for d in docs:
+        status = (d.get("status") or "pending").lower()
+        # only show events that are NOT pending — completed/refused/missed are operational events
+        if status == "pending":
+            continue
+        sev = "high" if status == "missed" else "medium" if status == "refused" else "low"
+        out.append({
+            "id": f"ct:{d['id']}",
+            "source_collection": "care_tasks",
+            "source_id": d["id"],
+            "at": d.get("completed_at") or d.get("due_at") or d.get("created_at"),
+            "category": "care_task",
+            "severity": sev,
+            "title": f"{(d.get('kind') or 'care_task').replace('_', ' ').title()} · {status}",
+            "summary": _shorten(d.get("title") + (f" — {d.get('refused_reason')}" if d.get("refused_reason") else "")),
+            "actor_name": d.get("completed_by_name") or d.get("created_by_name"),
+            "tags": ["care_task", status],
+            "metadata": {"kind": d.get("kind"), "status": status, "support_minutes": d.get("support_minutes")},
+        })
+    return out
+
+
+def _from_falls(docs: List[dict]) -> List[dict]:
+    out = []
+    SEV = {"none": "low", "minor": "medium", "moderate": "high", "serious": "high"}
+    for d in docs:
+        injury = d.get("injury") or "none"
+        out.append({
+            "id": f"fall:{d['id']}",
+            "source_collection": "falls",
+            "source_id": d["id"],
+            "at": d.get("occurred_at") or d.get("created_at"),
+            "category": "fall",
+            "severity": SEV.get(injury, "medium"),
+            "title": f"Fall · {injury}" + (" · hospital" if d.get("hospital_involvement") not in (None, "none") else ""),
+            "summary": _shorten(f"Location: {d.get('location') or '—'}"
+                                + (f" · {d.get('action_taken')}" if d.get('action_taken') else "")),
+            "actor_name": d.get("reported_by_name"),
+            "tags": ["fall"]
+                + (["hospital"] if d.get("hospital_involvement") not in (None, "none") else [])
+                + ([f"injury_{injury}"]),
+            "metadata": {
+                "location": d.get("location"),
+                "injury": injury,
+                "hospital_involvement": d.get("hospital_involvement"),
+                "witnessed": d.get("witnessed"),
+                "signed_off_by": d.get("manager_signed_off_by"),
+            },
+        })
+    return out
+
+
+def _from_mobility(docs: List[dict]) -> List[dict]:
+    out = []
+    SEV = {"high": "high", "medium": "medium", "low": "low"}
+    for d in docs:
+        risk = d.get("falls_risk") or "low"
+        out.append({
+            "id": f"mob:{d['id']}",
+            "source_collection": "mobility_assessments",
+            "source_id": d["id"],
+            "at": d.get("assessed_at") or d.get("created_at"),
+            "category": "mobility",
+            "severity": SEV.get(risk, "low"),
+            "title": f"Mobility · {(d.get('mobility_level') or '').replace('_', ' ')} · falls risk {risk}",
+            "summary": _shorten(d.get("staff_guidance") or d.get("moving_handling_needs") or ""),
+            "actor_name": d.get("assessor_name"),
+            "tags": ["mobility", f"falls_risk_{risk}"],
+            "metadata": {"mobility_level": d.get("mobility_level"), "falls_risk": risk},
+        })
+    return out
+
+
+def _from_mca(docs: List[dict]) -> List[dict]:
+    out = []
+    for d in docs:
+        outcome = d.get("capacity_outcome") or "has_capacity"
+        sev = "high" if outcome == "lacks_capacity" else "medium" if outcome == "fluctuating" else "low"
+        out.append({
+            "id": f"mca:{d['id']}",
+            "source_collection": "mca_assessments",
+            "source_id": d["id"],
+            "at": d.get("assessed_at") or d.get("created_at"),
+            "category": "mca",
+            "severity": sev,
+            "title": f"MCA · {d.get('decision_topic') or 'Capacity assessment'}",
+            "summary": _shorten(f"Outcome: {outcome.replace('_', ' ')}"
+                                + (f" · {d.get('best_interest_decision')}" if d.get("best_interest_decision") else "")),
+            "actor_name": d.get("assessor_name"),
+            "tags": ["mca", outcome],
+            "metadata": {"capacity_outcome": outcome, "signed_off_by": d.get("manager_signed_off_by")},
+        })
+    return out
+
+
+def _from_wellbeing(docs: List[dict]) -> List[dict]:
+    out = []
+    for d in docs:
+        det = bool(d.get("deterioration_flag"))
+        out.append({
+            "id": f"wb:{d['id']}",
+            "source_collection": "wellbeing_observations",
+            "source_id": d["id"],
+            "at": d.get("observed_at") or d.get("created_at"),
+            "category": "wellbeing",
+            "severity": "high" if det else "low",
+            "title": f"Wellbeing · mood {d.get('mood') or '—'}"
+                     + (" · DETERIORATION" if det else ""),
+            "summary": _shorten(d.get("notes") or d.get("presentation") or ""),
+            "actor_name": d.get("observer_name"),
+            "tags": ["wellbeing"] + (["deterioration"] if det else []),
+            "metadata": {
+                "mood": d.get("mood"),
+                "hydration": d.get("hydration_level"),
+                "nutrition": d.get("nutrition_intake"),
+                "sleep": d.get("sleep_quality"),
+                "deterioration": det,
+            },
+        })
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Aggregator
 # ---------------------------------------------------------------------------
@@ -334,6 +466,11 @@ async def build_chronology(
     visits = await db.statutory_visits.find({"resident_id": rid}, {"_id": 0}).to_list(200)
     key_work = await db.key_work_sessions.find({"resident_id": rid}, {"_id": 0}).to_list(200)
     appts = await db.health_appointments.find({"resident_id": rid}, {"_id": 0}).to_list(200)
+    care_tasks = await db.care_tasks.find({"resident_id": rid}, {"_id": 0}).to_list(500)
+    falls = await db.falls.find({"resident_id": rid}, {"_id": 0}).to_list(200)
+    mobility = await db.mobility_assessments.find({"resident_id": rid}, {"_id": 0}).to_list(50)
+    mca = await db.mca_assessments.find({"resident_id": rid}, {"_id": 0}).to_list(50)
+    wellbeing = await db.wellbeing_observations.find({"resident_id": rid}, {"_id": 0}).to_list(500)
 
     events: List[dict] = []
     events.extend(_from_incidents(incidents))
@@ -345,6 +482,11 @@ async def build_chronology(
     events.extend(_from_visits(visits))
     events.extend(_from_key_work(key_work))
     events.extend(_from_appointments(appts))
+    events.extend(_from_care_tasks(care_tasks))
+    events.extend(_from_falls(falls))
+    events.extend(_from_mobility(mobility))
+    events.extend(_from_mca(mca))
+    events.extend(_from_wellbeing(wellbeing))
 
     # Drop events without a date so sorting is reliable
     events = [e for e in events if e.get("at")]
@@ -540,6 +682,45 @@ def detect_patterns(events: List[dict]) -> List[dict]:
             "count": len(safe_14),
             "since_days": 14,
             "tags": ["safeguarding"],
+        })
+
+    # 10. Falls cluster (adult-services) — 2+ falls in 30d
+    falls_30 = [e for e in _within(30) if e["category"] == "fall"]
+    if len(falls_30) >= 2:
+        patterns.append({
+            "id": "falls_cluster",
+            "severity": "high",
+            "title": "Recurrent falls",
+            "message": f"{len(falls_30)} falls in the last 30 days. Trigger mobility &amp; environment review.",
+            "count": len(falls_30),
+            "since_days": 30,
+            "tags": ["fall", "mobility"],
+        })
+
+    # 11. Missed care tasks cluster — 3+ missed in 7d
+    missed_7 = [e for e in _within(7) if e["category"] == "care_task" and "missed" in (e.get("tags") or [])]
+    if len(missed_7) >= 3:
+        patterns.append({
+            "id": "missed_care_cluster",
+            "severity": "high",
+            "title": "Missed care tasks rising",
+            "message": f"{len(missed_7)} care tasks missed in the last 7 days — review staffing and routines.",
+            "count": len(missed_7),
+            "since_days": 7,
+            "tags": ["care_task", "delivery"],
+        })
+
+    # 12. Wellbeing deterioration trend — 2+ deterioration-flagged observations in 14d
+    det_14 = [e for e in _within(14) if e["category"] == "wellbeing" and "deterioration" in (e.get("tags") or [])]
+    if len(det_14) >= 2:
+        patterns.append({
+            "id": "wellbeing_deterioration",
+            "severity": "high",
+            "title": "Wellbeing deterioration",
+            "message": f"{len(det_14)} deterioration-flagged observations in 14 days. Consider GP/health review.",
+            "count": len(det_14),
+            "since_days": 14,
+            "tags": ["wellbeing", "deterioration"],
         })
 
     return patterns

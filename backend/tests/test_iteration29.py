@@ -53,7 +53,7 @@ def test_summary_adult_sector_widgets():
     assert d["sector"] == "adult"
     widget_ids = {w["id"] for w in d["widgets"]}
     for must in ["active_meds", "med_refusals_14d", "appt_next_7d",
-                 "falls_30d", "mca_status", "observations_7d"]:
+                 "falls_30d", "mca_status", "wellbeing_14d"]:
         assert must in widget_ids, f"Missing adult widget: {must}"
     for must_not in ["missing_30d", "ri_outstanding", "key_work_last", "body_maps_30d"]:
         assert must_not not in widget_ids, f"Children widget leaked: {must_not}"
