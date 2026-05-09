@@ -179,29 +179,37 @@ A simple and fast care management app for children's homes and supported living.
 - Incident trend charts per resident
 - Witness picker — replace free-text witness with real staff selection (uses /auth/users; staff-role read access required)
 
-## Test Credentials
-See `/app/memory/test_credentials.md`.
-nurse reviews
-2. **Education / PEP tracking** — school, attendance %, PEP dates, exclusions, achievements
-3. ✅ ~~Staff Rotas & Training~~ (iter-15)
-4. **Statutory Visits & LAC Reviews** — IRO visits, social-worker visits, LAC review schedule with overdue alerts
-5. **Pocket Money & Personal Allowance** — running balance, sign-out, ledger, monthly statement
-6. **Document Library** — upload PDFs, tag to resident/staff, version history, expiry reminders
-7. **Communications / Handover Log** — shift handover with voice, read-receipts
-8. **Audit Log** — every edit/delete/login captured; filterable for inspections
-9. **Vehicle / Activities Log** — mileage, activity sign-off, photos
+## Implemented (2026-02-09 — Iteration 22 — Adult Services Modular Overlay)
+- **Modular service-type platform**: same core, conditional modules per `service_type` (children / adult_supported_living / elderly_residential / dementia / mental_health / veteran). Children's workflows are NOT altered — strict regression-safety.
+- **Backend**: `Resident` model extended with `service_type` + adult fields (NHS#, GP, tenancy, mental-health diagnoses); legacy residents default to `children`. New endpoints:
+  - `GET /api/service-types` — full registry of 6 service types.
+  - `GET /api/service-types/active` — sectors/types with live counts; powers feature gating.
+  - `GET /api/cqc/readiness` — service_users, overdue medication reviews, open adult safeguarding, audits due, CQC Five Key Questions.
+  - `GET /api/residents` accepts `?service_type=` (single) and `?sector=adult` (multi-type aggregation).
+- **Frontend**:
+  - `CQCReadiness.jsx` page (Senior+).
+  - `App.js` route `/cqc-readiness` gated via `SeniorOrAbove` (staff redirected to `/`).
+  - `Layout.jsx` "Adult Services" sidebar group conditional on `requiresAdultSector` + `minTier:2` — hidden if no adult residents OR if user is Staff.
+  - `ServiceBadge.jsx` pill on Resident header. `AdultProfileSection` only renders for adult service_types — children profiles untouched.
+- **Seed**: Tom Whitfield (adult_supported_living) + Margaret Lewis (elderly_residential).
+- **Tested**: testing_agent_v3_fork iteration 22 — 13/13 backend pytest GREEN + Playwright e2e GREEN. Children's 8-tab profile / pocket money / visits / notes / incidents / handover / RBAC all confirmed regression-free. See `/app/test_reports/iteration_22.json`.
 
-### Other backlog
-- Inline edit of resident profile fields (PATCH endpoint already wired)
-- Document upload + version history (Documents tab is currently a placeholder)
-- Real Email/SMS alerts via Twilio + Resend (currently MOCKED)
-- Refactor `ResidentDetail.jsx` (~1100 lines) into more `/components/resident/*` files
-- Photo upload + thumbnails for the Missing Pack PDF
-- Return-interview capture on closing a missing episode
-- CSV export of incidents/notes for inspections
-- Admin User Management UI
-- Incident trend charts per resident
-- Witness picker — replace free-text witness with real staff selection (uses /auth/users; staff-role read access required)
+## Roadmap
+
+### P0 — Children's-side polish (next focus)
+- User-confirmed: return to perfecting the children's side before Phase D. Specifics TBD with user.
+
+### P1
+- Phase D — Staff Operations expansion (sleep-in tracking, shift swaps, leave, clock in/out, daily staffing overview).
+- Phase F — Safer Recruitment & HR build-out (DBS, right-to-work, interviews, SCR).
+- Adult Services deepening (support plans, welfare/wellbeing, mood logs, hospital admissions, deeper CQC analytics).
+- Phase B — full multi-tenant 9-role RBAC + organisation table (deferred).
+
+### P2
+- Phase E — Training/CPD certificate uploads.
+- Real Email/SMS notifications (currently mocked).
+- Refactor `server.py` (~5,000 lines) into `/app/backend/routes/` modules.
+- Refactor `ResidentDetail.jsx` (~1,360 lines) into per-tab files.
 
 ## Test Credentials
 See `/app/memory/test_credentials.md`.
