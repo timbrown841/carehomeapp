@@ -19,9 +19,6 @@ import {
   GraduationCap,
   ShieldCheck,
   HeartPulse,
-  HeartHandshake,
-  BookOpen,
-  Library,
   History,
   LogOut,
   Menu,
@@ -86,14 +83,6 @@ const groups = [
       { to: "/ofsted", label: "Ofsted Readiness", icon: BadgeCheck, testid: "nav-ofsted" },
       { to: "/audit", label: "Audit Log", icon: History, testid: "nav-audit", minTier: 2 },
       { to: "/reports", label: "Reports", icon: FileText, testid: "nav-reports", minTier: 3 },
-    ],
-  },
-  {
-    label: "Therapeutic Practice",
-    items: [
-      { to: "/key-work", label: "Key Work", icon: HeartHandshake, testid: "nav-key-work" },
-      { to: "/frameworks", label: "Frameworks", icon: BookOpen, testid: "nav-frameworks" },
-      { to: "/resources", label: "Resources", icon: Library, testid: "nav-resources" },
     ],
   },
   {

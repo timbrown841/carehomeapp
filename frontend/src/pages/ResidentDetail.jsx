@@ -35,6 +35,8 @@ import {
   Siren,
   ShieldCheck,
   Sparkles,
+  BookOpen,
+  Library,
   Send,
   Copy,
   Download,
@@ -972,6 +974,30 @@ function KeyWorkPanel({ resident }) {
           ))}
         </ul>
       )}
+
+      <div className="flex items-center gap-3 text-[11px] text-[#5d6068] pt-2 border-t divider-soft">
+        <span className="font-bold uppercase tracking-wider">Therapeutic resources:</span>
+        <Link
+          to="/frameworks"
+          data-testid="resident-kw-browse-frameworks"
+          className="inline-flex items-center gap-1 text-[#0e3b4a] hover:underline"
+        >
+          <BookOpen size={11} /> Frameworks library
+        </Link>
+        <Link
+          to="/resources"
+          data-testid="resident-kw-browse-resources"
+          className="inline-flex items-center gap-1 text-[#5a3d8c] hover:underline"
+        >
+          <Library size={11} /> Resource packs
+        </Link>
+        <Link
+          to="/key-work"
+          className="inline-flex items-center gap-1 text-[#5d6068] hover:text-[#0F1115] ml-auto"
+        >
+          All sessions →
+        </Link>
+      </div>
     </div>
   );
 }

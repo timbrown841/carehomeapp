@@ -5940,7 +5940,7 @@ async def update_key_work_session(
     before = await db.key_work_sessions.find_one({"id": sid}, {"_id": 0})
     if not before:
         raise HTTPException(404, "Session not found")
-    if before.get("status") == "completed" and before.get("signed_off_at") and role_tier(user.get("role")) < 3:
+    if before.get("signed_off_at") and role_tier(user.get("role")) < 3:
         raise HTTPException(403, "Already signed off — manager only")
     update = {k: v for k, v in payload.model_dump(exclude_unset=True).items() if v is not None}
     if not update:
