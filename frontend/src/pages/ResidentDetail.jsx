@@ -15,6 +15,8 @@ import DocumentsTab from "@/components/resident/DocumentsTab";
 import AlertsAndRisksBar, { useResidentAlerts } from "@/components/resident/AlertsAndRisksBar";
 import QuickActionsPanel from "@/components/resident/QuickActionsPanel";
 import { AccordionSection } from "@/components/resident/Accordion";
+import ServiceBadge from "@/components/ServiceBadge";
+import { isAdultService } from "@/lib/serviceTypes";
 import {
   ArrowLeft,
   AlertTriangle,
@@ -245,13 +247,14 @@ export default function ResidentDetail() {
             <h1 className="font-display font-semibold text-[28px] sm:text-[32px] leading-tight text-[#0F1115] mt-1.5" style={{ letterSpacing: "-0.02em" }}>
               {resident.name}
             </h1>
-            <div className="text-sm text-stone-600 mt-1 flex flex-wrap gap-x-3 gap-y-1">
+            <div className="text-sm text-stone-600 mt-1 flex flex-wrap gap-x-3 gap-y-1 items-center">
               {resident.preferred_name && resident.preferred_name !== resident.name && (
                 <span>"{resident.preferred_name}"</span>
               )}
               {resident.dob && <span>· DOB {resident.dob}{age != null && ` (age ${age})`}</span>}
               {resident.gender && <span>· {resident.gender}</span>}
               {resident.room && <span>· Room {resident.room}</span>}
+              <ServiceBadge serviceType={resident.service_type} />
             </div>
             {resident.placement_summary && (
               <p className="text-sm text-stone-700 mt-2.5 leading-relaxed">
@@ -311,6 +314,17 @@ export default function ResidentDetail() {
         {tab === "overview" && (
           <div className="space-y-3">
             <OverviewTab resident={resident} age={age} />
+            {isAdultService(resident.service_type) && (
+              <AccordionSection
+                title="Adult service profile"
+                subtitle="NHS, GP, mental health, NOK, tenancy, support level"
+                tone="#3F4F8C"
+                defaultOpen
+                testid="acc-adult-profile"
+              >
+                <AdultProfileSection resident={resident} />
+              </AccordionSection>
+            )}
             <AccordionSection
               title="Background & referral"
               subtitle="Placement reason, referral source, history"
@@ -750,6 +764,34 @@ function MedicalTab({ resident }) {
       <FieldRow label="Medical appointments" value={m.appointments} />
       <FieldRow label="Health conditions" value={m.conditions} />
       <FieldRow label="Emergency medical notes" value={m.emergency_notes} />
+    </div>
+  );
+}
+
+// ---------------- Adult Profile Section (renders for adult service types) ----------------
+function AdultProfileSection({ resident }) {
+  const nok = resident.next_of_kin || {};
+  return (
+    <div className="grid sm:grid-cols-2 gap-3" data-testid="adult-profile-section">
+      <FieldRow label="NHS number" value={resident.nhs_number} />
+      <FieldRow label="GP" value={resident.gp_details} />
+      <FieldRow label="Support level" value={resident.support_level && resident.support_level.toUpperCase()} />
+      <FieldRow label="Care provider" value={resident.care_provider} />
+      <FieldRow label="Tenancy" value={resident.tenancy_info} fullWidth />
+      <FieldRow
+        label="Mental health diagnoses"
+        value={(resident.mh_diagnoses || []).length ? (resident.mh_diagnoses || []).join(", ") : null}
+        fullWidth
+      />
+      <FieldRow
+        label="Next of kin"
+        value={
+          nok.name
+            ? `${nok.name} · ${nok.relation || "—"}${nok.phone ? " · " + nok.phone : ""}${nok.email ? " · " + nok.email : ""}`
+            : null
+        }
+        fullWidth
+      />
     </div>
   );
 }

@@ -457,6 +457,75 @@ async def _seed_demo_data_if_empty():
                 {"name": "Personal Adviser — Lou Carter", "relation": "Post-16", "phone": "07700 900118"},
             ],
         },
+        # ---- Adult Services demo residents (Phase Modular-1) ----
+        {
+            "name": "Tom Whitfield",
+            "preferred_name": "Tom",
+            "dob": "1981-09-22",
+            "room": "Flat 4",
+            "gender": "Male",
+            "placement_date": "2024-06-04",
+            "service_type": "adult_supported_living",
+            "support_level": "medium",
+            "legal_status": "Care Act assessment · supported tenancy",
+            "local_authority": "Manchester City Council",
+            "key_worker": "Alex Staff",
+            "placement_summary": "Supported living tenancy. Independent in self-care, needs support with medication and appointments.",
+            "risk_level": "medium",
+            "nhs_number": "485 777 3456",
+            "gp_details": "Hulme Family Practice · 0161 226 4422",
+            "mh_diagnoses": ["Bipolar II (stable)", "Generalised anxiety"],
+            "next_of_kin": {"name": "Linda Whitfield", "relation": "Mother", "phone": "07700 900221", "email": "linda.whitfield@example.com"},
+            "tenancy_info": "Assured Shorthold · started 04/06/2024 · rent paid via UC managed payments",
+            "care_provider": "Safelyn Adult Services · Hulme",
+            "allergies": ["Penicillin"],
+            "risk_factors": ["mental_health_relapse", "medication_non_compliance", "self_neglect"],
+            "risks": {
+                "mental_health_relapse": "Has had two relapses requiring crisis team support. Sleep disruption is the earliest sign.",
+                "medication_non_compliance": "Sometimes skips evening dose. Staff prompt at 21:00.",
+            },
+            "risk_management": "Daily prompts for evening medication. Weekly mood check-in. Crisis plan signed and shared with CMHT.",
+            "risk_last_reviewed": "2026-04-12",
+            "risk_next_review": "2026-07-12",
+            "professional_involvement": [
+                {"name": "Manchester CMHT", "relation": "Care Coordinator (Sam Patel)", "phone": "0161 219 4221"},
+                {"name": "Hulme Family Practice GP", "relation": "GP", "phone": "0161 226 4422"},
+            ],
+        },
+        {
+            "name": "Margaret Lewis",
+            "preferred_name": "Maggie",
+            "dob": "1948-02-11",
+            "room": "Room 7 (ground floor)",
+            "gender": "Female",
+            "placement_date": "2025-01-22",
+            "service_type": "elderly_residential",
+            "support_level": "high",
+            "legal_status": "Self-funded · MCA capacity assessed (has capacity)",
+            "local_authority": "—",
+            "key_worker": "Priya Senior",
+            "placement_summary": "Elderly residential placement. Mobility support required. Recovering from hip replacement.",
+            "risk_level": "high",
+            "nhs_number": "320 119 8765",
+            "gp_details": "Withington Community Practice · 0161 445 1198",
+            "mh_diagnoses": ["Mild cognitive impairment"],
+            "next_of_kin": {"name": "James Lewis", "relation": "Son", "phone": "07700 900330", "email": "james.lewis@example.com"},
+            "tenancy_info": "Self-funded residential placement",
+            "care_provider": "Safelyn Elderly Care · Withington",
+            "allergies": ["Codeine"],
+            "risk_factors": ["falls", "mobility", "medication_non_compliance"],
+            "risks": {
+                "falls": "Two falls in last 6 months. Falls assessment in place. Walking frame within reach overnight.",
+                "mobility": "Limited mobility post hip replacement. Requires hoist for transfers from bath.",
+            },
+            "risk_management": "Falls sensor mat in place. PT visits twice weekly. Two-staff transfers for bath.",
+            "risk_last_reviewed": "2026-04-22",
+            "risk_next_review": "2026-06-22",
+            "professional_involvement": [
+                {"name": "Withington Community Practice", "relation": "GP", "phone": "0161 445 1198"},
+                {"name": "Manchester Royal Physiotherapy", "relation": "PT (Olivia Tan)", "phone": "0161 276 1234"},
+            ],
+        },
     ]
     res_docs = []
     for r in residents:
@@ -1424,6 +1493,16 @@ class ResidentIn(BaseModel):
     notes: Optional[str] = ""
     photo_url: Optional[str] = None
 
+    # Service / sector — drives modular features (children's vs adult vs elderly etc.)
+    service_type: Optional[Literal[
+        "children",
+        "adult_supported_living",
+        "elderly_residential",
+        "dementia",
+        "mental_health",
+        "veteran",
+    ]] = "children"
+
     # Overview
     preferred_name: Optional[str] = None
     gender: Optional[str] = None
@@ -1435,6 +1514,15 @@ class ResidentIn(BaseModel):
     key_worker: Optional[str] = None
     placement_summary: Optional[str] = None
     risk_level: Optional[Literal["low", "medium", "high"]] = "medium"
+
+    # Adult-services additions (used when service_type != children)
+    nhs_number: Optional[str] = None
+    gp_details: Optional[str] = None
+    mh_diagnoses: Optional[List[str]] = None
+    next_of_kin: Optional[dict] = None  # { name, relation, phone, email }
+    tenancy_info: Optional[str] = None
+    support_level: Optional[Literal["low", "medium", "high", "complex"]] = None
+    care_provider: Optional[str] = None
 
     # Background & Referral
     referral_reason: Optional[str] = None
@@ -1767,8 +1855,22 @@ async def list_users(_: dict = Depends(require_role("admin", "manager"))):
 
 # ---------- Residents ----------
 @api_router.get("/residents", response_model=List[Resident])
-async def list_residents(_: dict = Depends(get_current_user)):
-    docs = await db.residents.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)
+async def list_residents(
+    service_type: Optional[str] = None,
+    sector: Optional[str] = None,
+    _: dict = Depends(get_current_user),
+):
+    q: dict = {}
+    if service_type:
+        q["service_type"] = service_type
+    elif sector:
+        ids = [s["id"] for s in SERVICE_TYPE_REGISTRY if s["sector"] == sector]
+        q["service_type"] = {"$in": ids}
+    docs = await db.residents.find(q, {"_id": 0}).sort("created_at", -1).to_list(500)
+    # Normalise: any legacy resident without service_type is treated as 'children'
+    for d in docs:
+        if not d.get("service_type"):
+            d["service_type"] = "children"
     return docs
 
 
@@ -1811,6 +1913,17 @@ class ResidentPatch(BaseModel):
     key_worker: Optional[str] = None
     placement_summary: Optional[str] = None
     risk_level: Optional[Literal["low", "medium", "high"]] = None
+    service_type: Optional[Literal[
+        "children", "adult_supported_living", "elderly_residential",
+        "dementia", "mental_health", "veteran",
+    ]] = None
+    nhs_number: Optional[str] = None
+    gp_details: Optional[str] = None
+    mh_diagnoses: Optional[List[str]] = None
+    next_of_kin: Optional[dict] = None
+    tenancy_info: Optional[str] = None
+    support_level: Optional[Literal["low", "medium", "high", "complex"]] = None
+    care_provider: Optional[str] = None
     referral_reason: Optional[str] = None
     placement_history: Optional[str] = None
     family_background: Optional[str] = None
@@ -2122,6 +2235,135 @@ async def export_missing_pdf_by_token(token: str):
             "Cache-Control": "no-store",
         },
     )
+
+
+# ---------- Service-type registry & sector configuration ----------
+# Drives modular rendering. Frontend reads this to know which extra fields,
+# risks, incident kinds and compliance modules to surface for a given resident.
+
+SERVICE_TYPE_REGISTRY = [
+    {
+        "id": "children", "label": "Children's Services", "sector": "children",
+        "regulator": "Ofsted", "tone": "#0e3b4a", "icon": "Users",
+        "features": {
+            "ofsted_readiness": True, "philomena_protocol": True,
+            "education_pep": True, "missing_from_care": True,
+            "body_maps": True, "statutory_visits": True,
+            "pocket_money": True, "independence_skills": True,
+        },
+        "default_risks": ["self_harm", "absconding", "aggression", "substance", "cse", "mental_health"],
+        "default_incident_kinds": ["behaviour", "safeguarding", "missing", "physical_intervention", "self_harm", "medication", "property", "complaint"],
+    },
+    {
+        "id": "adult_supported_living", "label": "Adult Supported Living", "sector": "adult",
+        "regulator": "CQC", "tone": "#3F4F8C", "icon": "Home",
+        "features": {
+            "cqc_readiness": True, "support_plans": True,
+            "welfare_wellbeing": True, "mood_tracking": True,
+            "hospital_admissions": True, "tenancy_tracking": True,
+            "medication_mar": True,
+        },
+        "default_risks": ["self_neglect", "substance_misuse", "mental_health_relapse", "suicide_self_harm", "financial_exploitation", "medication_non_compliance", "hoarding", "aggression", "vulnerability_in_community", "missing_welfare"],
+        "default_incident_kinds": ["mental_health_crisis", "welfare_concern", "medication_issue", "substance_misuse", "self_neglect", "safeguarding_adult", "missing_welfare", "hospital_admission"],
+    },
+    {
+        "id": "elderly_residential", "label": "Elderly Residential Care", "sector": "adult",
+        "regulator": "CQC", "tone": "#5B6E58", "icon": "HeartHandshake",
+        "features": {
+            "cqc_readiness": True, "falls_tracking": True,
+            "mobility_assessment": True, "medication_rounds": True,
+            "welfare_wellbeing": True, "hospital_admissions": True,
+        },
+        "default_risks": ["falls", "mobility", "pressure_areas", "swallowing", "wandering", "medication_non_compliance", "cognitive_decline", "self_neglect"],
+        "default_incident_kinds": ["fall", "pressure_injury", "medication_issue", "behaviour", "safeguarding_adult", "hospital_admission", "wandering"],
+    },
+    {
+        "id": "dementia", "label": "Dementia Care", "sector": "adult",
+        "regulator": "CQC", "tone": "#A5556B", "icon": "Brain",
+        "features": {
+            "cqc_readiness": True, "wandering_tracking": True,
+            "behaviour_charts": True, "welfare_wellbeing": True,
+            "medication_mar": True, "life_story_work": True,
+        },
+        "default_risks": ["wandering", "falls", "aggression", "swallowing", "self_neglect", "communication_difficulty", "medication_non_compliance"],
+        "default_incident_kinds": ["behaviour", "wandering", "fall", "medication_issue", "safeguarding_adult", "hospital_admission"],
+    },
+    {
+        "id": "mental_health", "label": "Mental Health Services", "sector": "adult",
+        "regulator": "CQC", "tone": "#3F4F8C", "icon": "Activity",
+        "features": {
+            "cqc_readiness": True, "relapse_prevention": True,
+            "wellbeing_tracking": True, "mood_tracking": True,
+            "crisis_plans": True, "medication_mar": True,
+        },
+        "default_risks": ["suicide_self_harm", "mental_health_relapse", "substance_misuse", "self_neglect", "medication_non_compliance", "aggression", "vulnerability_in_community"],
+        "default_incident_kinds": ["mental_health_crisis", "self_harm", "welfare_concern", "medication_issue", "safeguarding_adult", "hospital_admission"],
+    },
+    {
+        "id": "veteran", "label": "Veteran / Ex-Military Support", "sector": "adult",
+        "regulator": "CQC", "tone": "#5B6E58", "icon": "ShieldCheck",
+        "features": {
+            "cqc_readiness": True, "ptsd_support": True,
+            "welfare_checks": True, "relapse_prevention": True,
+            "wellbeing_tracking": True, "peer_network": True,
+        },
+        "default_risks": ["ptsd_trigger", "suicide_self_harm", "substance_misuse", "self_neglect", "isolation", "anger_aggression", "homelessness_risk"],
+        "default_incident_kinds": ["mental_health_crisis", "ptsd_episode", "welfare_concern", "substance_misuse", "self_harm", "missing_welfare"],
+    },
+]
+
+
+@api_router.get("/service-types")
+async def service_types(_: dict = Depends(get_current_user)):
+    return {"service_types": SERVICE_TYPE_REGISTRY}
+
+
+@api_router.get("/service-types/active")
+async def active_service_types(_: dict = Depends(get_current_user)):
+    rows = await db.residents.aggregate([
+        {"$group": {"_id": "$service_type", "count": {"$sum": 1}}},
+    ]).to_list(50)
+    counts = {(r["_id"] or "children"): r["count"] for r in rows}
+    active_ids = set(counts.keys())
+    return {
+        "active": [
+            {**s, "resident_count": counts.get(s["id"], 0)}
+            for s in SERVICE_TYPE_REGISTRY
+            if s["id"] in active_ids
+        ],
+        "all_active_sectors": sorted({s["sector"] for s in SERVICE_TYPE_REGISTRY if s["id"] in active_ids}),
+    }
+
+
+@api_router.get("/cqc/readiness")
+async def cqc_readiness(_: dict = Depends(get_current_user)):
+    """Placeholder CQC dashboard for adult services."""
+    today = datetime.now(timezone.utc).date().isoformat()
+    soon = (datetime.now(timezone.utc) + timedelta(days=30)).date().isoformat()
+    adult_ids = [s["id"] for s in SERVICE_TYPE_REGISTRY if s["sector"] == "adult"]
+    adult_residents = await db.residents.count_documents({"service_type": {"$in": adult_ids}})
+    overdue_meds = await db.medications.count_documents({"discontinued_at": None, "next_review": {"$lt": today}})
+    open_safeguarding = await db.incidents.count_documents({
+        "kind": {"$in": ["safeguarding_adult", "mental_health_crisis", "self_neglect"]},
+        "status": {"$ne": "closed"},
+    })
+    return {
+        "service_users": adult_residents,
+        "overdue_med_reviews": overdue_meds,
+        "open_adult_safeguarding": open_safeguarding,
+        "audits_due": [
+            {"name": "Medication audit", "due": today, "status": "due"},
+            {"name": "H&S walk-around", "due": soon, "status": "scheduled"},
+            {"name": "Care plan reviews", "due": soon, "status": "scheduled"},
+        ],
+        "five_key_questions": [
+            {"id": "safe", "label": "Safe", "status": "good"},
+            {"id": "effective", "label": "Effective", "status": "good"},
+            {"id": "caring", "label": "Caring", "status": "outstanding"},
+            {"id": "responsive", "label": "Responsive", "status": "good"},
+            {"id": "well_led", "label": "Well-led", "status": "requires_improvement"},
+        ],
+    }
 
 
 # ---------- Daily Notes ----------

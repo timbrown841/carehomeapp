@@ -6,6 +6,7 @@ import { personaColor, personaInitials } from "@/lib/persona";
 import { Plus, X, Loader2, ChevronRight, ShieldAlert } from "lucide-react";
 import { toast } from "sonner";
 import ResidentBadges from "@/components/ResidentBadges";
+import ServiceBadge from "@/components/ServiceBadge";
 
 const RISK_LABEL = {
   high: { bg: "#B23A48", label: "HIGH" },
@@ -17,7 +18,7 @@ export default function Residents() {
   const { user } = useAuth();
   const [list, setList] = useState([]);
   const [open, setOpen] = useState(false);
-  const [form, setForm] = useState({ name: "", dob: "", room: "", notes: "" });
+  const [form, setForm] = useState({ name: "", dob: "", room: "", notes: "", service_type: "children" });
   const [busy, setBusy] = useState(false);
   const canManage = user?.role === "manager" || user?.role === "admin";
 
@@ -32,7 +33,7 @@ export default function Residents() {
     try {
       await api.post("/residents", form);
       setOpen(false);
-      setForm({ name: "", dob: "", room: "", notes: "" });
+      setForm({ name: "", dob: "", room: "", notes: "", service_type: "children" });
       toast.success("Resident added");
       load();
     } catch (err) {
@@ -129,6 +130,9 @@ export default function Residents() {
             <div className="text-[10px] uppercase tracking-wider text-stone-400 mt-3 inline-flex items-center gap-1">
               <ShieldAlert size={11} /> Open profile · risk · missing pack
             </div>
+            <div className="mt-2">
+              <ServiceBadge serviceType={r.service_type} />
+            </div>
           </Link>
         );})}
       </div>
@@ -149,6 +153,19 @@ export default function Residents() {
               </button>
             </div>
             <form onSubmit={submit} className="space-y-4">
+              <select
+                value={form.service_type}
+                onChange={(e) => setForm({ ...form, service_type: e.target.value })}
+                data-testid="resident-service-type"
+                className="w-full bg-white border divider-soft rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-[#2D4A3E]"
+              >
+                <option value="children">Children's Services</option>
+                <option value="adult_supported_living">Adult Supported Living</option>
+                <option value="elderly_residential">Elderly Residential</option>
+                <option value="dementia">Dementia Care</option>
+                <option value="mental_health">Mental Health Services</option>
+                <option value="veteran">Veteran / Ex-Military</option>
+              </select>
               <input
                 data-testid="resident-name-input"
                 required
