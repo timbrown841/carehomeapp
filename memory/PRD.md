@@ -356,7 +356,17 @@ A simple and fast care management app for children's homes and supported living.
 - ✅ ~~Iteration 33: Staff Reflective Practice &amp; Wellbeing Hub — 'My Reflection'~~ (2026-02-10)
 - ✅ ~~Iteration 34: Ofsted Inspection Command Centre (Phase A) — children's-only war-room~~ (2026-02-10)
 - ✅ ~~Iteration 35: Regulation 44 Operational Intelligence — 40 audit modules / 8 categories / live RAG~~ (2026-02-10)
-- 🔜 **Iteration 36 candidates**: Ofsted Phase C (one-click export packs · Inspection Simulation Mode · Pre-inspection Scan PDF) · Strategy Meeting Pack PDF · Care task scheduler · Real Twilio + Resend notifications.
+- ✅ ~~Iteration 36: Phase C — Inspection Simulation Mode, Pre-Inspection Scan PDF, Reg 44 auto-draft~~ (2026-02-10)
+- 🔜 **Iteration 37 candidates**: Strategy Meeting Pack PDF (per-child) · Action ownership/SLAs · Cross-module pattern dashboard · Real Twilio + Resend notifications · Refactor server.py monolith.
+
+## Implemented (2026-02-10 — Iteration 36 — Phase C: Simulation + Scan PDF + Auto-Draft)
+- **Inspection Simulation Mode** (`/app/backend/inspection_simulation.py`) — DETERMINISTIC rules engine, NOT AI. Reads Regulation 44 + Command Centre payloads. Returns predicted Ofsted rating, 9 Quality Standards predicted judgement, likely strengths (≤8), likely weaknesses with reg+QS attribution, likely inspection concerns (≤10) with **inspector probe questions**, repeated compliance failures, safeguarding exposure, prioritised P0/P1 recommendations with concrete steps.
+- **Pre-Inspection Readiness Scan PDF** — ReportLab single-document scan (manager+).
+- **Regulation 44 auto-draft** — pre-fills the Reg 44 visit summary editor from live data: green modules → strengths · red/amber → development · high-severity concerns → immediate · recently_resolved → progress · simulation recs → recommendations · predicted rating → overall_judgement. Includes data_signature for traceability.
+- **Frontend** (`InspectionSimulationView.jsx`) — 3rd tab on /ofsted with gradient banner, 9 QS cards, two-column strengths/weaknesses, inspection concerns with probe questions, prioritised recommendations.
+- **Cross-tab auto-draft flow**: Auto-draft button → fetches draft → switches to Reg 44 tab → opens visit editor pre-filled with amber banner.
+- **Backend endpoints**: GET `/api/ofsted/inspection-simulation` (senior+) · GET `/api/ofsted/regulation-44/auto-draft` (senior+) · GET `/api/ofsted/pre-inspection-scan.pdf` (manager+, audit-logged).
+- **Tested**: 8/8 backend pytest in `test_iteration36.py`. Frontend Playwright: simulation tab, all sections, PDF download, RBAC per role, mobile, determinism. One critical bug fixed inline per testing-agent RCA (VisitSummaryPanel useEffect race overwriting auto-draft — gated with `!autoDraft`). See `/app/test_reports/iteration_32.json`.
 
 ## Implemented (2026-02-10 — Iteration 35 — Regulation 44 Operational Intelligence)
 - **40-module Regulation 44 registry** (`/app/backend/regulation_44_modules.py`) organised into 8 categories: Home & Environment · Safeguarding & Risk · Health & Wellbeing · Young Person Records · Practice & Culture · Education & Engagement · Workforce · Governance & Compliance. Each module declares: regulation refs (Children's Homes Regs 2015 + statutory guidance), 9 Quality Standards mapping, evidence sources, mode (live/manual), fix_link.

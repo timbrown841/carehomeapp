@@ -352,7 +352,7 @@ function VisitSummaryPanel({ tier, latest, onSaved, autoDraft, forceEdit, onCanc
   }, [forceEdit]);
 
   useEffect(() => {
-    if (!editing) {
+    if (!editing && !autoDraft) {
       setDraft({
         visit_date: latest?.visit_date || new Date().toISOString().slice(0, 10),
         visitor_name: latest?.visitor_name || "",
@@ -365,7 +365,7 @@ function VisitSummaryPanel({ tier, latest, onSaved, autoDraft, forceEdit, onCanc
         manager_comments: latest?.manager_comments || "",
       });
     }
-  }, [latest, editing]);
+  }, [latest, editing, autoDraft]);
 
   const save = async () => {
     setBusy(true);
