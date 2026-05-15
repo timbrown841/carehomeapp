@@ -237,9 +237,9 @@ export default function ResidentDetail() {
               data-testid="active-missing-banner"
               className="inline-flex items-center gap-2 bg-[#B23A48] text-white font-bold rounded-xl px-3.5 py-2 text-xs uppercase tracking-wider shadow-sm animate-pulse"
             >
-              <Siren size={14} /> Missing — open pack
+              <Siren size={14} /> {isAdultService(resident.service_type) ? "Missing person — open pack" : "Missing — open pack"}
             </Link>
-          ) : (
+          ) : !isAdultService(resident.service_type) ? (
             <button
               type="button"
               data-testid="open-missing-pack-btn"
@@ -248,7 +248,7 @@ export default function ResidentDetail() {
             >
               <Siren size={15} /> Child Missing
             </button>
-          )}
+          ) : null}
         </div>
       </div>
 
@@ -267,7 +267,7 @@ export default function ResidentDetail() {
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
               <span className="text-xs font-bold uppercase tracking-wider text-stone-500">
-                Young person
+                {isAdultService(resident.service_type) ? "Service user" : "Young person"}
               </span>
               <RagPill level={risk} />
               {reviewOverdue && (
