@@ -5,6 +5,7 @@ import { useAuth } from "@/context/AuthContext";
 import { useOrg } from "@/context/OrgContext";
 import { useSectorCopy } from "@/lib/sectorCopy";
 import { formatFullTimestamp } from "@/lib/format";
+import EmergingRisksPanel from "@/components/intelligence/EmergingRisksPanel";
 import LogIncidentFAB from "@/components/LogIncidentFAB";
 import AttentionNow from "@/components/AttentionNow";
 import { QuickActions, UrgencyWidgets } from "@/components/dashboard/QuickWidgets";
@@ -298,6 +299,9 @@ export default function Dashboard() {
       </header>
 
       <InspectionSnapshotCard />
+
+      {/* Operational Intelligence — emerging risks */}
+      <EmergingRisksPanel />
 
       {/* Live attention strip — pulled from Ofsted readiness */}
       <AttentionNow />

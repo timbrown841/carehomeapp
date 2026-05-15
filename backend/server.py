@@ -61,6 +61,7 @@ from pre_inspection_scan_pdf import build_pre_inspection_scan_pdf
 from cross_module_patterns import build_pattern_intelligence
 from strategy_meeting_pack_pdf import build_strategy_meeting_pack
 from staffing_service import build_staffing_overview, get_staffing_config, set_staffing_config
+from intelligence_engine import build_forecast, build_resident_stability
 import secrets as _secrets
 
 
@@ -8750,6 +8751,41 @@ async def patch_org_settings(payload: OrgSettingsIn, user: dict = Depends(requir
     if restored_count:
         new_doc["restored_resident_count"] = restored_count
     return new_doc
+
+
+# ============================================================
+# Iteration 40 — Operational Intelligence Engine
+# Deterministic, evidence-linked, sector-aware forecast + stability scoring.
+# ============================================================
+
+
+def _user_active_mode(user: dict) -> str:
+    """Default mode for intelligence queries — UI may override with ?mode=."""
+    return "children"
+
+
+@api_router.get("/intelligence/forecast")
+async def intelligence_forecast(mode: Optional[str] = None, _: dict = Depends(get_current_user)):
+    """Organisational forecast — deterministic emerging-risks engine."""
+    return await build_forecast(db, mode=mode or "children")
+
+
+@api_router.get("/intelligence/resident-stability")
+async def intelligence_resident_stability(
+    mode: Optional[str] = None,
+    _: dict = Depends(get_current_user),
+):
+    """Per-resident stability scoring with explainable factor chains."""
+    return await build_resident_stability(db, mode=mode or "children")
+
+
+@api_router.get("/intelligence/resident-stability/{resident_id}")
+async def intelligence_resident_stability_single(
+    resident_id: str,
+    mode: Optional[str] = None,
+    _: dict = Depends(get_current_user),
+):
+    return await build_resident_stability(db, mode=mode or "children", resident_id=resident_id)
 
 
 app.include_router(api_router)
