@@ -358,7 +358,42 @@ A simple and fast care management app for children's homes and supported living.
 - ✅ ~~Iteration 35: Regulation 44 Operational Intelligence — 40 audit modules / 8 categories / live RAG~~ (2026-02-10)
 - ✅ ~~Iteration 36: Phase C — Inspection Simulation Mode, Pre-Inspection Scan PDF, Reg 44 auto-draft~~ (2026-02-10)
 - ✅ ~~Iteration 37: Phase C close-out — Action Ownership/Accountability, Cross-Module Pattern Intelligence, Strategy Meeting Pack PDF~~ (2026-02-15)
-- 🔜 **Iteration 38 candidates**: Phase D — Staff Operations expansion (sleep-in tracking, shift swaps, leave, clock-in/out) · Real Twilio + Resend notifications (currently MOCKED) · Refactor server.py monolith into /app/backend/routes/.
+- ✅ ~~Iteration 38: Phase D · Live Staffing Operations — clock in/out, sleep-ins, leave/sickness, shift swaps, staffing overview & ratios & pressure indicators~~ (2026-02-15)
+- 🔜 **Iteration 39 (next)**: Real notifications via Resend (email) + Twilio (SMS) — overdue safeguarding actions, missing return-interview reminders, escalations, supervisions, medication concerns, accountability assignments. Intelligent, limited, non-spammy, digest fallback.
+- 🟡 **Iteration 40**: Workflow / UX / Mobile refinement — reduce-clicks audit on top 5 flows, mobile-first quick actions + handover sign-out/in, dashboard prioritisation, React Query caching, performance pass.
+- 🟢 **Iteration 41**: Refactor server.py monolith (~8.5k lines) into /app/backend/routes/* modules.
+
+## Implemented (2026-02-15 — Iteration 38 — Phase D · Live Staffing Operations)
+- **`staffing_service.py`** — `build_staffing_overview(db)` single-call live operational dashboard derived from real rota + clock-in + leave + sleep-in + reflection data. Returns:
+  - `on_shift_now[]` (with `clocked_in`, `is_late_clock_in`, `is_sleep_in`, `disturbance_count`)
+  - `next_24h[]` upcoming roster
+  - `coverage_gaps[]` (shift started >grace mins ago and not clocked in)
+  - `ratios[]` per sector with `mode` (awake/asleep), `required` vs `actual`, status ok/warn/critical — uses sector-specific defaults (children's awake 1:2 / asleep 1:6, adult supported 1:2.5, elderly 1:3 etc.) which are admin-configurable.
+  - `pressure{}` — overtime_staff_7d (>48h/wk), agency_pct_14d, sickness_pct_14d, sleep_ins_30d, disturbance_count_30d, pending_swaps, pending_leave, burnout_check_ins_14d (cross-link to Iter 33 wellbeing).
+  - `config{}` — surfaced so the UI knows current thresholds.
+  - Sensible UK defaults baked in (`DEFAULT_CONFIG`) but everything is overridable via `/api/staffing/config` (admin-only PATCH). Per-org configuration without code changes.
+- **Backend endpoints** (Iter 38 block):
+  - `GET /api/staffing/overview` (any auth) · `GET /api/staffing/config` (manager+) · `PATCH /api/staffing/config` (admin-only, audit-logged).
+  - `POST /api/shifts/{id}/clock-in` / `clock-out` — self-only for staff, manager+ can clock-in for anyone. Returns `clock_in_variance_minutes` (signed: late = +ve), `actual_minutes_worked`, `overtime_minutes`. Audit-logged.
+  - `POST /api/shifts/{id}/disturbance` — sleep-in disturbance log (paid waking time). Stores reason, minutes, optional resident_id. Auto-flags shift as `is_sleep_in=true`. Owner or senior+ only.
+  - `GET/POST /api/leave-requests` · 6 kinds (annual_leave/sickness/parental/training/compassionate/unpaid). Staff scoped to self via `mine=true` query (also forced for tier<3). `POST /approve` / `/reject` manager+ only with `decision_notes`. `POST /cancel` allowed for owner or manager+.
+  - `GET/POST /api/shift-swaps` — full lifecycle: requester creates (targeted at staff_id OR open to anyone) → `pending_target` or `open` → `POST /accept` (target or anyone if open, not requester) → `pending_manager` → `POST /approve` (manager+) atomically reassigns `shift.staff_id`. `POST /reject` and `/cancel` round it out. Cannot swap a shift already clocked in to.
+  - `GET /api/staffing/mine` — fast staff endpoint: current shift, next shift in 24h, recent 7d, week_hours (sum of actual_minutes_worked or planned).
+  - All write actions land in the `audit_events` collection (Iter 24 audit log).
+- **Frontend Live Staffing Operations dashboard** (`/app/frontend/src/components/staffing/LiveStaffingOps.jsx`) — rendered at top of `/staff-operations` Rota & Shifts tab. Mobile-first. Care-sector flavour (not generic HR). Sections:
+  - **MyShiftBar** — exported for re-use. For staff: shows current shift with Clock-in/out CTA, sleep-in icon, week hours rolling total, variance after clock-in. For managers: shows their own shift the same way. If no current shift but next in 24h, shows next-shift summary; otherwise a friendly "Coffee · no shift in the next 24h" state.
+  - **Header banner** — awake/asleep cover mode aware (different gradient at night), live count e.g. "3/4 on shift now" with coverage-gap badge.
+  - **Coverage gaps red strip** — only rendered when gaps exist; per-staff late-by minutes.
+  - **On-shift-now grid** — initials avatar (green=clocked-in, amber=not yet), sleep-in moon icon, agency pill, disturbance count, manager-only "Log dist." CTA.
+  - **Staffing ratios per sector** — only sectors with residents are shown, with required vs actual, gap, status pill (On track / Watch / Gap).
+  - **Rota pressure tiles** — Agency cover · Sickness · Overtime · Sleep-in disturbances with status-coloured borders + overtime detail (heart icon, "+hours over threshold"), with a calm note about safeguarding focus implications.
+  - **Workflow shortcuts** — Leave & sickness · Shift swaps · Team wellbeing · Inspection staffing tile, each surfacing pending counts when non-zero.
+- **Frontend `/leave-requests`** — list with pill statuses, mobile-first request modal (kind select, date range with auto-day-count, reason). Manager Approve/Reject/Cancel; staff owner Cancel. Tab strip: My requests / Pending approval (mgr) / All (mgr).
+- **Frontend `/shift-swaps`** — same shape. New-swap modal filters shift picker to only the requester's future not-clocked-in shifts. Target picker excludes self. Empty states are mobile-friendly. Manager Approve/Reject; either party can Cancel.
+- **Schema additions**:
+  - `Shift` extended with: `is_sleep_in` `is_agency` `clocked_in_at/by_id/by_name/geo/method` `clock_in_variance_minutes` `clocked_out_at/by_id/by_name/geo` `clock_out_notes` `actual_minutes_worked` `overtime_minutes` `sleep_in_disturbances[]`.
+  - New collections: `leave_requests`, `shift_swap_requests`, `staffing_config` (singleton).
+- **Tested**: 12/12 backend pytest in `/app/backend/tests/test_iteration38.py` (overview shape · config RBAC · clock-in/out lifecycle + self-only · sleep-in disturbance flow · leave full lifecycle + scoping · swap full lifecycle inc. shift reassignment + can't-swap-after-clock-in · /staffing/mine shape). 33/33 regression (iter34-37) PASS. `testing_agent_v3_fork` 100% pass on all targeted manager and staff flows including end-to-end clock-in/out, leave creation, swap request, sub-tab regression. Report: `/app/test_reports/iteration_34.json`.
 
 ## Implemented (2026-02-15 — Iteration 37 — Operational Ecosystem close-out)
 - **Action Ownership &amp; Accountability** — `inspection_actions` schema upgraded with `assigned_to_id`, `assigned_to_name`, `due_date`, `escalated_at/by/to/reason`, `signed_off_at/by_name`, `evidence_notes`, full `action_log[]` audit trail per action. Backend endpoints:
