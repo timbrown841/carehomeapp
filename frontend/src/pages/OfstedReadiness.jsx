@@ -8,10 +8,11 @@ import {
   HeartHandshake, ShieldCheck, MessageSquare, AlertTriangle, CheckCircle2,
   Loader2, RefreshCw, Download, ChevronRight, ClipboardCheck, CalendarClock,
   Plus, Trash2, Filter, Search, Clock3, Sparkles, ArrowRight, BadgeCheck,
-  LayoutDashboard, BookOpen,
+  LayoutDashboard, BookOpen, Network, ShieldQuestion, UserCheck, Clock,
 } from "lucide-react";
 import Regulation44View from "@/pages/Regulation44View";
 import InspectionSimulationView from "@/pages/InspectionSimulationView";
+import CrossModulePatternsView from "@/pages/CrossModulePatternsView";
 
 const ICONS = {
   ShieldAlert, Siren, Pill, GraduationCap, FileText, Users, Building2,
@@ -142,15 +143,24 @@ function ActionRow({ a }) {
 }
 
 // ---------------------------------------------------------------------------
-// Action plan — manager notes / inspection prep
+// Action plan — accountable, assignable, escalatable, signed-off
 // ---------------------------------------------------------------------------
 function ActionPlanPanel({ tier }) {
   const isManager = tier >= 3;
   const [items, setItems] = useState([]);
+  const [staff, setStaff] = useState([]);
   const [tab, setTab] = useState("active");
   const [busy, setBusy] = useState(false);
   const [showNew, setShowNew] = useState(false);
-  const [draft, setDraft] = useState({ title: "", detail: "", priority: "medium", due_date: "" });
+  const [draft, setDraft] = useState({
+    title: "", detail: "", priority: "medium", due_date: "",
+    assigned_to_id: "", assigned_to_name: "",
+  });
+  const [escalateFor, setEscalateFor] = useState(null);
+  const [escalateDraft, setEscalateDraft] = useState({ escalated_to_id: "", escalated_to_name: "", reason: "" });
+  const [signOffFor, setSignOffFor] = useState(null);
+  const [signOffNotes, setSignOffNotes] = useState("");
+  const [filter, setFilter] = useState("all"); // all | overdue | unowned | escalated
 
   const refresh = useCallback(async () => {
     setBusy(true);
@@ -161,27 +171,64 @@ function ActionPlanPanel({ tier }) {
   }, []);
   useEffect(() => { refresh(); }, [refresh]);
 
+  // Load staff picker once
+  useEffect(() => {
+    api.get("/auth/users/picker").then((r) => setStaff(r.data || [])).catch(() => {});
+  }, []);
+
   const active = items.filter((i) => i.status !== "resolved");
   const resolved = items.filter((i) => i.status === "resolved");
-  const list = tab === "active" ? active : resolved;
+  const overdueCount = active.filter((i) => i.is_overdue).length;
+  const unownedCount = active.filter((i) => !i.assigned_to_id && !i.assigned_to_name).length;
+  const escalatedCount = active.filter((i) => i.escalated_at).length;
+  const awaitingSignOff = resolved.filter((i) => !i.signed_off_at).length;
+
+  let listSource = tab === "active" ? active : resolved;
+  if (tab === "active") {
+    if (filter === "overdue") listSource = listSource.filter((i) => i.is_overdue);
+    else if (filter === "unowned") listSource = listSource.filter((i) => !i.assigned_to_id && !i.assigned_to_name);
+    else if (filter === "escalated") listSource = listSource.filter((i) => i.escalated_at);
+  }
+  const list = listSource;
 
   const save = async () => {
     if (!draft.title.trim()) return;
     try {
       await api.post("/inspection-actions", {
-        ...draft, due_date: draft.due_date || null,
+        ...draft,
+        due_date: draft.due_date || null,
+        assigned_to_id: draft.assigned_to_id || null,
+        assigned_to_name: draft.assigned_to_name || null,
       });
       toast.success("Action added");
       setShowNew(false);
-      setDraft({ title: "", detail: "", priority: "medium", due_date: "" });
+      setDraft({ title: "", detail: "", priority: "medium", due_date: "", assigned_to_id: "", assigned_to_name: "" });
       refresh();
-    } catch (e) { toast.error("Couldn't add"); }
+    } catch { toast.error("Couldn't add"); }
+  };
+
+  const assign = async (id, staffMember) => {
+    try {
+      await api.patch(`/inspection-actions/${id}`, {
+        assigned_to_id: staffMember?.id || null,
+        assigned_to_name: staffMember?.name || null,
+      });
+      toast.success(staffMember ? `Assigned to ${staffMember.name}` : "Unassigned");
+      refresh();
+    } catch { toast.error("Couldn't update assignee"); }
+  };
+
+  const setDueDate = async (id, due_date) => {
+    try {
+      await api.patch(`/inspection-actions/${id}`, { due_date: due_date || null });
+      refresh();
+    } catch { toast.error("Couldn't update due date"); }
   };
 
   const resolve = async (id) => {
     try {
       await api.patch(`/inspection-actions/${id}`, { status: "resolved" });
-      toast.success("Marked as resolved");
+      toast.success("Marked as resolved · awaiting manager sign-off");
       refresh();
     } catch { toast.error("Couldn't update"); }
   };
@@ -199,12 +246,47 @@ function ActionPlanPanel({ tier }) {
     } catch { toast.error("Couldn't delete (manager only)."); }
   };
 
+  const submitEscalation = async () => {
+    if (!escalateFor) return;
+    if (!escalateDraft.escalated_to_name.trim() || !escalateDraft.reason.trim()) {
+      toast.error("Name and reason are required");
+      return;
+    }
+    try {
+      await api.post(`/inspection-actions/${escalateFor.id}/escalate`, escalateDraft);
+      toast.success("Escalated");
+      setEscalateFor(null);
+      setEscalateDraft({ escalated_to_id: "", escalated_to_name: "", reason: "" });
+      refresh();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Couldn't escalate");
+    }
+  };
+
+  const submitSignOff = async () => {
+    if (!signOffFor) return;
+    try {
+      await api.post(`/inspection-actions/${signOffFor.id}/sign-off`, { notes: signOffNotes });
+      toast.success("Action signed off");
+      setSignOffFor(null);
+      setSignOffNotes("");
+      refresh();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Couldn't sign off");
+    }
+  };
+
   return (
     <div className="bg-white border divider-soft rounded-2xl p-5" data-testid="action-plan-panel">
       <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
-        <h3 className="font-semibold text-[#0F1115] flex items-center gap-2">
-          <ClipboardCheck size={16} /> Manager action plan
-        </h3>
+        <div>
+          <h3 className="font-semibold text-[#0F1115] flex items-center gap-2">
+            <ClipboardCheck size={16} /> Manager action plan · accountability
+          </h3>
+          <p className="text-xs text-stone-600 mt-0.5">
+            Owned · due-tracked · escalatable · signed-off. Full audit trail per action.
+          </p>
+        </div>
         {isManager && (
           <button
             type="button"
@@ -216,6 +298,27 @@ function ActionPlanPanel({ tier }) {
           </button>
         )}
       </div>
+
+      {/* Accountability summary */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-3" data-testid="accountability-summary">
+        <button onClick={() => { setTab("active"); setFilter("overdue"); }} className="text-left bg-stone-50 hover:bg-stone-100 rounded-lg p-2.5 border-l-4" style={{ borderLeftColor: overdueCount > 0 ? "#A8273A" : "#D6D6D0" }}>
+          <div className="text-[10px] uppercase tracking-wider font-bold text-stone-600">Overdue</div>
+          <div className="text-xl font-semibold text-[#0F1115]">{overdueCount}</div>
+        </button>
+        <button onClick={() => { setTab("active"); setFilter("unowned"); }} className="text-left bg-stone-50 hover:bg-stone-100 rounded-lg p-2.5 border-l-4" style={{ borderLeftColor: unownedCount > 0 ? "#B8772F" : "#D6D6D0" }}>
+          <div className="text-[10px] uppercase tracking-wider font-bold text-stone-600">Unowned</div>
+          <div className="text-xl font-semibold text-[#0F1115]">{unownedCount}</div>
+        </button>
+        <button onClick={() => { setTab("active"); setFilter("escalated"); }} className="text-left bg-stone-50 hover:bg-stone-100 rounded-lg p-2.5 border-l-4" style={{ borderLeftColor: escalatedCount > 0 ? "#7A4F8C" : "#D6D6D0" }}>
+          <div className="text-[10px] uppercase tracking-wider font-bold text-stone-600">Escalated</div>
+          <div className="text-xl font-semibold text-[#0F1115]">{escalatedCount}</div>
+        </button>
+        <button onClick={() => setTab("resolved")} className="text-left bg-stone-50 hover:bg-stone-100 rounded-lg p-2.5 border-l-4" style={{ borderLeftColor: awaitingSignOff > 0 ? "#0e3b4a" : "#2F6A3A" }}>
+          <div className="text-[10px] uppercase tracking-wider font-bold text-stone-600">Awaiting sign-off</div>
+          <div className="text-xl font-semibold text-[#0F1115]">{awaitingSignOff}</div>
+        </button>
+      </div>
+
       {showNew && (
         <div className="border divider-soft rounded-xl p-3 mb-3 bg-stone-50 space-y-2" data-testid="action-plan-new-form">
           <input
@@ -233,11 +336,12 @@ function ActionPlanPanel({ tier }) {
             rows={2}
             className="w-full text-sm border divider-soft rounded-lg p-2 bg-white resize-none"
           />
-          <div className="flex gap-2 flex-wrap">
+          <div className="flex gap-2 flex-wrap items-center">
             <select
               value={draft.priority}
               onChange={(e) => setDraft({ ...draft, priority: e.target.value })}
               className="text-sm border divider-soft rounded-lg p-2 bg-white"
+              data-testid="action-plan-new-priority"
             >
               <option value="low">Low</option>
               <option value="medium">Medium</option>
@@ -248,7 +352,22 @@ function ActionPlanPanel({ tier }) {
               value={draft.due_date}
               onChange={(e) => setDraft({ ...draft, due_date: e.target.value })}
               className="text-sm border divider-soft rounded-lg p-2 bg-white"
+              data-testid="action-plan-new-due"
             />
+            <select
+              value={draft.assigned_to_id}
+              onChange={(e) => {
+                const sm = staff.find((s) => s.id === e.target.value);
+                setDraft({ ...draft, assigned_to_id: e.target.value, assigned_to_name: sm?.name || "" });
+              }}
+              className="text-sm border divider-soft rounded-lg p-2 bg-white"
+              data-testid="action-plan-new-assignee"
+            >
+              <option value="">Assign to…</option>
+              {staff.map((s) => (
+                <option key={s.id} value={s.id}>{s.name} · {s.role}</option>
+              ))}
+            </select>
             <button onClick={save} data-testid="action-plan-save" className="text-sm font-semibold bg-[#0e3b4a] text-white px-3 py-2 rounded-lg">
               Save
             </button>
@@ -256,64 +375,234 @@ function ActionPlanPanel({ tier }) {
           </div>
         </div>
       )}
-      <div className="flex gap-2 mb-3 border-b divider-soft">
-        <button onClick={() => setTab("active")} data-testid="action-tab-active"
+      <div className="flex gap-2 mb-3 border-b divider-soft flex-wrap items-center">
+        <button onClick={() => { setTab("active"); setFilter("all"); }} data-testid="action-tab-active"
           className={`text-xs font-semibold px-3 py-2 border-b-2 ${tab === "active" ? "border-[#0e3b4a] text-[#0e3b4a]" : "border-transparent text-stone-600"}`}>
           Active ({active.length})
         </button>
         <button onClick={() => setTab("resolved")} data-testid="action-tab-resolved"
           className={`text-xs font-semibold px-3 py-2 border-b-2 ${tab === "resolved" ? "border-[#0e3b4a] text-[#0e3b4a]" : "border-transparent text-stone-600"}`}>
-          Resolved this week ({resolved.length})
+          Resolved ({resolved.length})
         </button>
+        {tab === "active" && filter !== "all" && (
+          <button onClick={() => setFilter("all")} className="ml-auto text-[11px] text-stone-600 hover:text-[#0e3b4a] flex items-center gap-1" data-testid="action-filter-clear">
+            Clear filter: {filter} ×
+          </button>
+        )}
       </div>
       {list.length === 0 ? (
         <p className="text-sm text-stone-600 py-6 text-center">
-          {tab === "active" ? "No active actions. Add one as you prepare for inspection." : "Nothing resolved recently."}
+          {tab === "active" ? (filter !== "all" ? `No actions match the ${filter} filter.` : "No active actions. Add one as you prepare for inspection.") : "Nothing resolved yet."}
         </p>
       ) : (
         <ul className="space-y-2">
           {list.map((a) => {
             const sev = SEV_PILL[a.priority] || SEV_PILL.low;
+            const overdue = a.is_overdue;
+            const escalated = !!a.escalated_at;
+            const signedOff = !!a.signed_off_at;
             return (
-              <li key={a.id} className="border-l-4 rounded-lg bg-stone-50 p-3 flex items-start gap-3" style={{ borderLeftColor: sev.fg }} data-testid={`action-plan-item-${a.id}`}>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded" style={{ background: sev.bg, color: sev.fg }}>
-                      {sev.label}
-                    </span>
-                    <span className="text-sm font-semibold text-[#0F1115]">{a.title}</span>
-                    {a.due_date && <span className="text-[10px] text-stone-500">due {a.due_date}</span>}
-                  </div>
-                  {a.detail && <p className="text-xs text-stone-700 mt-1 whitespace-pre-wrap">{a.detail}</p>}
-                  {a.status === "resolved" && (
-                    <div className="text-[10px] text-stone-500 mt-1">
-                      Resolved by {a.resolved_by_name} · {timeAgo(a.resolved_at)}
+              <li key={a.id} className="border-l-4 rounded-lg bg-stone-50 p-3" style={{ borderLeftColor: overdue ? "#A8273A" : sev.fg }} data-testid={`action-plan-item-${a.id}`}>
+                <div className="flex items-start gap-3">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded" style={{ background: sev.bg, color: sev.fg }}>
+                        {sev.label}
+                      </span>
+                      {overdue && (
+                        <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-[#A8273A14] text-[#A8273A]" data-testid={`badge-overdue-${a.id}`}>
+                          Overdue
+                        </span>
+                      )}
+                      {escalated && (
+                        <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-[#7A4F8C18] text-[#7A4F8C]" data-testid={`badge-escalated-${a.id}`} title={a.escalation_reason || ""}>
+                          Escalated
+                        </span>
+                      )}
+                      {signedOff && (
+                        <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-[#2F6A3A14] text-[#2F6A3A]" data-testid={`badge-signedoff-${a.id}`}>
+                          Signed off
+                        </span>
+                      )}
+                      <span className="text-sm font-semibold text-[#0F1115]">{a.title}</span>
                     </div>
-                  )}
-                </div>
-                <div className="flex gap-1 shrink-0">
-                  {a.status !== "resolved" ? (
-                    <button onClick={() => resolve(a.id)} data-testid={`action-plan-resolve-${a.id}`} title="Mark resolved"
-                      className="p-1.5 rounded-md hover:bg-white text-[#2F6A3A]">
-                      <CheckCircle2 size={15} />
-                    </button>
-                  ) : (
-                    <button onClick={() => reopen(a.id)} data-testid={`action-plan-reopen-${a.id}`} title="Reopen"
-                      className="p-1.5 rounded-md hover:bg-white text-stone-600">
-                      <RefreshCw size={14} />
-                    </button>
-                  )}
-                  {isManager && (
-                    <button onClick={() => remove(a.id)} data-testid={`action-plan-delete-${a.id}`} title="Delete"
-                      className="p-1.5 rounded-md hover:bg-[#A8273A]/10 text-stone-500 hover:text-[#A8273A]">
-                      <Trash2 size={14} />
-                    </button>
-                  )}
+                    {a.detail && <p className="text-xs text-stone-700 mt-1 whitespace-pre-wrap">{a.detail}</p>}
+
+                    {/* Ownership row */}
+                    <div className="flex items-center gap-2 flex-wrap mt-2 text-[11px] text-stone-600">
+                      <span className="inline-flex items-center gap-1">
+                        <UserCheck size={11} />
+                        {a.status !== "resolved" && isManager ? (
+                          <select
+                            value={a.assigned_to_id || ""}
+                            onChange={(e) => {
+                              const sm = staff.find((s) => s.id === e.target.value);
+                              assign(a.id, sm || null);
+                            }}
+                            data-testid={`action-assign-${a.id}`}
+                            className="text-[11px] border divider-soft rounded px-1.5 py-0.5 bg-white"
+                          >
+                            <option value="">Unassigned</option>
+                            {staff.map((s) => (
+                              <option key={s.id} value={s.id}>{s.name}</option>
+                            ))}
+                          </select>
+                        ) : (
+                          <span className="font-medium">{a.assigned_to_name || "Unassigned"}</span>
+                        )}
+                      </span>
+                      <span className="inline-flex items-center gap-1">
+                        <Clock size={11} />
+                        {a.status !== "resolved" && isManager ? (
+                          <input
+                            type="date"
+                            value={a.due_date || ""}
+                            onChange={(e) => setDueDate(a.id, e.target.value)}
+                            data-testid={`action-due-${a.id}`}
+                            className="text-[11px] border divider-soft rounded px-1.5 py-0.5 bg-white"
+                          />
+                        ) : (
+                          <span className="font-medium">{a.due_date || "no due date"}</span>
+                        )}
+                      </span>
+                    </div>
+
+                    {/* Resolution / sign-off / escalation footer */}
+                    {(a.status === "resolved" || escalated) && (
+                      <div className="text-[10px] text-stone-500 mt-2 space-y-0.5">
+                        {a.status === "resolved" && (
+                          <div>Resolved by {a.resolved_by_name} · {timeAgo(a.resolved_at)}</div>
+                        )}
+                        {signedOff && (
+                          <div className="text-[#2F6A3A]">Signed off by {a.signed_off_by_name} · {timeAgo(a.signed_off_at)}</div>
+                        )}
+                        {escalated && (
+                          <div className="text-[#7A4F8C]">Escalated to {a.escalated_to_name} · {timeAgo(a.escalated_at)}{a.escalation_reason ? ` — ${a.escalation_reason}` : ""}</div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex gap-1 shrink-0 flex-col items-end">
+                    {a.status !== "resolved" ? (
+                      <>
+                        <button onClick={() => resolve(a.id)} data-testid={`action-plan-resolve-${a.id}`} title="Mark resolved"
+                          className="p-1.5 rounded-md hover:bg-white text-[#2F6A3A]">
+                          <CheckCircle2 size={15} />
+                        </button>
+                        {isManager && !escalated && (
+                          <button onClick={() => setEscalateFor(a)} data-testid={`action-escalate-${a.id}`} title="Escalate"
+                            className="p-1.5 rounded-md hover:bg-white text-[#7A4F8C]">
+                            <ShieldQuestion size={15} />
+                          </button>
+                        )}
+                      </>
+                    ) : (
+                      <>
+                        {!signedOff && isManager && (
+                          <button onClick={() => setSignOffFor(a)} data-testid={`action-signoff-${a.id}`} title="Manager sign-off"
+                            className="text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded bg-[#0e3b4a] text-white hover:bg-[#0a2e3a]">
+                            Sign off
+                          </button>
+                        )}
+                        <button onClick={() => reopen(a.id)} data-testid={`action-plan-reopen-${a.id}`} title="Reopen"
+                          className="p-1.5 rounded-md hover:bg-white text-stone-600">
+                          <RefreshCw size={14} />
+                        </button>
+                      </>
+                    )}
+                    {isManager && (
+                      <button onClick={() => remove(a.id)} data-testid={`action-plan-delete-${a.id}`} title="Delete"
+                        className="p-1.5 rounded-md hover:bg-[#A8273A]/10 text-stone-500 hover:text-[#A8273A]">
+                        <Trash2 size={14} />
+                      </button>
+                    )}
+                  </div>
                 </div>
               </li>
             );
           })}
         </ul>
+      )}
+
+      {/* Escalation modal */}
+      {escalateFor && (
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" data-testid="escalate-modal">
+          <div className="bg-white rounded-2xl p-5 max-w-md w-full">
+            <h4 className="text-base font-semibold text-[#0F1115] mb-1">Escalate action</h4>
+            <p className="text-xs text-stone-600 mb-3">{escalateFor.title}</p>
+            <div className="space-y-2">
+              <select
+                value={escalateDraft.escalated_to_id}
+                onChange={(e) => {
+                  const sm = staff.find((s) => s.id === e.target.value);
+                  setEscalateDraft({
+                    ...escalateDraft,
+                    escalated_to_id: e.target.value,
+                    escalated_to_name: sm?.name || escalateDraft.escalated_to_name,
+                  });
+                }}
+                data-testid="escalate-to-select"
+                className="w-full text-sm border divider-soft rounded-lg p-2 bg-white"
+              >
+                <option value="">Escalate to staff member…</option>
+                {staff.filter((s) => ["manager", "admin", "senior"].includes(s.role)).map((s) => (
+                  <option key={s.id} value={s.id}>{s.name} · {s.role}</option>
+                ))}
+              </select>
+              <input
+                type="text"
+                value={escalateDraft.escalated_to_name}
+                onChange={(e) => setEscalateDraft({ ...escalateDraft, escalated_to_name: e.target.value })}
+                placeholder="Or escalate to (free text)…"
+                data-testid="escalate-to-name"
+                className="w-full text-sm border divider-soft rounded-lg p-2"
+              />
+              <textarea
+                value={escalateDraft.reason}
+                onChange={(e) => setEscalateDraft({ ...escalateDraft, reason: e.target.value })}
+                placeholder="Reason for escalation (audit-logged)…"
+                rows={3}
+                data-testid="escalate-reason"
+                className="w-full text-sm border divider-soft rounded-lg p-2 resize-none"
+              />
+            </div>
+            <div className="flex gap-2 justify-end mt-4">
+              <button onClick={() => { setEscalateFor(null); setEscalateDraft({ escalated_to_id: "", escalated_to_name: "", reason: "" }); }}
+                className="text-sm px-3 py-2 rounded-lg hover:bg-stone-100">Cancel</button>
+              <button onClick={submitEscalation} data-testid="escalate-submit"
+                className="text-sm font-semibold bg-[#7A4F8C] text-white px-3 py-2 rounded-lg hover:bg-[#5e3d6e]">
+                Escalate
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Sign-off modal */}
+      {signOffFor && (
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" data-testid="signoff-modal">
+          <div className="bg-white rounded-2xl p-5 max-w-md w-full">
+            <h4 className="text-base font-semibold text-[#0F1115] mb-1">Manager sign-off</h4>
+            <p className="text-xs text-stone-600 mb-3">{signOffFor.title}</p>
+            <textarea
+              value={signOffNotes}
+              onChange={(e) => setSignOffNotes(e.target.value)}
+              placeholder="Evidence / sign-off notes (optional, audit-logged)…"
+              rows={4}
+              data-testid="signoff-notes"
+              className="w-full text-sm border divider-soft rounded-lg p-2 resize-none"
+            />
+            <div className="flex gap-2 justify-end mt-4">
+              <button onClick={() => { setSignOffFor(null); setSignOffNotes(""); }}
+                className="text-sm px-3 py-2 rounded-lg hover:bg-stone-100">Cancel</button>
+              <button onClick={submitSignOff} data-testid="signoff-submit"
+                className="text-sm font-semibold bg-[#0e3b4a] text-white px-3 py-2 rounded-lg hover:bg-[#0a2e3a]">
+                Sign off
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
@@ -494,6 +783,16 @@ export default function OfstedReadiness() {
         >
           <Sparkles size={14} /> Inspection simulation
         </button>
+        <button
+          type="button"
+          onClick={() => setTab("patterns")}
+          data-testid="ofsted-tab-patterns"
+          className={`text-sm font-semibold px-4 py-2.5 border-b-2 transition-colors flex items-center gap-1.5 whitespace-nowrap ${
+            tab === "patterns" ? "border-[#0e3b4a] text-[#0e3b4a]" : "border-transparent text-stone-600 hover:text-stone-900"
+          }`}
+        >
+          <Network size={14} /> Cross-module intelligence
+        </button>
       </div>
 
       {tab === "regulation_44" && (
@@ -505,6 +804,7 @@ export default function OfstedReadiness() {
       {tab === "simulation" && (
         <InspectionSimulationView onAutoDraftReady={handleAutoDraftReady} />
       )}
+      {tab === "patterns" && <CrossModulePatternsView />}
 
       {tab === "command" && <>
 

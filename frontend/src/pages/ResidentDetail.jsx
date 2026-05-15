@@ -467,6 +467,9 @@ export default function ResidentDetail() {
 
         {tab === "safeguarding" && (
           <div className="space-y-3">
+            {!isAdultService(resident.service_type) && ["manager", "admin"].includes(user?.role) && (
+              <StrategyMeetingPackButton residentId={resident.id} />
+            )}
             <AccordionSection
               title="Risk assessment"
               subtitle="Levels, identified risks, next review, mitigations"
@@ -1817,6 +1820,61 @@ function RecentIncidentsPanel({ residentId }) {
       >
         See all incidents →
       </Link>
+    </div>
+  );
+}
+
+
+function StrategyMeetingPackButton({ residentId }) {
+  const [busy, setBusy] = useState(false);
+  const download = async () => {
+    setBusy(true);
+    try {
+      const token = localStorage.getItem("cc_token");
+      const res = await fetch(`${API}/reports/strategy-meeting-pack/${residentId}.pdf`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error();
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `strategy-meeting-pack.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch {
+      // toast import not in scope here; surface a minimal alert
+      window.alert("Couldn't download Strategy Meeting Pack (manager access required).");
+    } finally { setBusy(false); }
+  };
+  return (
+    <div
+      data-testid="strategy-meeting-pack-bar"
+      className="bg-white border-l-4 border-y border-r divider-soft rounded-xl p-3 sm:p-4 flex items-start gap-3"
+      style={{ borderLeftColor: "#0F2A47" }}
+    >
+      <div className="w-9 h-9 rounded-lg bg-[#0F2A47]/10 flex items-center justify-center shrink-0">
+        <FileText size={17} className="text-[#0F2A47]" />
+      </div>
+      <div className="flex-1 min-w-0">
+        <h3 className="text-sm font-semibold text-[#0F1115]">Strategy meeting pack</h3>
+        <p className="text-xs text-stone-600">
+          One-click PDF for strategy / placement / serious-incident reviews. Pulls risk,
+          chronology, missing history, body maps, key work, family contact and outstanding actions.
+        </p>
+      </div>
+      <button
+        type="button"
+        onClick={download}
+        disabled={busy}
+        data-testid="strategy-meeting-pack-btn"
+        className="text-xs font-semibold bg-[#0F2A47] text-white px-3 py-2 rounded-lg hover:bg-[#0a1f37] flex items-center gap-1.5 shrink-0 disabled:opacity-60"
+      >
+        {busy ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />}
+        Strategy pack
+      </button>
     </div>
   );
 }

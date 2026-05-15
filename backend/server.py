@@ -58,6 +58,8 @@ from ofsted_command_centre import build_command_centre
 from regulation_44_modules import build_regulation_44, MODULES as REG44_MODULES
 from inspection_simulation import build_inspection_simulation, build_reg44_auto_draft
 from pre_inspection_scan_pdf import build_pre_inspection_scan_pdf
+from cross_module_patterns import build_pattern_intelligence
+from strategy_meeting_pack_pdf import build_strategy_meeting_pack
 import secrets as _secrets
 
 
@@ -8073,6 +8075,41 @@ async def pre_inspection_scan_pdf(user: dict = Depends(require_tier(3))):
         db, actor=user, action="pre_inspection_scan_download",
         object_type="ofsted", object_id="pre_inspection_scan",
         summary="Pre-Inspection Readiness Scan PDF downloaded",
+    )
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
+# ============================================================
+# Iteration 37 — Cross-Module Pattern Intelligence + Strategy Pack
+# ============================================================
+
+
+@api_router.get("/ofsted/cross-module-patterns")
+async def ofsted_cross_module_patterns(_: dict = Depends(require_tier(2))):
+    """Cross-module operational intelligence (children's services)."""
+    return await build_pattern_intelligence(db)
+
+
+@api_router.get("/reports/strategy-meeting-pack/{resident_id}.pdf")
+async def strategy_meeting_pack_pdf(resident_id: str, user: dict = Depends(require_tier(3))):
+    """One-click Strategy Meeting Pack PDF for a single resident (manager+)."""
+    try:
+        pdf_bytes = await build_strategy_meeting_pack(db, resident_id)
+    except ValueError:
+        raise HTTPException(404, "Resident not found")
+    resident = await db.residents.find_one({"id": resident_id}, {"_id": 0, "preferred_name": 1, "name": 1})
+    rname = (resident or {}).get("preferred_name") or (resident or {}).get("name") or "resident"
+    safe = "".join(c if c.isalnum() else "-" for c in rname).strip("-").lower() or "resident"
+    fname = f"strategy-meeting-pack-{safe}-{datetime.now().strftime('%Y%m%d-%H%M')}.pdf"
+    await record_audit(
+        db, actor=user, action="strategy_meeting_pack_download",
+        object_type="resident", object_id=resident_id,
+        resident_id=resident_id,
+        summary=f"Strategy meeting pack PDF downloaded for {rname}",
     )
     return Response(
         content=pdf_bytes,

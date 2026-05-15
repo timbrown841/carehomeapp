@@ -1,0 +1,34 @@
+{
+  "summary": "Iteration 37 — Phase C Operational Ecosystem. Full backend + frontend testing pass. Backend: 10/10 Iter37 tests PASS + 23/23 Iter34/35/36 regression PASS (33/33 total). Frontend: New 4th 'Cross-module intelligence' tab renders all 6 sections (trends with 5 tiles, themes, repeats, unresolved, hotspots with locations/times/repeats, blindspots) + generated_at footer. ActionPlanPanel accountability UI rendering with 4 summary tiles (Overdue/Unowned/Escalated/Awaiting sign-off), assignee dropdown (9 options), priority + due-date inputs in create form. Full lifecycle PASS: create with assignee+due_date → inline reassign → inline due-date change → escalate (modal with target picker + reason + audit-logged) → resolve → manager sign-off (modal, only on resolved+unsigned) — Escalated and Signed-off badges visible after each step, success toast 'Action signed off' shown. StrategyMeetingPackButton: visible for manager on Maddy O'Brien (children's, age 17) with successful PDF download (header %PDF...); correctly NOT visible for manager on Margaret Lewis (adult), for senior on children's, and for staff on children's. Audit endpoint returns 6 strategy_meeting_pack_download events with correct object_id and actor.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "OfstedReadiness / ActionPlanPanel — Escalate modal target-select", "issues": ["React hydration warning: '<span> cannot be a child of <option>' on rendered staff-picker <option> elements. Caused by framework's dev-mode x-ve-dynamic instrumentation wrapping the option text in a styled span. Non-blocking (UI works fully), but spams the browser console. Could be suppressed by rendering plain text inside <option>{s.name}</option> with no template wrappers, or this may be a known dev-only side effect of the framework instrumentation."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration37.py",
+    "/app/test_reports/pytest/iter37_results.xml"
+  ],
+  "action_items": [
+    "Optional: investigate the recurring <span>-inside-<option> React hydration console warning visible on /ofsted Command-centre Escalate modal target-select and on action-plan-new-assignee. The select itself works; only console is noisy."
+  ],
+  "critical_code_review_comments": [
+    "Backend RBAC is correctly enforced on both new endpoints (cross-module-patterns senior+, strategy-meeting-pack/{id}.pdf manager+, /escalate manager+, /sign-off manager+).",
+    "Strategy pack 404 path works for unknown resident; PDF starts with %PDF and is >1.5KB.",
+    "Audit endpoint correctly persists 'strategy_meeting_pack_download' with actor_name + object_id for every download.",
+    "Frontend correctly hides StrategyMeetingPackButton on adult residents (verified with Margaret Lewis) and on senior/staff roles — confirms children's-services-only + manager+ gating end-to-end.",
+    "ActionPlanPanel sign-off button correctly only renders on resolved+unsigned actions (not visible on open actions, appears on Resolved tab after resolve).",
+    "Patterns view repeat_concern_children correctly enforces count>=2 AND at least 2 concern_types (verified via Mads/Aisha tiles)."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (33/33)", "frontend": "100% — all targeted flows pass"},
+  "test_credentials": "manager@care.local / Manager@123 (used for all positive paths); senior@care.local / Senior@123 + staff@care.local / Staff@123 (used for RBAC negative paths)",
+  "seed_data_creation": "Created one InspectionAction 'Lifecycle test action' via UI for end-to-end lifecycle, then deleted via UI delete button. Three audit events (strategy_meeting_pack_download) were generated during testing — these persist in audit log by design.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iteration 37 fully verified. Backend tests in /app/backend/tests/test_iteration37.py (10/10 pass). Always set REACT_APP_BACKEND_URL env before pytest. /ofsted now has 4 tabs: ofsted-tab-command, ofsted-tab-regulation_44, ofsted-tab-simulation, ofsted-tab-patterns. ActionPlanPanel testid pattern: action-plan-item-<id>, action-assign-<id>, action-due-<id>, action-escalate-<id>, action-signoff-<id>, badge-overdue/escalated/signedoff-<id>, escalate-modal+escalate-to-select/name/reason/submit, signoff-modal+signoff-notes/submit, accountability-summary, action-plan-new-btn/form/title/priority/due/assignee/save. Strategy meeting pack: strategy-meeting-pack-bar + strategy-meeting-pack-btn on ResidentDetail Safeguarding tab — only on children's residents + manager tier. Sample children's resident: a1fb73b6-aced-4cf3-a053-0b861183f897 (Maddy O'Brien). Adult resident: 9349f6d9-a222-465f-90b4-6781a824fee8 (Margaret Lewis).",
+  "rca of the issue": "No critical issues found. Only a noisy (non-blocking) console warning about <span> inside <option> caused by the framework's dev-mode dynamic-content instrumentation injecting a styled span wrapper around dynamic option text. Functionally the <select> works normally and form submission selects the correct value."
+}
