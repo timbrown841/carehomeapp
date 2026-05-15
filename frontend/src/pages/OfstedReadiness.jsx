@@ -330,14 +330,20 @@ export default function OfstedReadiness() {
   const [q, setQ] = useState("");
   const [downloading, setDownloading] = useState(false);
   const [tab, setTab] = useState("command");  // command | regulation_44
+  const [accessDenied, setAccessDenied] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const r = await api.get("/ofsted/command-centre");
       setData(r.data);
+      setAccessDenied(false);
     } catch (e) {
-      toast.error("Couldn't load command centre");
+      if (e?.response?.status === 403) {
+        setAccessDenied(true);
+      } else {
+        toast.error("Couldn't load command centre");
+      }
     } finally { setLoading(false); }
   }, []);
   useEffect(() => { load(); }, [load]);
@@ -370,6 +376,19 @@ export default function OfstedReadiness() {
     } catch { toast.error("Couldn't download bundle (manager only)"); }
     finally { setDownloading(false); }
   };
+
+  if (accessDenied) {
+    return (
+      <div className="bg-white border divider-soft rounded-2xl p-10 text-center max-w-xl mx-auto" data-testid="ofsted-access-denied">
+        <ShieldCheck size={36} className="mx-auto text-stone-400 mb-3" />
+        <h2 className="text-lg font-semibold text-[#0F1115]">Manager-level access required</h2>
+        <p className="text-sm text-stone-600 mt-2">
+          The Ofsted Inspection Command Centre is available to senior, manager and admin roles.
+          Please ask your registered manager if you need access for inspection prep.
+        </p>
+      </div>
+    );
+  }
 
   if (loading || !data) {
     return (
