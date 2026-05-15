@@ -126,6 +126,31 @@ export default function Layout() {
             <Logo />
             <NotificationBell />
           </div>
+          {effectiveMode && (
+            <div
+              className="hidden lg:flex items-center gap-2 px-5 py-2.5 border-b divider-soft"
+              data-testid="sidebar-sector-badge"
+              style={{ background: effectiveMode === "children" ? "#0F2A4708" : "#3F2E5C08" }}
+            >
+              <span
+                className="text-[9px] font-bold uppercase tracking-[0.18em] px-2 py-1 rounded-full"
+                style={{
+                  background: effectiveMode === "children" ? "#0F2A47" : "#3F2E5C",
+                  color: "white",
+                }}
+              >
+                {effectiveMode === "children" ? "Ofsted" : "CQC"}
+              </span>
+              <div className="flex-1 min-w-0">
+                <div className="text-[11px] font-semibold text-[#0F1115] truncate">
+                  {effectiveMode === "children" ? "Children's Services" : "Adult Care Services"}
+                </div>
+                {settings.org_display_name && (
+                  <div className="text-[10px] text-stone-500 truncate">{settings.org_display_name}</div>
+                )}
+              </div>
+            </div>
+          )}
           <nav className="p-3 space-y-1">
             {visibleNav.map((l) => (
               <NavItem key={l.to} link={l} onClick={close} />

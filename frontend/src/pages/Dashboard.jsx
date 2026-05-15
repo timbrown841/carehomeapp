@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import api from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
+import { useOrg } from "@/context/OrgContext";
+import { useSectorCopy } from "@/lib/sectorCopy";
 import { formatFullTimestamp } from "@/lib/format";
 import LogIncidentFAB from "@/components/LogIncidentFAB";
 import AttentionNow from "@/components/AttentionNow";
@@ -173,6 +175,8 @@ const SeverityBadge = ({ severity, safeguarding }) => {
 
 export default function Dashboard() {
   const { user } = useAuth();
+  const { isChildrenMode, isAdultMode } = useOrg();
+  const copy = useSectorCopy();
   const [stats, setStats] = useState(null);
 
   useEffect(() => {
@@ -191,14 +195,20 @@ export default function Dashboard() {
   const week = stats?.incidents_week ?? 0;
   const prev = stats?.incidents_prev_week ?? 0;
 
-  const cards = [
-    { to: "/residents", label: "Residents / Young People", sub: "Profiles & background", icon: Users, accent: "#1E4D5C", testid: "card-residents" },
+  // Quick actions adapt to the active sector — no cross-sector cards.
+  const sharedCards = [
+    { to: "/residents", label: `Residents · ${copy.residentTitleCase}`, sub: "Profiles & background", icon: Users, accent: "#1E4D5C", testid: "card-residents" },
     { to: "/notes", label: "Daily Notes", sub: "Wellbeing & shift logs", icon: NotebookPen, accent: "#2D6A4F", testid: "card-notes" },
     { to: "/incidents/new", label: "Incident Reports", sub: "Safeguarding & escalations", icon: ShieldAlert, accent: "#B23A48", testid: "card-incidents" },
-    { to: "/staff", label: "Staff Management", sub: "Team, rotas & roles", icon: UserCog, accent: "#0F2A47", testid: "card-staff" },
+    { to: "/staff-operations", label: "Staff Operations", sub: "Rota, clock-in & pressure", icon: UserCog, accent: "#0F2A47", testid: "card-staff" },
     { to: "/supervisions", label: "Supervisions & Appraisals", sub: "1:1s & development", icon: ClipboardCheck, accent: "#5B6E58", testid: "card-supervisions" },
-    { to: "/reports", label: "Reports", sub: "AI-generated summaries", icon: FileText, accent: "#E57A5D", testid: "card-reports" },
-    { to: "/ofsted", label: "Ofsted Readiness", sub: "Inspection checklist", icon: BadgeCheck, accent: "#1E4D5C", testid: "card-ofsted" },
+    { to: "/reports", label: "AI Reports", sub: "AI-generated summaries", icon: FileText, accent: "#E57A5D", testid: "card-reports" },
+  ];
+  const cards = [
+    ...sharedCards,
+    isChildrenMode
+      ? { to: "/ofsted", label: "Ofsted Readiness", sub: "Inspection checklist", icon: BadgeCheck, accent: "#0F2A47", testid: "card-ofsted" }
+      : { to: "/cqc-readiness", label: "CQC Readiness", sub: "Inspection checklist", icon: BadgeCheck, accent: "#3F2E5C", testid: "card-cqc" },
   ];
 
   return (
@@ -224,7 +234,7 @@ export default function Dashboard() {
                 Log Incident in 30 seconds
               </h2>
               <p className="text-sm text-white/80 mt-1">
-                Voice-powered. Instant save. Ofsted-ready.
+                Voice-powered. Instant save. {copy.regulatorName}-ready.
               </p>
             </div>
             <div
@@ -295,8 +305,8 @@ export default function Dashboard() {
       {/* Urgency widgets — operational at-a-glance */}
       <UrgencyWidgets />
 
-      {/* Ofsted readiness tile (senior+) */}
-      {(user?.role === "senior" || user?.role === "manager" || user?.role === "admin") && (
+      {/* Ofsted readiness tile (children mode only, senior+) */}
+      {isChildrenMode && (user?.role === "senior" || user?.role === "manager" || user?.role === "admin") && (
         <OfstedReadinessDashboardTile />
       )}
 
@@ -350,8 +360,8 @@ export default function Dashboard() {
             icon={FileWarning}
             sub={
               missing > 0
-                ? "Residents without a note in the last 24h"
-                : "Every young person logged today"
+                ? `${copy.residentTitleCase} without a note in the last 24h`
+                : `Every ${copy.residentSingular} logged today`
             }
           />
         </div>
