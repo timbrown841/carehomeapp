@@ -4867,6 +4867,29 @@ async def dashboard_urgency(_: dict = Depends(get_current_user)):
         {"scheduled_for": {"$gte": today_iso_d, "$lte": fortnight}, "status": "scheduled"}
     )
 
+    # Adult-specific signals (computed always — UI picks which to show)
+    last_14 = (now - timedelta(days=14)).isoformat()
+    last_30 = (now - timedelta(days=30)).isoformat()
+
+    care_tasks_overdue = await db.care_tasks.count_documents(
+        {"status": {"$in": ["scheduled", "open"]}, "due_at": {"$lt": now.isoformat()}}
+    ) if "care_tasks" in await db.list_collection_names() else 0
+
+    medication_refusals_14d = await db.medication_admins.count_documents(
+        {"status": "refused", "given_at": {"$gte": last_14}}
+    )
+
+    # Falls = incidents with category="fall" in last 30d
+    falls_30d = await db.incidents.count_documents(
+        {"$or": [{"category": "fall"}, {"category": "Fall"}, {"category": "falls"}],
+         "occurred_at": {"$gte": last_30}}
+    )
+
+    # Wellbeing reviews due = residents whose wellbeing_next_review is past
+    wellbeing_reviews_due = await db.residents.count_documents(
+        {"wellbeing_next_review": {"$lt": today_iso_d, "$ne": None}}
+    )
+
     return {
         "risk_reviews_overdue": len(risk_overdue),
         "missed_doses_24h": missed,
@@ -4874,6 +4897,11 @@ async def dashboard_urgency(_: dict = Depends(get_current_user)):
         "open_missing": open_missing,
         "overdue_visits": overdue_visits,
         "upcoming_visits": upcoming_visits,
+        # Adult-mode metrics
+        "care_tasks_overdue": care_tasks_overdue,
+        "medication_refusals_14d": medication_refusals_14d,
+        "falls_30d": falls_30d,
+        "wellbeing_reviews_due": wellbeing_reviews_due,
     }
 
 

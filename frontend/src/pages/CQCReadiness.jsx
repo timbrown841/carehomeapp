@@ -38,7 +38,7 @@ export default function CQCReadiness() {
           CQC Readiness
         </h1>
         <p className="text-[#5d6068] mt-1.5 text-[15px]">
-          Live snapshot for your adult-services regulatory readiness across the five Key Questions: Safe, Effective, Caring, Responsive, Well-led.
+          &ldquo;If CQC walked in right now — what would they challenge us on?&rdquo; A live read across the five Key Questions: Safe · Effective · Caring · Responsive · Well-led.
         </p>
       </header>
 

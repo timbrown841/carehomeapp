@@ -455,7 +455,7 @@ export default function ResidentDetail() {
                 </AccordionSection>
                 <AccordionSection
                   title="Recent daily notes"
-                  subtitle="Latest staff observations &amp; welfare checks for this young person"
+                  subtitle={`Latest staff observations &amp; welfare checks for this ${isAdultService(resident.service_type) ? "service user" : "young person"}`}
                   testid="acc-notes"
                 >
                   <RecentNotesPanel residentId={resident.id} />
@@ -501,7 +501,7 @@ export default function ResidentDetail() {
             </AccordionSection>
             <AccordionSection
               title="Recent incidents"
-              subtitle="Linked incidents and safeguarding events for this young person"
+              subtitle={`Linked incidents and safeguarding events for this ${isAdultService(resident.service_type) ? "service user" : "young person"}`}
               tone="#A8273A"
               testid="acc-incidents"
             >

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import api from "@/lib/api";
+import { useOrg } from "@/context/OrgContext";
 import {
   Mic,
   Pill,
@@ -14,16 +15,32 @@ import {
   ShieldAlert,
   CalendarClock,
   CheckCircle2,
+  Footprints,
+  HeartPulse,
+  Users as UsersI,
+  Map,
+  Scale,
 } from "lucide-react";
 
+const CHILDREN_ACTIONS = [
+  { label: "Log Incident", to: "/incidents/new", icon: Mic, accent: "#A8273A", testid: "qa-incident", primary: true },
+  { label: "Shift Handover", to: "/handover", icon: ClipboardList, accent: "#0e3b4a", testid: "qa-handover" },
+  { label: "Key Work", to: "/key-work", icon: UsersI, accent: "#0e3b4a", testid: "qa-key-work" },
+  { label: "Missing Episode", to: "/missing", icon: Map, accent: "#B8772F", testid: "qa-missing" },
+  { label: "Body Map", to: "/body-maps", icon: ShieldAlert, accent: "#2F6A3A", testid: "qa-body-map" },
+];
+
+const ADULT_ACTIONS = [
+  { label: "Log Incident", to: "/incidents/new", icon: Mic, accent: "#A8273A", testid: "qa-incident", primary: true },
+  { label: "MAR Round", to: "/medications", icon: Pill, accent: "#3F2E5C", testid: "qa-medication" },
+  { label: "Care Task", to: "/care-tasks", icon: CheckCircle2, accent: "#0e3b4a", testid: "qa-care-task" },
+  { label: "Fall / Mobility", to: "/falls", icon: Footprints, accent: "#B8772F", testid: "qa-fall" },
+  { label: "Wellbeing", to: "/wellbeing", icon: HeartPulse, accent: "#2F6A3A", testid: "qa-wellbeing" },
+];
+
 export function QuickActions() {
-  const actions = [
-    { label: "Log Incident", to: "/incidents/new", icon: Mic, accent: "#A8273A", testid: "qa-incident", primary: true },
-    { label: "Shift Handover", to: "/handover", icon: ClipboardList, accent: "#0e3b4a", testid: "qa-handover" },
-    { label: "Medication Round", to: "/medications", icon: Pill, accent: "#0e3b4a", testid: "qa-medication" },
-    { label: "Schedule Visit", to: "/visits", icon: CalendarCheck, accent: "#0e3b4a", testid: "qa-visit" },
-    { label: "Care Note", to: "/notes", icon: NotebookPen, accent: "#2F6A3A", testid: "qa-note" },
-  ];
+  const { isAdultMode } = useOrg();
+  const actions = isAdultMode ? ADULT_ACTIONS : CHILDREN_ACTIONS;
   return (
     <section data-testid="quick-actions" className="space-y-2">
       <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#5d6068] px-1">
@@ -72,13 +89,14 @@ const URGENCY_TONES = {
 };
 
 export function UrgencyWidgets() {
+  const { isAdultMode } = useOrg();
   const [data, setData] = useState(null);
   useEffect(() => {
     api.get("/dashboard/urgency").then((r) => setData(r.data)).catch(() => setData(null));
   }, []);
   if (!data) return null;
 
-  const widgets = [
+  const childrenWidgets = [
     {
       label: "Open safeguarding",
       value: data.open_safeguarding,
@@ -134,6 +152,67 @@ export function UrgencyWidgets() {
       testid: "u-visits-upcoming",
     },
   ];
+
+  // Adult-mode prioritises the operational signals that matter for CQC adult care:
+  // overdue care tasks, MAR refusals, mobility/falls signal, wellbeing reviews.
+  const adultWidgets = [
+    {
+      label: "Adult safeguarding",
+      value: data.open_safeguarding,
+      tone: data.open_safeguarding > 0 ? "red" : "green",
+      icon: ShieldAlert,
+      to: "/incidents",
+      sub: data.open_safeguarding > 0 ? "Need review" : "All clear",
+      testid: "u-safeguarding",
+    },
+    {
+      label: "Overdue care tasks",
+      value: data.care_tasks_overdue ?? 0,
+      tone: (data.care_tasks_overdue ?? 0) > 0 ? "red" : "green",
+      icon: CheckCircle2,
+      to: "/care-tasks",
+      sub: (data.care_tasks_overdue ?? 0) > 0 ? "Coverage gap" : "On schedule",
+      testid: "u-care-tasks",
+    },
+    {
+      label: "MAR refusals (14d)",
+      value: data.medication_refusals_14d ?? 0,
+      tone: (data.medication_refusals_14d ?? 0) >= 3 ? "amber" : "green",
+      icon: Pill,
+      to: "/medications",
+      sub: (data.medication_refusals_14d ?? 0) >= 3 ? "Pattern · review" : "No pattern",
+      testid: "u-mar-refusals",
+    },
+    {
+      label: "Falls (30d)",
+      value: data.falls_30d ?? 0,
+      tone: (data.falls_30d ?? 0) >= 3 ? "amber" : "green",
+      icon: Footprints,
+      to: "/falls",
+      sub: (data.falls_30d ?? 0) >= 3 ? "Cluster forming" : "Stable",
+      testid: "u-falls",
+    },
+    {
+      label: "Wellbeing reviews due",
+      value: data.wellbeing_reviews_due ?? data.risk_reviews_overdue,
+      tone: (data.wellbeing_reviews_due ?? data.risk_reviews_overdue) > 0 ? "amber" : "green",
+      icon: HeartPulse,
+      to: "/wellbeing",
+      sub: "Action needed",
+      testid: "u-wellbeing-reviews",
+    },
+    {
+      label: "Missed doses (24h)",
+      value: data.missed_doses_24h,
+      tone: data.missed_doses_24h > 0 ? "red" : "green",
+      icon: Pill,
+      to: "/medications",
+      sub: data.missed_doses_24h > 0 ? "Sign or chase" : "100% signed",
+      testid: "u-missed",
+    },
+  ];
+
+  const widgets = isAdultMode ? adultWidgets : childrenWidgets;
 
   return (
     <section data-testid="urgency-widgets" className="space-y-2">

@@ -143,7 +143,7 @@ export default function Layout() {
               </span>
               <div className="flex-1 min-w-0">
                 <div className="text-[11px] font-semibold text-[#0F1115] truncate">
-                  {effectiveMode === "children" ? "Children's Services" : "Adult Care Services"}
+                  {effectiveMode === "children" ? "Children's Residential Workspace" : "Adult Care Workspace"}
                 </div>
                 {settings.org_display_name && (
                   <div className="text-[10px] text-stone-500 truncate">{settings.org_display_name}</div>
