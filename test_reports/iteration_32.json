@@ -1,0 +1,42 @@
+{
+  "summary": "Iter 36 — Inspection Simulation + Pre-Inspection Scan PDF + Reg 44 Auto-draft. Backend 8/8 pass (incl. determinism, RBAC, payload shape, PDF signature, auto-draft fields). Frontend: simulation tab + banner + 9 QS cards + strengths/weaknesses/concerns/recommendations + PDF download + RBAC + mobile all render correctly and determinism verified across reloads. One CRITICAL FRONTEND BUG: auto-draft cross-tab pre-fill — the visit summary form fields strengths/areas_for_development/immediate_concerns/recommendations/progress_since_last are NOT populated from the auto-draft payload because a second useEffect in VisitSummaryPanel overrides the auto-draft values on initial mount.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "Regulation44View → VisitSummaryPanel",
+        "issue": "Auto-draft cross-tab flow fails to pre-fill the visit summary form. After clicking sim-auto-draft, the page switches to the Reg 44 tab, the amber banner (reg44-auto-draft-banner) shows correctly, visit_date and visitor_name behave OK, BUT overall_judgement stays at the default/latest value (UI shows 'good' while auto-draft endpoint returns 'requires_improvement'), and strengths / areas_for_development / immediate_concerns / progress_since_last / recommendations textareas are ALL EMPTY (len=0) despite backend returning bullet-prefixed content (strengths=316 chars, areas=474, recommendations=745, immediate_concerns=235).",
+        "selector": "data-testid=\"reg44-strengths\", \"reg44-areas_for_development\", \"reg44-recommendations\", \"reg44-immediate_concerns\", \"reg44-judgement\"",
+        "priority": "CRITICAL"
+      }
+    ],
+    "integration_issues": [
+      {
+        "flow": "sim-auto-draft → Reg 44 visit editor pre-fill",
+        "issue": "The autoDraft useEffect in VisitSummaryPanel (lines 333–348) and the latest/editing useEffect (lines 354–368) both fire on initial mount. The second effect detects editing=false at mount-time and overwrites draft with latest-visit values, wiping out the auto-draft content from the first effect. Net effect: only fields not present in `latest` (i.e. visit_date which always matches today) appear pre-filled; everything else falls back to whatever the last saved visit had.",
+        "affected_selectors": ["reg44-strengths", "reg44-recommendations", "reg44-areas_for_development", "reg44-immediate_concerns", "reg44-judgement"]
+      }
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration36.py",
+    "/app/test_reports/pytest/iter36_results.xml"
+  ],
+  "action_items": [
+    "FIX VisitSummaryPanel useEffect race in /app/frontend/src/pages/Regulation44View.jsx. Two equally-valid options: (a) gate the second useEffect (lines 354–368) so it does NOT run when autoDraft is truthy — e.g. `if (!editing && !autoDraft) { setDraft({...latest values}); }`, OR (b) move autoDraft into the dependency array of the latest/editing effect and consume autoDraft last. Verify after fix that overall_judgement reflects autoDraft.overall_judgement and all 5 textareas show bullet-prefixed text on click of sim-auto-draft."
+  ],
+  "critical_code_review_comments": [
+    "RCA: VisitSummaryPanel has two useEffects that both call setDraft on mount. The autoDraft effect uses functional updater setDraft((d) => ({...d, ...autoDraft})) but the latest-or-editing effect uses plain setDraft({...latest values}), which fires unconditionally on mount when editing is initially false. React runs both effects sequentially but the latest-based effect wins because it's not functional. Result: auto-draft data is silently dropped.",
+    "Backend determinism & RBAC are clean. PDF generated via ReportLab is well-formed (>2KB, %PDF header).",
+    "InspectionSimulationView.jsx is well-decomposed and uses correct testids (inspection-simulation-view, predicted-rating-label, sim-refresh, sim-download-pdf, sim-auto-draft, qs-QS1..QS9, sim-strengths, sim-weaknesses, inspection-concerns, concern-N, sim-recommendations, rec-N)."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "92% (auto-draft pre-fill broken; everything else works)"},
+  "test_credentials": "manager@care.local / Manager@123, senior@care.local / Senior@123, staff@care.local / Staff@123",
+  "seed_data_creation": "Created one Reg 44 visit during testing via reg44-visit-save (visitor 'Auto-Draft Test Visitor', judgement=good, fields empty due to the bug). Safe to leave; future runs will overwrite or coexist.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iter36 tests in /app/backend/tests/test_iteration36.py — 8/8 pass. Always export REACT_APP_BACKEND_URL before pytest. /ofsted now has 3 tabs (ofsted-tab-command, ofsted-tab-regulation_44, ofsted-tab-simulation). The auto-draft regression: click sim-auto-draft, wait ~2s, check reg44-strengths textarea — should contain bullet-prefixed text starting with '•'. Currently it is empty. The bug is purely frontend (backend GET /ofsted/regulation-44/auto-draft returns rich data, confirmed via direct curl). Fix is a 1-line guard in /app/frontend/src/pages/Regulation44View.jsx around line 354–368 (skip when autoDraft is truthy).",
+  "rca of the issue": "RCA: In /app/frontend/src/pages/Regulation44View.jsx, function VisitSummaryPanel has two useEffects: (1) lines 333–348 keyed on [autoDraft] applies auto-draft data when prop arrives, (2) lines 354–368 keyed on [latest, editing] resets draft from latest while editing is false. Both run on initial mount; the second one sees editing=false (initial state) and OVERWRITES the auto-draft setDraft call with latest-visit values. Repro: login manager → /ofsted → ofsted-tab-simulation → sim-auto-draft → verify reg44-strengths is empty. Fix: change line 355 from `if (!editing)` to `if (!editing && !autoDraft)` (or add a guard against the autoDraft prop). After fix, re-run the auto-draft Playwright flow and assert: reg44-strengths starts with '•' AND reg44-judgement equals the auto-draft.overall_judgement ('requires_improvement' given current seed)."
+}

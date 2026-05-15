@@ -11,6 +11,7 @@ import {
   LayoutDashboard, BookOpen,
 } from "lucide-react";
 import Regulation44View from "@/pages/Regulation44View";
+import InspectionSimulationView from "@/pages/InspectionSimulationView";
 
 const ICONS = {
   ShieldAlert, Siren, Pill, GraduationCap, FileText, Users, Building2,
@@ -329,8 +330,14 @@ export default function OfstedReadiness() {
   const [filterDomain, setFilterDomain] = useState("all");
   const [q, setQ] = useState("");
   const [downloading, setDownloading] = useState(false);
-  const [tab, setTab] = useState("command");  // command | regulation_44
+  const [tab, setTab] = useState("command");  // command | regulation_44 | simulation
   const [accessDenied, setAccessDenied] = useState(false);
+  const [autoDraftPayload, setAutoDraftPayload] = useState(null);
+
+  const handleAutoDraftReady = (payload) => {
+    setAutoDraftPayload(payload);
+    setTab("regulation_44");
+  };
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -477,9 +484,27 @@ export default function OfstedReadiness() {
         >
           <BookOpen size={14} /> Regulation 44 modules
         </button>
+        <button
+          type="button"
+          onClick={() => setTab("simulation")}
+          data-testid="ofsted-tab-simulation"
+          className={`text-sm font-semibold px-4 py-2.5 border-b-2 transition-colors flex items-center gap-1.5 whitespace-nowrap ${
+            tab === "simulation" ? "border-[#0e3b4a] text-[#0e3b4a]" : "border-transparent text-stone-600 hover:text-stone-900"
+          }`}
+        >
+          <Sparkles size={14} /> Inspection simulation
+        </button>
       </div>
 
-      {tab === "regulation_44" && <Regulation44View />}
+      {tab === "regulation_44" && (
+        <Regulation44View
+          autoDraftPayload={autoDraftPayload}
+          onConsumeDraft={() => setAutoDraftPayload(null)}
+        />
+      )}
+      {tab === "simulation" && (
+        <InspectionSimulationView onAutoDraftReady={handleAutoDraftReady} />
+      )}
 
       {tab === "command" && <>
 

@@ -108,6 +108,10 @@ def test_reg44_notes_surface_in_payload(manager):
 
 
 def test_reg44_visits_crud(senior, manager):
+    # Clean any previous visits so test is deterministic
+    existing = requests.get(f"{API}/ofsted/regulation-44/visits", headers=manager).json()
+    for v in existing:
+        requests.delete(f"{API}/ofsted/regulation-44/visits/{v['id']}", headers=manager)
     # Senior can list, cannot create
     assert requests.get(f"{API}/ofsted/regulation-44/visits", headers=senior).status_code == 200
     bad = requests.post(f"{API}/ofsted/regulation-44/visits", headers=senior, json={

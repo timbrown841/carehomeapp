@@ -312,7 +312,7 @@ function CategoryAccordion({ cat, tier, defaultOpen, onNoteSaved, q, ragFilter }
 // ---------------------------------------------------------------------------
 // Regulation 44 visit summary editor
 // ---------------------------------------------------------------------------
-function VisitSummaryPanel({ tier, latest, onSaved }) {
+function VisitSummaryPanel({ tier, latest, onSaved, autoDraft, forceEdit, onCancelEdit }) {
   const isManager = tier >= 3;
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState({
@@ -327,6 +327,29 @@ function VisitSummaryPanel({ tier, latest, onSaved }) {
     manager_comments: latest?.manager_comments || "",
   });
   const [busy, setBusy] = useState(false);
+  const [draftFromAuto, setDraftFromAuto] = useState(false);
+
+  // External auto-draft override
+  useEffect(() => {
+    if (autoDraft) {
+      setDraft((d) => ({
+        ...d,
+        visit_date: autoDraft.visit_date || d.visit_date,
+        overall_judgement: autoDraft.overall_judgement || d.overall_judgement,
+        strengths: autoDraft.strengths || "",
+        areas_for_development: autoDraft.areas_for_development || "",
+        immediate_concerns: autoDraft.immediate_concerns || "",
+        progress_since_last: autoDraft.progress_since_last || "",
+        recommendations: autoDraft.recommendations || "",
+      }));
+      setEditing(true);
+      setDraftFromAuto(true);
+    }
+  }, [autoDraft]);
+
+  useEffect(() => {
+    if (forceEdit) setEditing(true);
+  }, [forceEdit]);
 
   useEffect(() => {
     if (!editing) {
@@ -392,6 +415,14 @@ function VisitSummaryPanel({ tier, latest, onSaved }) {
 
       {editing ? (
         <div className="space-y-3">
+          {draftFromAuto && (
+            <div className="border-l-4 rounded-lg p-3 bg-[#B8772F]/8" style={{ borderLeftColor: "#B8772F" }} data-testid="reg44-auto-draft-banner">
+              <p className="text-xs text-stone-800">
+                <strong>Auto-drafted from live operational data.</strong> Review every section, edit
+                tone &amp; specifics, then save. The Reg 44 visitor remains accountable for the final wording.
+              </p>
+            </div>
+          )}
           <div className="grid sm:grid-cols-3 gap-2">
             <div>
               <label className="block text-[10px] font-bold uppercase tracking-wider text-stone-600 mb-1">Visit date</label>
@@ -435,7 +466,7 @@ function VisitSummaryPanel({ tier, latest, onSaved }) {
             </div>
           ))}
           <div className="flex justify-end gap-2">
-            <button onClick={() => setEditing(false)} className="text-sm px-3 py-2 rounded-lg hover:bg-stone-100">Cancel</button>
+            <button onClick={() => { setEditing(false); setDraftFromAuto(false); onCancelEdit?.(); }} className="text-sm px-3 py-2 rounded-lg hover:bg-stone-100">Cancel</button>
             <button onClick={save} disabled={busy} data-testid="reg44-visit-save"
               className="text-sm font-semibold bg-[#0e3b4a] text-white px-3 py-2 rounded-lg disabled:opacity-50 flex items-center gap-1.5">
               {busy ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />} Save visit
@@ -473,12 +504,13 @@ function VisitSummaryPanel({ tier, latest, onSaved }) {
 // ---------------------------------------------------------------------------
 // MAIN — Regulation 44 view (default-exported as section, mounted inside OfstedReadiness)
 // ---------------------------------------------------------------------------
-export default function Regulation44View() {
+export default function Regulation44View({ autoDraftPayload, onConsumeDraft }) {
   const { tier } = useAuth();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [q, setQ] = useState("");
   const [ragFilter, setRagFilter] = useState("all");
+  const [forceVisitEdit, setForceVisitEdit] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -489,6 +521,18 @@ export default function Regulation44View() {
     finally { setLoading(false); }
   }, []);
   useEffect(() => { load(); }, [load]);
+
+  // When parent (simulation tab) provides an auto-draft, open the visit editor pre-filled
+  useEffect(() => {
+    if (autoDraftPayload) {
+      setForceVisitEdit(true);
+      // scroll to the visit summary
+      requestAnimationFrame(() => {
+        const el = document.querySelector('[data-testid="reg44-visit-summary"]');
+        el?.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+    }
+  }, [autoDraftPayload]);
 
   if (loading || !data) {
     return (
@@ -555,7 +599,14 @@ export default function Regulation44View() {
       </div>
 
       {/* Visit summary */}
-      <VisitSummaryPanel tier={tier} latest={data.latest_visit} onSaved={load} />
+      <VisitSummaryPanel
+        tier={tier}
+        latest={data.latest_visit}
+        onSaved={() => { load(); onConsumeDraft?.(); setForceVisitEdit(false); }}
+        autoDraft={autoDraftPayload}
+        forceEdit={forceVisitEdit}
+        onCancelEdit={() => { setForceVisitEdit(false); onConsumeDraft?.(); }}
+      />
 
       {/* Quality Standards legend */}
       <details className="bg-white border divider-soft rounded-2xl p-4">

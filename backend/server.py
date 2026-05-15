@@ -56,6 +56,8 @@ from staff_reflection_models import (
 )
 from ofsted_command_centre import build_command_centre
 from regulation_44_modules import build_regulation_44, MODULES as REG44_MODULES
+from inspection_simulation import build_inspection_simulation, build_reg44_auto_draft
+from pre_inspection_scan_pdf import build_pre_inspection_scan_pdf
 import secrets as _secrets
 
 
@@ -7916,6 +7918,51 @@ async def delete_reg44_visit(vid: str, user: dict = Depends(require_tier(3))):
             summary="Reg 44 visit deleted",
         )
     return {"deleted": res.deleted_count}
+
+
+# ============================================================
+# Inspection Simulation Mode + Pre-Inspection Scan PDF (Iteration 36)
+# Deterministic rules-based — NOT AI. Reads from Reg 44 + Command Centre.
+# ============================================================
+
+
+async def _build_simulation_payload():
+    reg44 = await build_regulation_44(db)
+    cc = await build_command_centre(db)
+    sim = build_inspection_simulation(reg44, cc)
+    return reg44, cc, sim
+
+
+@api_router.get("/ofsted/inspection-simulation")
+async def inspection_simulation(_: dict = Depends(require_tier(2))):
+    """Deterministic inspection-readiness simulation (children's-only)."""
+    _, _, sim = await _build_simulation_payload()
+    return sim
+
+
+@api_router.get("/ofsted/regulation-44/auto-draft")
+async def regulation_44_auto_draft(_: dict = Depends(require_tier(2))):
+    """Auto-drafted Reg 44 visit summary, pre-filled from live operational data."""
+    reg44, cc, sim = await _build_simulation_payload()
+    return build_reg44_auto_draft(reg44, sim, cc)
+
+
+@api_router.get("/ofsted/pre-inspection-scan.pdf")
+async def pre_inspection_scan_pdf(user: dict = Depends(require_tier(3))):
+    """One-click Pre-Inspection Readiness Scan PDF (manager+)."""
+    _, _, sim = await _build_simulation_payload()
+    pdf_bytes = build_pre_inspection_scan_pdf(sim)
+    fname = f"pre-inspection-scan-{datetime.now().strftime('%Y%m%d-%H%M')}.pdf"
+    await record_audit(
+        db, actor=user, action="pre_inspection_scan_download",
+        object_type="ofsted", object_id="pre_inspection_scan",
+        summary="Pre-Inspection Readiness Scan PDF downloaded",
+    )
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
 
 
 app.include_router(api_router)
