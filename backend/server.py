@@ -7723,7 +7723,7 @@ async def supervision_view(user_id: str, _: dict = Depends(require_tier(3))):
 class InspectionActionIn(BaseModel):
     title: str = Field(min_length=1, max_length=200)
     detail: Optional[str] = Field(None, max_length=4000)
-    domain: Optional[str] = Field(None, max_length=80)  # safeguarding/health_medication/etc
+    domain: Optional[str] = Field(None, max_length=80)
     priority: str = Field("medium", pattern="^(low|medium|high)$")
     assigned_to_id: Optional[str] = None
     assigned_to_name: Optional[str] = Field(None, max_length=200)
@@ -7740,6 +7740,17 @@ class InspectionActionUpdate(BaseModel):
     due_date: Optional[str] = None
     status: Optional[str] = Field(None, pattern="^(open|in_progress|resolved)$")
     resolution_notes: Optional[str] = Field(None, max_length=4000)
+    evidence_notes: Optional[str] = Field(None, max_length=4000)
+
+
+class InspectionActionEscalateIn(BaseModel):
+    escalated_to_id: Optional[str] = None
+    escalated_to_name: str = Field(min_length=1, max_length=200)
+    reason: str = Field(min_length=1, max_length=1000)
+
+
+class InspectionActionSignOffIn(BaseModel):
+    notes: Optional[str] = Field(None, max_length=4000)
 
 
 @api_router.get("/ofsted/command-centre")
@@ -7759,7 +7770,29 @@ async def list_inspection_actions(
     items = await db.inspection_actions.find(q, {"_id": 0}).sort(
         [("status", 1), ("priority", -1), ("created_at", -1)]
     ).to_list(500)
+    # Decorate with computed overdue / escalation_needed flags
+    today = datetime.now(timezone.utc).date().isoformat()
+    for it in items:
+        is_active = it.get("status") != "resolved"
+        due = it.get("due_date")
+        it["is_overdue"] = bool(is_active and due and due < today)
+        # Escalation suggested if: high priority + overdue + not yet escalated
+        it["needs_escalation"] = bool(
+            is_active and it["is_overdue"] and it.get("priority") == "high"
+            and not it.get("escalated_at")
+        )
     return items
+
+
+def _action_log_entry(action: str, user: dict, note: Optional[str] = None) -> dict:
+    return {
+        "at": now_iso(),
+        "by_id": user["id"],
+        "by_name": user["name"],
+        "by_role": user["role"],
+        "action": action,
+        "note": note,
+    }
 
 
 @api_router.post("/inspection-actions")
@@ -7774,6 +7807,15 @@ async def create_inspection_action(payload: InspectionActionIn, user: dict = Dep
         "resolved_at": None,
         "resolved_by_name": None,
         "resolution_notes": None,
+        "evidence_notes": None,
+        "escalated_at": None,
+        "escalated_by_name": None,
+        "escalated_to_id": None,
+        "escalated_to_name": None,
+        "escalation_reason": None,
+        "signed_off_at": None,
+        "signed_off_by_name": None,
+        "action_log": [_action_log_entry("created", user, note=f"Priority: {payload.priority}")],
     }
     await db.inspection_actions.insert_one(doc)
     doc.pop("_id", None)
@@ -7781,7 +7823,8 @@ async def create_inspection_action(payload: InspectionActionIn, user: dict = Dep
         db, actor=user, action="inspection_action_create",
         object_type="inspection_action", object_id=doc["id"],
         summary=f"Inspection action: {payload.title}",
-        metadata={"priority": payload.priority, "domain": payload.domain},
+        metadata={"priority": payload.priority, "domain": payload.domain,
+                   "assigned_to": payload.assigned_to_name},
     )
     return doc
 
@@ -7792,20 +7835,93 @@ async def update_inspection_action(aid: str, payload: InspectionActionUpdate, us
     if not existing:
         raise HTTPException(404, "Action not found")
     update = payload.model_dump(exclude_unset=True)
-    if update.get("status") == "resolved" and not existing.get("resolved_at"):
-        update["resolved_at"] = now_iso()
-        update["resolved_by_name"] = user["name"]
-    elif update.get("status") in ("open", "in_progress") and existing.get("status") == "resolved":
-        # Reopen — clear resolution stamps
-        update["resolved_at"] = None
-        update["resolved_by_name"] = None
-    await db.inspection_actions.update_one({"id": aid}, {"$set": update})
+    log_entries = []
+    if "status" in update:
+        if update["status"] == "resolved" and not existing.get("resolved_at"):
+            update["resolved_at"] = now_iso()
+            update["resolved_by_name"] = user["name"]
+            log_entries.append(_action_log_entry("resolved", user, note=update.get("resolution_notes")))
+        elif update["status"] in ("open", "in_progress") and existing.get("status") == "resolved":
+            update["resolved_at"] = None
+            update["resolved_by_name"] = None
+            update["signed_off_at"] = None
+            update["signed_off_by_name"] = None
+            log_entries.append(_action_log_entry("reopened", user))
+        elif update["status"] != existing.get("status"):
+            log_entries.append(_action_log_entry(f"status:{update['status']}", user))
+    if "assigned_to_name" in update and update["assigned_to_name"] != existing.get("assigned_to_name"):
+        log_entries.append(_action_log_entry("assigned", user,
+                                              note=f"to {update.get('assigned_to_name') or 'unassigned'}"))
+    if "evidence_notes" in update and update["evidence_notes"] and update["evidence_notes"] != existing.get("evidence_notes"):
+        log_entries.append(_action_log_entry("evidence_added", user))
+    await db.inspection_actions.update_one(
+        {"id": aid},
+        {"$set": update, **({"$push": {"action_log": {"$each": log_entries}}} if log_entries else {})},
+    )
     doc = await db.inspection_actions.find_one({"id": aid}, {"_id": 0})
     await record_audit(
         db, actor=user, action="inspection_action_update",
         object_type="inspection_action", object_id=aid,
-        summary=f"Inspection action {update.get('status', 'updated')}: {existing.get('title')}",
+        summary=f"Action {update.get('status', 'updated')}: {existing.get('title')}",
         before=existing, after=doc,
+    )
+    return doc
+
+
+@api_router.post("/inspection-actions/{aid}/escalate")
+async def escalate_inspection_action(aid: str, payload: InspectionActionEscalateIn, user: dict = Depends(require_tier(3))):
+    existing = await db.inspection_actions.find_one({"id": aid}, {"_id": 0})
+    if not existing:
+        raise HTTPException(404, "Action not found")
+    if existing.get("status") == "resolved":
+        raise HTTPException(400, "Cannot escalate a resolved action")
+    update = {
+        "escalated_at": now_iso(),
+        "escalated_by_name": user["name"],
+        "escalated_to_id": payload.escalated_to_id,
+        "escalated_to_name": payload.escalated_to_name,
+        "escalation_reason": payload.reason,
+        "priority": "high",  # escalation always bumps priority
+    }
+    log = _action_log_entry("escalated", user,
+                             note=f"to {payload.escalated_to_name}: {payload.reason}")
+    await db.inspection_actions.update_one(
+        {"id": aid}, {"$set": update, "$push": {"action_log": log}},
+    )
+    doc = await db.inspection_actions.find_one({"id": aid}, {"_id": 0})
+    await record_audit(
+        db, actor=user, action="inspection_action_escalate",
+        object_type="inspection_action", object_id=aid,
+        summary=f"Escalated to {payload.escalated_to_name}: {existing.get('title')}",
+    )
+    return doc
+
+
+@api_router.post("/inspection-actions/{aid}/sign-off")
+async def sign_off_inspection_action(aid: str, payload: InspectionActionSignOffIn, user: dict = Depends(require_tier(3))):
+    """Manager-level sign-off — the action is COMPLETE and evidenced."""
+    existing = await db.inspection_actions.find_one({"id": aid}, {"_id": 0})
+    if not existing:
+        raise HTTPException(404, "Action not found")
+    if existing.get("status") != "resolved":
+        raise HTTPException(400, "Action must be resolved before sign-off")
+    update = {
+        "signed_off_at": now_iso(),
+        "signed_off_by_name": user["name"],
+    }
+    if payload.notes:
+        update["evidence_notes"] = (existing.get("evidence_notes") or "") + (
+            ("\n---\n" if existing.get("evidence_notes") else "") + payload.notes
+        )
+    log = _action_log_entry("signed_off", user, note=payload.notes)
+    await db.inspection_actions.update_one(
+        {"id": aid}, {"$set": update, "$push": {"action_log": log}},
+    )
+    doc = await db.inspection_actions.find_one({"id": aid}, {"_id": 0})
+    await record_audit(
+        db, actor=user, action="inspection_action_sign_off",
+        object_type="inspection_action", object_id=aid,
+        summary=f"Action signed off: {existing.get('title')}",
     )
     return doc
 
