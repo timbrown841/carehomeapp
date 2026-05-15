@@ -89,15 +89,15 @@ function DomainTile({ d }) {
     >
       <div className="flex items-start justify-between gap-2">
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-1.5 mb-1">
-            <Icon size={14} style={{ color: t.fg }} />
-            <span className="text-[11px] font-bold uppercase tracking-wider text-stone-600">{d.title}</span>
+          <div className="flex items-center gap-1.5 mb-1 min-w-0">
+            <Icon size={14} style={{ color: t.fg }} className="shrink-0" />
+            <span className="text-[11px] font-bold uppercase tracking-wider text-stone-600 truncate">{d.title}</span>
           </div>
           <div className="text-2xl font-semibold text-[#0F1115]">{d.score}<span className="text-sm text-stone-500">%</span></div>
           <div className="text-[11px] text-stone-600 mt-0.5 line-clamp-2">{d.summary}</div>
         </div>
         <span
-          className="text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full"
+          className="text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full shrink-0 whitespace-nowrap"
           style={{ background: t.bg, color: t.fg }}
         >
           {d.rating?.label || ""}
@@ -295,13 +295,13 @@ function ActionPlanPanel({ tier }) {
                       <CheckCircle2 size={15} />
                     </button>
                   ) : (
-                    <button onClick={() => reopen(a.id)} title="Reopen"
+                    <button onClick={() => reopen(a.id)} data-testid={`action-plan-reopen-${a.id}`} title="Reopen"
                       className="p-1.5 rounded-md hover:bg-white text-stone-600">
                       <RefreshCw size={14} />
                     </button>
                   )}
                   {isManager && (
-                    <button onClick={() => remove(a.id)} title="Delete"
+                    <button onClick={() => remove(a.id)} data-testid={`action-plan-delete-${a.id}`} title="Delete"
                       className="p-1.5 rounded-md hover:bg-[#A8273A]/10 text-stone-500 hover:text-[#A8273A]">
                       <Trash2 size={14} />
                     </button>

@@ -224,7 +224,7 @@ async def build_command_centre(db) -> dict:
     health_score = min(med_score, 100 if len(refusals) < 3 else 75)
     for it in med_items[:8]:
         critical_actions.append({
-            "id": f"med_unsigned:{it['med_id']}",
+            "id": f"med_unsigned:{it['resident_id']}:{it['med_id']}:{it['label'][-5:]}",
             "domain": "health_medication",
             "severity": "medium",
             "title": "Medication unsigned",

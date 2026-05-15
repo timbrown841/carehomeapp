@@ -354,7 +354,19 @@ A simple and fast care management app for children's homes and supported living.
 - ✅ ~~Iteration 31: Adult Services modules build-out (Care Tasks, Falls, Mobility, MCA, Wellbeing)~~ (2026-02-09)
 - ✅ ~~Iteration 32: Realistic adult demo data seeding + deployment-readiness stress regression~~ (2026-02-10)
 - ✅ ~~Iteration 33: Staff Reflective Practice &amp; Wellbeing Hub — 'My Reflection'~~ (2026-02-10)
-- 🔜 **Iteration 34 candidates**: Strategy Meeting Pack PDF · Care task scheduler (recurring routines) · Real Twilio + Resend notifications · Phase D Staff Operations expansion (sleep-in, shift swaps, clock-in/out).
+- ✅ ~~Iteration 34: Ofsted Inspection Command Centre (Phase A) — children's-only war-room~~ (2026-02-10)
+- 🔜 **Iteration 35 candidates**: Ofsted Phase B (9-Quality-Standards Tracker + inline Staffing/Environment) · Ofsted Phase C (one-click export packs + Inspection Simulation Mode) · Strategy Meeting Pack PDF · Care task scheduler · Real Twilio + Resend notifications.
+
+## Implemented (2026-02-10 — Iteration 34 — Ofsted Inspection Command Centre Phase A)
+- **Complete rewrite of `/ofsted`** as a children's-services inspection war-room (sector strictly = children; adult sector untouched, lives at `/cqc-readiness`).
+- **10 domain tiles** (Safeguarding · Missing · Health/Medication · Education · Documentation · Staffing · Home Environment · Key Work · Compliance · Resident Voice) with RAG rating + deep-links.
+- **Live Safeguarding Overview** (4 metrics + pattern alerts for restraint/repeat-missing/self-harm/police clusters + recent 7d escalations).
+- **Critical Actions panel** — prioritised high→medium→low feed with severity/domain/search filters.
+- **Children Requiring Attention** — per-child cards with severity + reason list.
+- **Manager Action Plan** — Active/Resolved-this-week tabs, audit-logged, with resolution attribution.
+- **Dashboard tile** (`OfstedReadinessDashboardTile`, senior+) showing overall % + rating + high-priority count.
+- **Backend**: `/api/ofsted/command-centre` (senior+) + `/api/inspection-actions` CRUD. New `inspection_actions` collection.
+- **Tested**: 7/7 backend pytest in `test_iteration34.py`. Frontend Playwright all sections + RBAC + mobile. Three testing-agent findings (React dup-key, missing testids, mobile pill overlap) fixed inline. See `/app/test_reports/iteration_30.json`.
 
 ## Implemented (2026-02-10 — Iteration 33 — Staff Reflective Practice &amp; Wellbeing Hub)
 - **New private space "My Reflection"** for staff wellbeing &amp; reflective practice — accessed ONLY via the sidebar user-avatar dropdown (sidebar remains locked at 7 items, no surveillance feel).
