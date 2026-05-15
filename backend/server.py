@@ -44,6 +44,7 @@ from home_operations_seed import CHECK_TYPES, evaluate_status
 from home_operations_pdf import build_compliance_snapshot_pdf
 from timeline_service import build_chronology, detect_patterns, CATEGORY_META
 from chronology_pdf import build_chronology_pdf
+from seed_adult_demo import seed_adult_demo_if_empty
 from adult_services_models import (
     CareTaskIn, CareTaskUpdate, FallIn, FallUpdate,
     MobilityAssessmentIn, MCAAssessmentIn, WellbeingObservationIn,
@@ -173,6 +174,7 @@ async def lifespan(_app: FastAPI):
             )
 
     await _seed_demo_data_if_empty()
+    await seed_adult_demo_if_empty(db)
 
     yield
     # ---- shutdown ----

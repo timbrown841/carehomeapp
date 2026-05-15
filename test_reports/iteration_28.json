@@ -1,0 +1,69 @@
+{
+  "summary": "Iteration 32 (Adult demo deployment-readiness stress regression) GREEN. 31/31 backend tests pass in 1.54s. Tom + Margaret seed data correct, operational-summary surfaces all expected pattern alerts, chronology returns 22 (Tom) and 49 (Maggie) events, pattern detector emits missed_care_cluster + wellbeing_deterioration (Tom) and falls_cluster + wellbeing_deterioration (Maggie), PDF export works under 100ms, RBAC enforced across care-tasks/falls/MCA. Frontend smoke verified Adult sector ribbon, adult-specific Quick Actions (8 buttons), Overview operational widgets, Timeline patterns banner, mobile responsiveness clean. Two minor copy leaks identified (children's labels on adult profile).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "ResidentDetail header", "issue": "'YOUNG PERSON' badge displayed on adult residents (Tom 44, Margaret 78). Should read 'ADULT' / 'SERVICE USER' for adult sector.", "selector": "header badge near resident name", "priority": "LOW"},
+      {"component": "ResidentDetail top-right action", "issue": "'Child Missing' red button is shown on adult-sector resident profiles (Tom + Margaret). This is a children's-services-specific safeguarding action and should be hidden or relabelled for adult sector.", "selector": "top-right red button", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "performance_metrics": {
+    "tom_operational_summary_ms": 7,
+    "maggie_operational_summary_ms": 6,
+    "tom_timeline_ms": 7,
+    "tom_timeline_events": 22,
+    "maggie_timeline_ms": 10,
+    "maggie_timeline_events": 49,
+    "maggie_pdf_full_ms": 64,
+    "maggie_pdf_full_bytes": 9419,
+    "dashboard_stats_ms": 10,
+    "dashboard_urgency_ms": 4,
+    "all_thresholds": "All well below review-request thresholds (500ms summary, 800ms timeline, 3s PDF, 500ms dashboard)."
+  },
+  "verified_behaviour": [
+    "Tom alerts surfaced: missed_care_pattern + wellbeing_deterioration (both HIGH).",
+    "Maggie alerts surfaced: Recurrent falls (HIGH) + Wellbeing deterioration (HIGH). UI shows '2 falls in 30 days' and '7 flagged observations in 14 days'.",
+    "Sectors strictly disjoint: GET /api/residents?sector=adult returns Tom + Maggie; ?sector=children excludes them.",
+    "Maggie's unsigned fall and unsigned MCA (personal care/hygiene) reachable via list endpoints (manager_signed_off_at=null).",
+    "Chronology filters work: categories=fall returns only fall events; categories=wellbeing returns only wellbeing; from_at reduces count; safeguarding_only=true returns 200; q=Quetiapine returns 200.",
+    "PDF export: manager full + safeguarding scopes return application/pdf 9.4KB; staff GET /api/residents/{rid}/timeline.pdf returns 403.",
+    "Care-task CRUD RBAC: staff create+complete OK, staff DELETE 403, manager DELETE 200.",
+    "Fall sign-off RBAC: staff 403, manager 200. MCA create RBAC: staff 403, senior 200. MCA sign-off RBAC: senior 403, manager 200.",
+    "Audit log: staff GET /api/audit returns 403; senior+manager 200; new MCA via API recorded.",
+    "Frontend: 7-item sidebar locked (Dashboard, Children's Services, Adult Services, Home Operations, Staff Operations, Compliance & Oversight, Admin).",
+    "Frontend Tom: 'ADULT SUPPORTED LIVING' ribbon, all 8 adult quick-action buttons (Care task, Wellbeing obs, Log fall, Medication, Mobility, Appointment, MCA/capacity, Welfare check), 'MISSED CARE TASKS RISING' + 'WELLBEING DETERIORATION' alerts on Overview tab.",
+    "Frontend Maggie: 'ELDERLY RESIDENTIAL' ribbon, Timeline tab shows 'Patterns detected · 2 INSIGHTS' banner with Recurrent falls + Wellbeing deterioration; events day-grouped; Export button present; filter chips render.",
+    "Mobile 390x844: Margaret's profile loads cleanly, no overlapping cards, Quick Actions panel readable, sidebar collapses appropriately."
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_iteration32.py",
+    "/app/test_reports/pytest/iter32_results.xml"
+  ],
+  "action_items": [
+    "(LOW) Replace 'YOUNG PERSON' badge with 'ADULT' or 'SERVICE USER' on resident header when sector is adult_supported_living or elderly_residential.",
+    "(MEDIUM) Hide or relabel the 'Child Missing' red button on adult-sector resident profiles — it currently appears on both Tom and Margaret which is sector-incorrect."
+  ],
+  "critical_code_review_comments": [
+    "Backend performance is excellent — full operational-summary + timeline + pattern + PDF all complete in <100ms each despite 49-event seed for Maggie. Indexes/queries are appropriate.",
+    "Pattern detector correctly emits missed_care_pattern, wellbeing_deterioration, and falls_cluster (verified via /timeline/patterns and reflected in operational-summary alerts).",
+    "RBAC matrix is consistently enforced across all adult-module endpoints (care-tasks, falls, mobility, MCA, wellbeing, audit, admin).",
+    "Adult Quick Actions panel correctly diverges from children's QA — sector branching in AdultModulePanels.jsx works as intended.",
+    "Sector ribbon shows 'ADULT SUPPORTED LIVING' / 'ELDERLY RESIDENTIAL' correctly but neighbouring 'YOUNG PERSON' badge and global 'Child Missing' button were not sector-gated — small oversight in ResidentDetail header."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration32.py",
+    "/app/test_reports/pytest/iter32_results.xml"
+  ],
+  "success_rate": {"backend": "100% (31/31)", "frontend": "100% (all flows verified, 2 cosmetic copy issues)"},
+  "test_credentials": "admin@care.local/Admin@123, manager@care.local/Manager@123, senior@care.local/Senior@123, staff@care.local/Staff@123",
+  "seed_data_creation": "None new — used existing seeded Tom Whitfield (26a6295d-640c-4dfe-a95c-fd0c0a76a5d1) and Margaret Lewis (9349f6d9-a222-465f-90b4-6781a824fee8). A few TEST_-prefixed care-tasks/falls/MCA created+cleaned during RBAC tests.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iter32 backend pytest is at /app/backend/tests/test_iteration32.py (31 tests, all green, run in 1.54s). Tom timeline now has 22 events (was ~19 in spec — auto-grew due to earlier iter tests creating items) and Maggie 49 events (was ~39). Filter assertions use bounded ranges to tolerate this drift. Performance excellent on this preview. The two cosmetic findings (YOUNG PERSON badge + Child Missing button on adult profiles) are deferrable copy fixes; not blocking.",
+  "rca of the issue": "N/A — full deployment readiness regression passed. Cosmetic issues stem from ResidentDetail header not branching on sector when rendering the static 'Young Person' badge and the global 'Child Missing' quick action."
+}
