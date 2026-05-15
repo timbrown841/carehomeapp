@@ -1,0 +1,84 @@
+{
+  "summary": "Iteration 34 (Ofsted Inspection Command Centre) verified end-to-end. Backend 7/7 iter34 tests PASS in 72s. Regression iter28-33: 76/77 PASS (1 pre-existing iter32 fall-count seed drift unrelated). Frontend Playwright covered: manager dashboard tile, /ofsted page render (all 10 domains, safeguarding overview, critical actions panel with sev+domain+search filters, residents attention, action plan), children-only scope (NO Tom Whitfield, NO Margaret Lewis, NO Maggie — only Mads/Jordy/Aisha/Leo), action plan CRUD create→resolve flow with 'Resolved by Sarah Manager · just now' attribution, senior role (download-bundle hidden, page renders), staff role (dashboard tile hidden, /ofsted gracefully shows 'Couldn't load command centre' toast on 403), mobile 390x844 (10 tiles in 2-col, no overflow). Found 1 react-key duplicate bug (med_unsigned ID collision) and 2 missing testids on action-plan delete/reopen buttons.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/ofsted/command-centre", "issue": "React duplicate-key console warnings caused by non-unique critical_actions id 'med_unsigned:{med_id}' when the same medication has multiple unsigned admin rows (or appears for multiple residents). Source: /app/backend/ofsted_command_centre.py:227. Fix: include resident_id or admin_id in the id, e.g. f'med_unsigned:{it[\"resident_id\"]}:{it[\"med_id\"]}'. Cosmetic only — does not break rendering."},
+      {"endpoint": "/api/residents/{rid}/timeline?categories=fall (iter32, pre-existing)", "issue": "Maggie seed drift: 10 fall events now vs the iter32 test bound 2-5. Not caused by iter34."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "OfstedReadiness ActionPlan", "issue": "Manager Delete button (Trash icon) renders correctly for manager role but is missing data-testid='action-plan-delete-{id}'. Reopen button (RefreshCw icon) on resolved items also lacks data-testid='action-plan-reopen-{id}'. Both functionally work; only impacts test automation.", "selector": "button[title='Delete'] and button[title='Reopen'] inside [data-testid^='action-plan-item-']", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Domain tiles at 390x844", "issues": ["On mobile, the rating pill (e.g. 'INADEQUATE') overlaps the domain label text on long labels like 'SAFEGUARDING' and 'MISSING-FROM-CARE' due to flex/wrap collision in the tile header row. Suggest min-width:0 on the label or wrap the pill below on xs screens."]}
+    ]
+  },
+  "rbac_verification": {
+    "manager_GET_command_centre": "200 OK",
+    "manager_dashboard_tile": "PRESENT",
+    "manager_ofsted_download_bundle_button": "PRESENT",
+    "manager_action_plan_add_button": "PRESENT (works: create + resolve + delete all functional)",
+    "senior_GET_command_centre": "200 OK",
+    "senior_dashboard_tile": "PRESENT (tier 2 sees it)",
+    "senior_ofsted_download_bundle_button": "MISSING (correct — manager-only tier>=3)",
+    "senior_action_plan_add_button": "MISSING — matches backend RBAC (POST /inspection-actions requires tier 3). NOTE: request narrative ambiguously said 'senior CAN add' but the same request's RBAC section says 'manager+ for create/delete'. Backend POST gate is tier=3, so the current UI is consistent with backend. NO FIX NEEDED unless backend POST is loosened to tier=2.",
+    "senior_can_patch": "Backend test_inspection_actions_crud confirms senior PATCH=200; resolve/reopen icons visible on existing items.",
+    "staff_GET_command_centre": "403",
+    "staff_dashboard_tile": "MISSING (correct)",
+    "staff_ofsted_page": "Page calls API, gets 403, renders 'Couldn't load command centre' toast — graceful handling ✓",
+    "unauth_GET_command_centre": "401 ✓ (test_command_centre_unauth)"
+  },
+  "scope_verification_ui": {
+    "Tom Whitfield in residents-attention or recent-escalations": "NO ✓",
+    "Margaret Lewis in residents-attention or recent-escalations": "NO ✓",
+    "Maggie in those sections": "NO ✓",
+    "Children present (sample)": "Mads (Maddy) confirmed in recent-escalations and residents-attention; Jordy, Aisha, Leo also visible in residents-attention HIGH cards"
+  },
+  "filter_verification": {
+    "baseline_critical_actions": 49,
+    "after_high_filter": 29,
+    "after_domain_safeguarding": "18 (with high already selected the panel narrowed correctly)",
+    "search_box_renders": true
+  },
+  "action_plan_crud": {
+    "create_as_manager": "PASS — action appears in Active tab",
+    "resolve_as_manager": "PASS — moves to Resolved tab, shows 'Resolved by Sarah Manager · just now'",
+    "manager_delete_button": "Renders (no testid, but functionally works)",
+    "senior_create": "Hidden (matches backend tier-3 POST gate)"
+  },
+  "regression": {
+    "iter28_iter33_backend": "76 / 77 PASS — only failure is pre-existing iter32 test_maggie_filter_by_fall_category (seed drift; bound 2-5 now 10). Not caused by iter34."
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration34.py",
+    "/app/test_reports/pytest/iter34_results.xml"
+  ],
+  "action_items": [
+    "LOW (backend): /app/backend/ofsted_command_centre.py:227 — make critical-action ids unique by including the row identifier (e.g. f\"med_unsigned:{it['resident_id']}:{it['med_id']}\" or it['id']) to silence the React duplicate-key console warning when the same medication has multiple unsigned MAR rows.",
+    "LOW (frontend): Add data-testid='action-plan-delete-{id}' and data-testid='action-plan-reopen-{id}' to the trash and refresh buttons in /app/frontend/src/pages/OfstedReadiness.jsx around lines 298 and 304 (currently only resolve has a testid).",
+    "LOW (design): On mobile 390x844, prevent the rating pill from overlapping the domain label text on long labels — add min-w-0/flex-1 truncate on the label or shrink-0 on the pill.",
+    "OPTIONAL (clarify spec): Decide whether senior should be able to CREATE inspection actions. Backend currently requires manager+. If senior should be allowed, change require_tier(3)→require_tier(2) on POST /inspection-actions AND remove the isManager gate around action-plan-new-btn. Current UI matches current backend, so leaving as-is is internally consistent.",
+    "NOT BLOCKING (pre-existing): Widen Maggie iter32 fall-count test bound or reset seed data between runs."
+  ],
+  "critical_code_review_comments": [
+    "Strong children-only enforcement: ofsted_command_centre.is_child() filter is applied uniformly across residents_attention, recent_escalations, and per-domain reasoning — backend tests + UI inspection confirm zero adult resident leakage.",
+    "Severity ordering of critical_actions is deterministic (high→medium→low) and matches backend test expectations.",
+    "RBAC is enforced at both the route layer (require_tier dependency) and the UI layer (isManager / isSenior gates). Tier 2 GET, tier 3 POST/DELETE, tier 2 PATCH — consistent.",
+    "OfstedReadiness.jsx is 666 lines — within the 700-line guideline. ActionPlan, DomainTile, ActionRow are extracted as local components; good separation. Could still split into /components/ofsted/ if it grows further.",
+    "med_unsigned ID generation in the aggregator does not guarantee uniqueness across multiple rows — minor backend RCA noted above."
+  ],
+  "updated_files": [
+    "/app/test_reports/iteration_30.json",
+    "/app/test_reports/pytest/iter34_results.xml"
+  ],
+  "success_rate": {"backend": "100% (7/7 iter34; 76/77 iter28-33 regression — 1 pre-existing flake)", "frontend": "~95% — all critical paths green; 1 React key warning (cosmetic), 2 missing testids (cosmetic), 1 mobile pill overlap (minor design)"},
+  "test_credentials": "manager@care.local/Manager@123, senior@care.local/Senior@123, staff@care.local/Staff@123, admin@care.local/Admin@123",
+  "seed_data_creation": "Manager created 'TEST_AP_iter34_check' inspection action, marked resolved, then deleted. Senior created 'TEST_AP_senior_check' — NOTE: this attempt was actually blocked because senior cannot see Add button (correct per backend). One stray senior creation attempt did not persist because the button was not rendered. Final DB state: no TEST_ residue from this iteration (manager flow deleted its own item).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iter34 backend pytest at /app/backend/tests/test_iteration34.py (7 tests, all pass ~72s) — note CMD must export REACT_APP_BACKEND_URL before pytest, the file does not load from frontend/.env. Frontend testids confirmed for OfstedReadiness: dashboard-ofsted-tile, ofsted-readiness-page, ofsted-refresh, ofsted-download-bundle, ofsted-domains, domain-{id} (10 ids), safeguarding-overview, pattern-alerts, recent-escalations, critical-actions, filter-sev-{all|high|medium|low}, filter-domain (HTML <select>), filter-q, action-{id} (critical action rows), residents-attention, attention-{rid}, action-plan-panel, action-plan-new-btn (manager-only), action-plan-new-form, action-plan-new-title, action-plan-save, action-tab-active, action-tab-resolved, action-plan-item-{id}, action-plan-resolve-{id}. Missing testids: action-plan-delete-{id} and action-plan-reopen-{id} (buttons render, just no testid). Backend RBAC for /inspection-actions: GET tier2, POST tier3, PATCH tier2, DELETE tier3 — Senior CANNOT create (matches UI). Children-only scope confirmed at both backend and UI layer.",
+  "rca of the issue": "React duplicate-key warning RCA — when the aggregator emits critical_actions for unsigned medications, it uses id=f'med_unsigned:{it[\"med_id\"]}'. If the same med_id appears in med_items multiple times (e.g. same medication unsigned across multiple scheduled doses or multiple children prescribed the same med), the id collides and React warns. Reproduction: login as manager → /ofsted → open DevTools console → see 'Encountered two children with the same key med_unsigned:84240d27-290b-4825-8a...'. Mitigation: in /app/backend/ofsted_command_centre.py:227 change id to include the admin row id, e.g. f'med_unsigned:{it.get(\"id\") or it[\"med_id\"]}' or compose with resident_id."
+}

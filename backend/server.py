@@ -54,6 +54,7 @@ from staff_reflection_models import (
     WellbeingCheckinIn, ReflectionIn, ReflectionUpdate,
     PROMPT_SETS, MOOD_META, MOOD_CHECKINS,
 )
+from ofsted_command_centre import build_command_centre
 import secrets as _secrets
 
 
@@ -128,6 +129,10 @@ async def lifespan(_app: FastAPI):
     await db.wellbeing_checkins.create_index([("user_id", 1), ("created_at", -1)])
     await db.staff_reflections.create_index([("user_id", 1), ("created_at", -1)])
     await db.staff_reflections.create_index([("shared_with_manager", 1), ("created_at", -1)])
+
+    # Ofsted Inspection Actions (Iteration 34)
+    await db.inspection_actions.create_index([("status", 1), ("priority", -1), ("created_at", -1)])
+    await db.inspection_actions.create_index([("resolved_at", -1)])
 
     # Idempotent therapeutic content seed
     for fw in FRAMEWORKS:
@@ -7700,6 +7705,114 @@ async def supervision_view(user_id: str, _: dict = Depends(require_tier(3))):
         "win_count_shared": win_count,
         "flag": flag,
     }
+
+
+# ============================================================
+# Ofsted Inspection Command Centre + Action Plan (Iteration 34)
+# Children's-services scope only. Adult sector → /api/cqc/readiness.
+# ============================================================
+
+
+class InspectionActionIn(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+    detail: Optional[str] = Field(None, max_length=4000)
+    domain: Optional[str] = Field(None, max_length=80)  # safeguarding/health_medication/etc
+    priority: str = Field("medium", pattern="^(low|medium|high)$")
+    assigned_to_id: Optional[str] = None
+    assigned_to_name: Optional[str] = Field(None, max_length=200)
+    due_date: Optional[str] = None
+    linked_action_id: Optional[str] = Field(None, max_length=200)
+
+
+class InspectionActionUpdate(BaseModel):
+    title: Optional[str] = Field(None, max_length=200)
+    detail: Optional[str] = Field(None, max_length=4000)
+    priority: Optional[str] = Field(None, pattern="^(low|medium|high)$")
+    assigned_to_id: Optional[str] = None
+    assigned_to_name: Optional[str] = Field(None, max_length=200)
+    due_date: Optional[str] = None
+    status: Optional[str] = Field(None, pattern="^(open|in_progress|resolved)$")
+    resolution_notes: Optional[str] = Field(None, max_length=4000)
+
+
+@api_router.get("/ofsted/command-centre")
+async def ofsted_command_centre(user: dict = Depends(require_tier(2))):
+    """Senior+ inspection command-centre payload (children's only)."""
+    return await build_command_centre(db)
+
+
+@api_router.get("/inspection-actions")
+async def list_inspection_actions(
+    status: Optional[str] = None,
+    user: dict = Depends(require_tier(2)),
+):
+    q: dict = {}
+    if status in ("open", "in_progress", "resolved"):
+        q["status"] = status
+    items = await db.inspection_actions.find(q, {"_id": 0}).sort(
+        [("status", 1), ("priority", -1), ("created_at", -1)]
+    ).to_list(500)
+    return items
+
+
+@api_router.post("/inspection-actions")
+async def create_inspection_action(payload: InspectionActionIn, user: dict = Depends(require_tier(3))):
+    doc = {
+        "id": str(uuid.uuid4()),
+        **payload.model_dump(),
+        "status": "open",
+        "created_at": now_iso(),
+        "created_by_id": user["id"],
+        "created_by_name": user["name"],
+        "resolved_at": None,
+        "resolved_by_name": None,
+        "resolution_notes": None,
+    }
+    await db.inspection_actions.insert_one(doc)
+    doc.pop("_id", None)
+    await record_audit(
+        db, actor=user, action="inspection_action_create",
+        object_type="inspection_action", object_id=doc["id"],
+        summary=f"Inspection action: {payload.title}",
+        metadata={"priority": payload.priority, "domain": payload.domain},
+    )
+    return doc
+
+
+@api_router.patch("/inspection-actions/{aid}")
+async def update_inspection_action(aid: str, payload: InspectionActionUpdate, user: dict = Depends(require_tier(2))):
+    existing = await db.inspection_actions.find_one({"id": aid}, {"_id": 0})
+    if not existing:
+        raise HTTPException(404, "Action not found")
+    update = payload.model_dump(exclude_unset=True)
+    if update.get("status") == "resolved" and not existing.get("resolved_at"):
+        update["resolved_at"] = now_iso()
+        update["resolved_by_name"] = user["name"]
+    elif update.get("status") in ("open", "in_progress") and existing.get("status") == "resolved":
+        # Reopen — clear resolution stamps
+        update["resolved_at"] = None
+        update["resolved_by_name"] = None
+    await db.inspection_actions.update_one({"id": aid}, {"$set": update})
+    doc = await db.inspection_actions.find_one({"id": aid}, {"_id": 0})
+    await record_audit(
+        db, actor=user, action="inspection_action_update",
+        object_type="inspection_action", object_id=aid,
+        summary=f"Inspection action {update.get('status', 'updated')}: {existing.get('title')}",
+        before=existing, after=doc,
+    )
+    return doc
+
+
+@api_router.delete("/inspection-actions/{aid}")
+async def delete_inspection_action(aid: str, user: dict = Depends(require_tier(3))):
+    res = await db.inspection_actions.delete_one({"id": aid})
+    if res.deleted_count:
+        await record_audit(
+            db, actor=user, action="inspection_action_delete",
+            object_type="inspection_action", object_id=aid,
+            summary="Inspection action deleted",
+        )
+    return {"deleted": res.deleted_count}
 
 
 app.include_router(api_router)

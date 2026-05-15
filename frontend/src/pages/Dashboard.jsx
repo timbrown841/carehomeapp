@@ -6,6 +6,7 @@ import { formatFullTimestamp } from "@/lib/format";
 import LogIncidentFAB from "@/components/LogIncidentFAB";
 import AttentionNow from "@/components/AttentionNow";
 import { QuickActions, UrgencyWidgets } from "@/components/dashboard/QuickWidgets";
+import { OfstedReadinessDashboardTile } from "@/pages/OfstedReadiness";
 import {
   Users,
   NotebookPen,
@@ -293,6 +294,11 @@ export default function Dashboard() {
 
       {/* Urgency widgets — operational at-a-glance */}
       <UrgencyWidgets />
+
+      {/* Ofsted readiness tile (senior+) */}
+      {(user?.role === "senior" || user?.role === "manager" || user?.role === "admin") && (
+        <OfstedReadinessDashboardTile />
+      )}
 
       {/* Quick actions */}
       <QuickActions />
