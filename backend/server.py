@@ -60,6 +60,7 @@ from inspection_simulation import build_inspection_simulation, build_reg44_auto_
 from pre_inspection_scan_pdf import build_pre_inspection_scan_pdf
 from cross_module_patterns import build_pattern_intelligence
 from strategy_meeting_pack_pdf import build_strategy_meeting_pack
+from staffing_service import build_staffing_overview, get_staffing_config, set_staffing_config
 import secrets as _secrets
 
 
@@ -4555,6 +4556,8 @@ class ShiftIn(BaseModel):
     start_at: str  # ISO datetime
     end_at: str
     notes: Optional[str] = None
+    is_sleep_in: Optional[bool] = False
+    is_agency: Optional[bool] = False
 
 
 class Shift(ShiftIn):
@@ -8116,6 +8119,458 @@ async def strategy_meeting_pack_pdf(resident_id: str, user: dict = Depends(requi
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{fname}"'},
     )
+
+
+# ============================================================
+# Iteration 38 — Phase D · Live Staffing Operations
+# Clock in/out · sleep-ins · leave/sickness · shift swaps · live overview
+# ============================================================
+
+
+@api_router.get("/staffing/overview")
+async def staffing_overview(_: dict = Depends(get_current_user)):
+    """Single-call live operational picture for the home — for managers and shift staff."""
+    return await build_staffing_overview(db)
+
+
+@api_router.get("/staffing/config")
+async def staffing_config_get(_: dict = Depends(require_tier(3))):
+    return await get_staffing_config(db)
+
+
+@api_router.patch("/staffing/config")
+async def staffing_config_patch(payload: dict, user: dict = Depends(require_role("admin"))):
+    merged = await set_staffing_config(db, payload)
+    await record_audit(
+        db, actor=user, action="staffing_config_update",
+        object_type="staffing_config", object_id="singleton",
+        summary="Staffing config updated",
+    )
+    return merged
+
+
+# ---- Clock in / out · sleep-in disturbances ----
+
+
+class ClockInIn(BaseModel):
+    geo: Optional[str] = Field(None, max_length=120)
+    method: Optional[str] = Field(None, max_length=40)  # "app", "manual_manager", "phone_call"
+
+
+class ClockOutIn(BaseModel):
+    geo: Optional[str] = Field(None, max_length=120)
+    notes: Optional[str] = Field(None, max_length=1000)
+
+
+class DisturbanceIn(BaseModel):
+    occurred_at: Optional[str] = None
+    minutes: int = Field(ge=1, le=480)
+    reason: str = Field(min_length=1, max_length=400)
+    resident_id: Optional[str] = None
+
+
+@api_router.post("/shifts/{sid}/clock-in")
+async def clock_in_shift(sid: str, payload: ClockInIn, user: dict = Depends(get_current_user)):
+    shift = await db.shifts.find_one({"id": sid}, {"_id": 0})
+    if not shift:
+        raise HTTPException(404, "Shift not found")
+    # Staff can only clock themselves in (manager+ can clock anyone in manually)
+    if shift["staff_id"] != user["id"] and role_tier(user["role"]) < 3:
+        raise HTTPException(403, "You can only clock in to your own shift")
+    if shift.get("clocked_in_at"):
+        raise HTTPException(400, "Already clocked in")
+    now = now_iso()
+    start_dt = datetime.fromisoformat(shift["start_at"].replace("Z", "+00:00"))
+    variance = int((datetime.now(timezone.utc) - start_dt).total_seconds() / 60)  # +ve = late
+    update = {
+        "clocked_in_at": now,
+        "clocked_in_by_id": user["id"],
+        "clocked_in_by_name": user["name"],
+        "clocked_in_geo": payload.geo,
+        "clocked_in_method": payload.method or "app",
+        "clock_in_variance_minutes": variance,
+    }
+    await db.shifts.update_one({"id": sid}, {"$set": update})
+    await record_audit(
+        db, actor=user, action="shift_clock_in", object_type="shift", object_id=sid,
+        summary=f"Clocked in · variance {variance:+d} min", metadata={"variance_minutes": variance},
+    )
+    return {**shift, **update}
+
+
+@api_router.post("/shifts/{sid}/clock-out")
+async def clock_out_shift(sid: str, payload: ClockOutIn, user: dict = Depends(get_current_user)):
+    shift = await db.shifts.find_one({"id": sid}, {"_id": 0})
+    if not shift:
+        raise HTTPException(404, "Shift not found")
+    if shift["staff_id"] != user["id"] and role_tier(user["role"]) < 3:
+        raise HTTPException(403, "You can only clock out of your own shift")
+    if not shift.get("clocked_in_at"):
+        raise HTTPException(400, "Not clocked in")
+    if shift.get("clocked_out_at"):
+        raise HTTPException(400, "Already clocked out")
+    now_dt = datetime.now(timezone.utc)
+    end_dt = datetime.fromisoformat(shift["end_at"].replace("Z", "+00:00"))
+    in_dt = datetime.fromisoformat(shift["clocked_in_at"].replace("Z", "+00:00"))
+    actual_min = int((now_dt - in_dt).total_seconds() / 60)
+    over_min = int((now_dt - end_dt).total_seconds() / 60)  # +ve = overtime
+    update = {
+        "clocked_out_at": now_dt.isoformat(),
+        "clocked_out_by_id": user["id"],
+        "clocked_out_by_name": user["name"],
+        "clocked_out_geo": payload.geo,
+        "clock_out_notes": payload.notes,
+        "actual_minutes_worked": actual_min,
+        "overtime_minutes": max(0, over_min),
+    }
+    await db.shifts.update_one({"id": sid}, {"$set": update})
+    await record_audit(
+        db, actor=user, action="shift_clock_out", object_type="shift", object_id=sid,
+        summary=f"Clocked out · {actual_min // 60}h {actual_min % 60}m worked",
+        metadata={"actual_minutes": actual_min, "overtime_minutes": max(0, over_min)},
+    )
+    return {**shift, **update}
+
+
+@api_router.post("/shifts/{sid}/disturbance")
+async def add_sleep_in_disturbance(sid: str, payload: DisturbanceIn, user: dict = Depends(get_current_user)):
+    """Sleep-in disturbance log (paid waking time during a sleep-in)."""
+    shift = await db.shifts.find_one({"id": sid}, {"_id": 0})
+    if not shift:
+        raise HTTPException(404, "Shift not found")
+    if shift["staff_id"] != user["id"] and role_tier(user["role"]) < 2:
+        raise HTTPException(403, "Only the shift owner or senior+ can log a disturbance")
+    entry = {
+        "id": str(uuid.uuid4()),
+        "occurred_at": payload.occurred_at or now_iso(),
+        "minutes": payload.minutes,
+        "reason": payload.reason,
+        "resident_id": payload.resident_id,
+        "logged_by_id": user["id"],
+        "logged_by_name": user["name"],
+    }
+    await db.shifts.update_one(
+        {"id": sid},
+        {"$push": {"sleep_in_disturbances": entry}, "$set": {"is_sleep_in": True}},
+    )
+    await record_audit(
+        db, actor=user, action="sleep_in_disturbance_log",
+        object_type="shift", object_id=sid,
+        summary=f"Sleep-in disturbance · {payload.minutes}min — {payload.reason[:60]}",
+    )
+    return entry
+
+
+# ---- Leave & sickness requests ----
+
+
+class LeaveRequestIn(BaseModel):
+    kind: str = Field(pattern="^(annual_leave|sickness|unpaid|parental|training|compassionate)$")
+    start_date: str
+    end_date: str
+    days: float = Field(gt=0, le=90)
+    reason: Optional[str] = Field(None, max_length=1000)
+
+
+class LeaveDecisionIn(BaseModel):
+    decision_notes: Optional[str] = Field(None, max_length=1000)
+
+
+@api_router.get("/leave-requests")
+async def list_leave_requests(
+    mine: bool = False,
+    status: Optional[str] = None,
+    user: dict = Depends(get_current_user),
+):
+    q: dict = {}
+    if mine or role_tier(user["role"]) < 3:
+        q["staff_id"] = user["id"]
+    if status:
+        q["status"] = status
+    items = await db.leave_requests.find(q, {"_id": 0}).sort("created_at", -1).to_list(500)
+    return items
+
+
+@api_router.post("/leave-requests")
+async def create_leave_request(payload: LeaveRequestIn, user: dict = Depends(get_current_user)):
+    doc = {
+        "id": str(uuid.uuid4()),
+        "staff_id": user["id"],
+        "staff_name": user["name"],
+        **payload.model_dump(),
+        "status": "pending",
+        "created_at": now_iso(),
+        "decision_by_id": None,
+        "decision_by_name": None,
+        "decision_at": None,
+        "decision_notes": None,
+    }
+    await db.leave_requests.insert_one(doc)
+    doc.pop("_id", None)
+    await record_audit(
+        db, actor=user, action="leave_request_create",
+        object_type="leave_request", object_id=doc["id"],
+        summary=f"{payload.kind} request · {payload.days} day(s) from {payload.start_date}",
+    )
+    return doc
+
+
+@api_router.post("/leave-requests/{lid}/approve")
+async def approve_leave_request(lid: str, payload: LeaveDecisionIn, user: dict = Depends(require_tier(3))):
+    return await _decide_leave(lid, payload, user, "approved")
+
+
+@api_router.post("/leave-requests/{lid}/reject")
+async def reject_leave_request(lid: str, payload: LeaveDecisionIn, user: dict = Depends(require_tier(3))):
+    return await _decide_leave(lid, payload, user, "rejected")
+
+
+@api_router.post("/leave-requests/{lid}/cancel")
+async def cancel_leave_request(lid: str, user: dict = Depends(get_current_user)):
+    existing = await db.leave_requests.find_one({"id": lid}, {"_id": 0})
+    if not existing:
+        raise HTTPException(404, "Not found")
+    if existing["staff_id"] != user["id"] and role_tier(user["role"]) < 3:
+        raise HTTPException(403, "Only the requester or a manager can cancel")
+    if existing["status"] not in ("pending", "approved"):
+        raise HTTPException(400, "Cannot cancel a finalised request")
+    await db.leave_requests.update_one(
+        {"id": lid},
+        {"$set": {"status": "cancelled", "decision_at": now_iso(),
+                   "decision_by_id": user["id"], "decision_by_name": user["name"]}},
+    )
+    await record_audit(
+        db, actor=user, action="leave_request_cancel",
+        object_type="leave_request", object_id=lid,
+        summary=f"Leave request cancelled",
+    )
+    return {"status": "cancelled"}
+
+
+async def _decide_leave(lid: str, payload: LeaveDecisionIn, user: dict, status: str):
+    existing = await db.leave_requests.find_one({"id": lid}, {"_id": 0})
+    if not existing:
+        raise HTTPException(404, "Not found")
+    if existing["status"] != "pending":
+        raise HTTPException(400, f"Cannot {status} — request is already {existing['status']}")
+    update = {
+        "status": status,
+        "decision_by_id": user["id"],
+        "decision_by_name": user["name"],
+        "decision_at": now_iso(),
+        "decision_notes": payload.decision_notes,
+    }
+    await db.leave_requests.update_one({"id": lid}, {"$set": update})
+    await record_audit(
+        db, actor=user, action=f"leave_request_{status}",
+        object_type="leave_request", object_id=lid,
+        summary=f"{existing.get('kind', 'leave')} request {status} for {existing.get('staff_name')}",
+    )
+    return {**existing, **update}
+
+
+# ---- Shift swap requests ----
+
+
+class ShiftSwapIn(BaseModel):
+    shift_id: str
+    target_staff_id: Optional[str] = None
+    target_staff_name: Optional[str] = None
+    reason: Optional[str] = Field(None, max_length=600)
+
+
+@api_router.get("/shift-swaps")
+async def list_shift_swaps(
+    mine: bool = False,
+    status: Optional[str] = None,
+    user: dict = Depends(get_current_user),
+):
+    q: dict = {}
+    if mine or role_tier(user["role"]) < 3:
+        q["$or"] = [{"requested_by_id": user["id"]}, {"target_staff_id": user["id"]}]
+    if status:
+        q["status"] = status
+    items = await db.shift_swap_requests.find(q, {"_id": 0}).sort("created_at", -1).to_list(200)
+    return items
+
+
+@api_router.post("/shift-swaps")
+async def create_shift_swap(payload: ShiftSwapIn, user: dict = Depends(get_current_user)):
+    shift = await db.shifts.find_one({"id": payload.shift_id}, {"_id": 0})
+    if not shift:
+        raise HTTPException(404, "Shift not found")
+    if shift["staff_id"] != user["id"]:
+        raise HTTPException(403, "You can only request a swap on your own shift")
+    if shift.get("clocked_in_at"):
+        raise HTTPException(400, "Cannot swap a shift you've already started")
+    # Optional target name lookup
+    target_name = payload.target_staff_name
+    if payload.target_staff_id and not target_name:
+        u = await db.users.find_one({"id": payload.target_staff_id}, {"_id": 0, "name": 1})
+        target_name = (u or {}).get("name")
+    doc = {
+        "id": str(uuid.uuid4()),
+        "shift_id": payload.shift_id,
+        "shift_start_at": shift["start_at"],
+        "shift_end_at": shift["end_at"],
+        "shift_role": shift.get("role"),
+        "requested_by_id": user["id"],
+        "requested_by_name": user["name"],
+        "target_staff_id": payload.target_staff_id,
+        "target_staff_name": target_name,
+        "reason": payload.reason,
+        "status": "pending_target" if payload.target_staff_id else "open",  # open = anyone can accept
+        "created_at": now_iso(),
+        "accepted_by_id": None,
+        "accepted_by_name": None,
+        "accepted_at": None,
+        "manager_decision_at": None,
+        "manager_decision_by": None,
+        "manager_decision_notes": None,
+    }
+    await db.shift_swap_requests.insert_one(doc)
+    doc.pop("_id", None)
+    await record_audit(
+        db, actor=user, action="shift_swap_create",
+        object_type="shift_swap", object_id=doc["id"],
+        summary=f"Swap requested for shift starting {shift['start_at'][:16]}",
+    )
+    return doc
+
+
+@api_router.post("/shift-swaps/{rid}/accept")
+async def accept_shift_swap(rid: str, user: dict = Depends(get_current_user)):
+    existing = await db.shift_swap_requests.find_one({"id": rid}, {"_id": 0})
+    if not existing:
+        raise HTTPException(404, "Not found")
+    if existing["status"] not in ("open", "pending_target"):
+        raise HTTPException(400, "Already actioned")
+    if existing.get("target_staff_id") and existing["target_staff_id"] != user["id"]:
+        raise HTTPException(403, "This swap is targeted at another staff member")
+    if existing["requested_by_id"] == user["id"]:
+        raise HTTPException(400, "You can't accept your own swap")
+    update = {
+        "status": "pending_manager",
+        "accepted_by_id": user["id"],
+        "accepted_by_name": user["name"],
+        "accepted_at": now_iso(),
+    }
+    await db.shift_swap_requests.update_one({"id": rid}, {"$set": update})
+    await record_audit(
+        db, actor=user, action="shift_swap_accept",
+        object_type="shift_swap", object_id=rid,
+        summary=f"Swap accepted by {user['name']} · awaiting manager approval",
+    )
+    return {**existing, **update}
+
+
+@api_router.post("/shift-swaps/{rid}/approve")
+async def approve_shift_swap(rid: str, payload: LeaveDecisionIn, user: dict = Depends(require_tier(3))):
+    existing = await db.shift_swap_requests.find_one({"id": rid}, {"_id": 0})
+    if not existing:
+        raise HTTPException(404, "Not found")
+    if existing["status"] != "pending_manager":
+        raise HTTPException(400, "Cannot approve · awaiting target acceptance first")
+    # Reassign the shift
+    await db.shifts.update_one(
+        {"id": existing["shift_id"]},
+        {"$set": {"staff_id": existing["accepted_by_id"], "staff_name": existing["accepted_by_name"]}},
+    )
+    update = {
+        "status": "approved",
+        "manager_decision_at": now_iso(),
+        "manager_decision_by": user["name"],
+        "manager_decision_notes": payload.decision_notes,
+    }
+    await db.shift_swap_requests.update_one({"id": rid}, {"$set": update})
+    await record_audit(
+        db, actor=user, action="shift_swap_approve",
+        object_type="shift_swap", object_id=rid,
+        summary=f"Shift swap approved · reassigned to {existing['accepted_by_name']}",
+    )
+    return {**existing, **update}
+
+
+@api_router.post("/shift-swaps/{rid}/reject")
+async def reject_shift_swap(rid: str, payload: LeaveDecisionIn, user: dict = Depends(require_tier(3))):
+    existing = await db.shift_swap_requests.find_one({"id": rid}, {"_id": 0})
+    if not existing:
+        raise HTTPException(404, "Not found")
+    if existing["status"] in ("approved", "rejected", "cancelled"):
+        raise HTTPException(400, "Already finalised")
+    update = {
+        "status": "rejected",
+        "manager_decision_at": now_iso(),
+        "manager_decision_by": user["name"],
+        "manager_decision_notes": payload.decision_notes,
+    }
+    await db.shift_swap_requests.update_one({"id": rid}, {"$set": update})
+    await record_audit(
+        db, actor=user, action="shift_swap_reject",
+        object_type="shift_swap", object_id=rid,
+        summary=f"Shift swap rejected",
+    )
+    return {**existing, **update}
+
+
+@api_router.post("/shift-swaps/{rid}/cancel")
+async def cancel_shift_swap(rid: str, user: dict = Depends(get_current_user)):
+    existing = await db.shift_swap_requests.find_one({"id": rid}, {"_id": 0})
+    if not existing:
+        raise HTTPException(404, "Not found")
+    if existing["requested_by_id"] != user["id"] and role_tier(user["role"]) < 3:
+        raise HTTPException(403, "Only the requester or a manager can cancel")
+    if existing["status"] in ("approved", "rejected", "cancelled"):
+        raise HTTPException(400, "Already finalised")
+    update = {"status": "cancelled", "manager_decision_at": now_iso(), "manager_decision_by": user["name"]}
+    await db.shift_swap_requests.update_one({"id": rid}, {"$set": update})
+    return {**existing, **update}
+
+
+# ---- "My shift today" — fast staff-side endpoint ----
+
+
+@api_router.get("/staffing/mine")
+async def staffing_mine(user: dict = Depends(get_current_user)):
+    """Returns the current user's current shift (if any), next shift (24h), and recent shifts (7d)."""
+    now = datetime.now(timezone.utc)
+    now_s = now.isoformat()
+    last_7 = (now - timedelta(days=7)).isoformat()
+    in_24h = (now + timedelta(hours=24)).isoformat()
+
+    current = await db.shifts.find_one(
+        {"staff_id": user["id"], "start_at": {"$lte": now_s}, "end_at": {"$gte": now_s}},
+        {"_id": 0},
+    )
+    next_one = await db.shifts.find_one(
+        {"staff_id": user["id"], "start_at": {"$gt": now_s, "$lte": in_24h}},
+        {"_id": 0}, sort=[("start_at", 1)],
+    )
+    recent = await db.shifts.find(
+        {"staff_id": user["id"], "start_at": {"$gte": last_7}},
+        {"_id": 0},
+    ).sort("start_at", -1).to_list(20)
+
+    # Hours this week (Mon–Sun) — actual_minutes_worked when present, else planned
+    week_start = (now - timedelta(days=now.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
+    week_minutes = 0
+    async for s in db.shifts.find(
+        {"staff_id": user["id"], "start_at": {"$gte": week_start.isoformat()}},
+        {"_id": 0},
+    ):
+        if s.get("actual_minutes_worked"):
+            week_minutes += int(s["actual_minutes_worked"])
+        else:
+            start_dt = datetime.fromisoformat(s["start_at"].replace("Z", "+00:00"))
+            end_dt = datetime.fromisoformat(s["end_at"].replace("Z", "+00:00"))
+            week_minutes += int((end_dt - start_dt).total_seconds() / 60)
+
+    return {
+        "current": current,
+        "next": next_one,
+        "recent": recent,
+        "week_hours": round(week_minutes / 60, 1),
+    }
 
 
 app.include_router(api_router)

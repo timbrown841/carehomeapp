@@ -46,6 +46,8 @@ import { FrameworksList, FrameworkDetail } from "@/pages/Frameworks";
 import { ResourcesList, ResourcePackDetail } from "@/pages/Resources";
 import Reflection from "@/pages/Reflection";
 import ReflectionSupervision from "@/pages/ReflectionSupervision";
+import LeaveRequests from "@/pages/LeaveRequests";
+import ShiftSwaps from "@/pages/ShiftSwaps";
 
 function Protected({ children }) {
   const { user, loading } = useAuth();
@@ -122,6 +124,8 @@ function App() {
               <Route path="/pocket-money" element={<PocketMoney />} />
               <Route path="/petty-cash" element={<PettyCashPage />} />
               <Route path="/staff" element={<Staff />} />
+              <Route path="/leave-requests" element={<LeaveRequests />} />
+              <Route path="/shift-swaps" element={<ShiftSwaps />} />
               <Route path="/handover" element={<Handover />} />
               <Route path="/handover/:id" element={<Handover />} />
               <Route path="/training" element={<TrainingPage />} />

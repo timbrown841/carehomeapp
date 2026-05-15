@@ -1,0 +1,49 @@
+{
+  "summary": "Iteration 38 (Phase D · Live Staffing Operations) — full backend + frontend e2e verification. 12/12 Iter38 pytest tests PASS and 33/33 regression (iter34-37) PASS. Frontend manager + staff flows verified end-to-end including clock-in/out lifecycle with live UI feedback.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "/staff-operations (Rota & Shifts)", "issues": ["Workflow shortcut tile testid is 'link-staffing-inspection' but the review request expected 'ofsted-staffing' — cosmetic naming mismatch only; the link to /ofsted works correctly."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration38.py",
+    "/app/test_reports/pytest/iter38_results.xml"
+  ],
+  "action_items": [
+    "(Optional/minor) Either rename data-testid='link-staffing-inspection' to 'ofsted-staffing' to match documentation or update the spec — not blocking."
+  ],
+  "critical_code_review_comments": [
+    "LiveStaffingOps.jsx is 463 lines including a nested DisturbanceModal — borderline acceptable but worth splitting DisturbanceModal/MyShiftBar into separate files if it grows.",
+    "Backend server.py is now very large with iter38 block at L8123-8470; consider extracting staffing routes into a router module for maintainability.",
+    "Sleep-in disturbance 'Log dist.' button only renders when is_sleep_in && clocked_in && isManager — correct behaviour; no demo data currently triggers it (confirmed via backend pytest)."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (12/12 iter38 + 33/33 regression)", "frontend": "100% on covered flows"},
+  "test_credentials": "admin@care.local/Admin@123, manager@care.local/Manager@123, senior@care.local/Senior@123, staff@care.local/Staff@123",
+  "seed_data_creation": "None created — used existing seed (intentional 1 coverage gap from un-clocked-in staff shift, as noted by main agent).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "verified_features": [
+    "GET /api/staffing/overview — payload shape (on_shift_now, next_24h, coverage_gaps, ratios, pressure, config, is_asleep_window) for any auth role",
+    "GET/PATCH /api/staffing/config RBAC (manager+ GET, admin-only PATCH)",
+    "POST /api/shifts/{id}/clock-in — self-only (403 otherwise), returns clock_in_variance_minutes, double-clock rejected",
+    "POST /api/shifts/{id}/clock-out — returns actual_minutes_worked, cannot clock-out twice",
+    "POST /api/shifts/{id}/disturbance — increments disturbance_count, sets is_sleep_in, flows to overview",
+    "POST /api/leave-requests full lifecycle (create, list scoped, approve/reject RBAC, cannot approve twice, cancel)",
+    "POST /api/shift-swaps full lifecycle (pending_target → pending_manager → approved, shift.staff_id reassignment, cannot swap on started shift)",
+    "GET /api/staffing/mine — current/next/recent/week_hours payload",
+    "Frontend /staff-operations Rota & Shifts tab renders live-staffing-ops, coverage-gaps, on-shift-now, staffing-ratios, pressure-indicators (all data-testid found)",
+    "MyShiftBar (staff) — Clock in button → Clock out toggle with toast + clocked_in time displayed",
+    "/leave-requests — Manager sees 'My requests / Pending approval / All' tabs; Staff sees only 'My requests'; Request modal opens",
+    "/shift-swaps — Request swap modal opens; correct empty state ('You have no upcoming shifts to swap.') when manager has no swappable shift",
+    "Regression: Shift Handover / Supervisions / Training / Team Wellbeing / Safer Recruitment sub-tabs all render; /ofsted command centre still renders"
+  ],
+  "context_for_next_testing_agent": "Iter38 fully verified. Notifications still MOCKED (notifications_service.send_email / send_sms — queued for Iter 39). Disturbance UI button only appears when a shift is is_sleep_in AND clocked_in AND user is manager+ — seed data does not currently trigger this; backend pytest covers it. Sidebar locked at 7 items (Dashboard, Children's Services, Adult Services, Home Operations, Staff Operations, Compliance & Oversight, Admin). Public URL: https://safeguard-dash-1.preview.emergentagent.com",
+  "mocked_apis_noted": ["notifications_service.send_email", "notifications_service.send_sms"]
+}

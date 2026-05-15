@@ -15,6 +15,7 @@ import {
   Calendar,
 } from "lucide-react";
 import { toast } from "sonner";
+import LiveStaffingOps from "@/components/staffing/LiveStaffingOps";
 
 const inputCls =
   "w-full bg-white border divider-soft rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#0e3b4a]";
@@ -46,12 +47,15 @@ export default function Staff() {
           Staff Operations
         </div>
         <h1 className="font-display font-semibold text-3xl tracking-tight text-[#0F1115] mt-1.5" style={{ letterSpacing: "-0.02em" }}>
-          Rota & Shifts
+          Live staffing operations
         </h1>
         <p className="text-[#5d6068] mt-1.5 text-[15px]">
-          Who's on shift right now and the upcoming week's rota. Training, recruitment and finance now have their own dedicated sections.
+          Who's on shift, where coverage is exposed, ratio targets vs reality, and the rota pressure
+          shaping safeguarding and wellbeing. Tap any tile to drill in.
         </p>
       </header>
+
+      <LiveStaffingOps />
 
       <RotaPanel canManage={canManage} />
     </div>
