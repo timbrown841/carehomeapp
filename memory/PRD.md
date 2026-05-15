@@ -360,6 +360,7 @@ A simple and fast care management app for children's homes and supported living.
 - ✅ ~~Iteration 37: Phase C close-out — Action Ownership/Accountability, Cross-Module Pattern Intelligence, Strategy Meeting Pack PDF~~ (2026-02-15)
 - ✅ ~~Iteration 38: Phase D · Live Staffing Operations — clock in/out, sleep-ins, leave/sickness, shift swaps, staffing overview & ratios & pressure indicators~~ (2026-02-15)
 - ✅ ~~Iteration 38b: Unified workforce hub with sector + shift-mode filters (Organisation-wide is the default, drill-in is optional, pressure indicators intentionally remain org-wide)~~ (2026-02-15)
+- ✅ ~~Iteration 39: Service-Mode Separation — pre-login sector selector, per-session single-sector experience, sector-themed login, sidebar always shows ONE sector at a time, Switch-sector in avatar menu, admin Organisation settings panel with force-archive flow~~ (2026-02-15)
 - 🔜 **Iteration 39 (next)**: Real notifications via Resend (email) + Twilio (SMS) — overdue safeguarding actions, missing return-interview reminders, escalations, supervisions, medication concerns, accountability assignments. Intelligent, limited, non-spammy, digest fallback.
 - 🟡 **Iteration 40**: Workflow / UX / Mobile refinement — reduce-clicks audit on top 5 flows, mobile-first quick actions + handover sign-out/in, dashboard prioritisation, React Query caching, performance pass.
 - 🟢 **Iteration 41**: Refactor server.py monolith (~8.5k lines) into /app/backend/routes/* modules.

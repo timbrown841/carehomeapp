@@ -2041,22 +2041,31 @@ async def admin_system_info(_: dict = Depends(require_role("admin", "manager")))
 async def list_residents(
     service_type: Optional[str] = None,
     sector: Optional[str] = None,
+    include_discharged: bool = False,
     _: dict = Depends(get_current_user),
 ):
     q: dict = {}
+    if not include_discharged:
+        q["$and"] = [
+            {"$or": [{"discharged_at": None}, {"discharged_at": {"$exists": False}}]},
+        ]
     if service_type:
         q["service_type"] = service_type
     elif sector:
         ids = [s["id"] for s in SERVICE_TYPE_REGISTRY if s["sector"] == sector]
         # For children sector, include legacy residents with null/missing service_type
         if sector == "children":
-            q["$or"] = [
+            sector_or = [
                 {"service_type": {"$in": ids}},
                 {"service_type": None},
                 {"service_type": {"$exists": False}},
             ]
         else:
-            q["service_type"] = {"$in": ids}
+            sector_or = [{"service_type": {"$in": ids}}]
+        if "$and" in q:
+            q["$and"].append({"$or": sector_or})
+        else:
+            q["$or"] = sector_or
     docs = await db.residents.find(q, {"_id": 0}).sort("created_at", -1).to_list(500)
     # Normalise: any legacy resident without service_type is treated as 'children'
     for d in docs:
@@ -8577,6 +8586,142 @@ async def staffing_mine(user: dict = Depends(get_current_user)):
         "recent": recent,
         "week_hours": round(week_minutes / 60, 1),
     }
+
+
+# ============================================================
+# Iteration 39 — Service-Mode Separation
+# Organisation-wide settings: which service modes are active.
+# Adapts the sidebar, terminology, and which hubs are visible.
+# ============================================================
+
+
+VALID_SERVICE_MODES = {"children", "adult"}
+# Maps frontend service_type values → operational mode key
+SERVICE_TYPE_TO_MODE = {
+    "children":                 "children",
+    "semi_independent":         "children",  # 16-17 still under children's regulation
+    "adult_supported_living":   "adult",
+    "elderly_residential":      "adult",
+    "dementia":                 "adult",
+    "mental_health":            "adult",
+    "veteran":                  "adult",
+}
+
+
+async def _read_org_settings() -> dict:
+    doc = await db.organisation_settings.find_one({"_id": "singleton"})
+    if not doc:
+        # Sensible default: dual-mode (preserves existing demo) until admin onboards.
+        return {
+            "service_modes": ["children", "adult"],
+            "primary_mode": None,
+            "settings_initialized": False,
+            "org_display_name": None,
+            "updated_at": None,
+            "updated_by_name": None,
+        }
+    doc.pop("_id", None)
+    return doc
+
+
+class OrgSettingsIn(BaseModel):
+    service_modes: List[str] = Field(min_length=1, max_length=2)
+    primary_mode: Optional[str] = None
+    org_display_name: Optional[str] = Field(None, max_length=120)
+    archive_off_mode_residents: Optional[bool] = False
+
+
+@api_router.get("/org/settings")
+async def get_org_settings(_: dict = Depends(get_current_user)):
+    """Read the live organisation settings — drives sidebar + hub visibility."""
+    return await _read_org_settings()
+
+
+@api_router.patch("/org/settings")
+async def patch_org_settings(payload: OrgSettingsIn, user: dict = Depends(require_role("admin"))):
+    """Admin-only: change which service modes the organisation runs.
+
+    Pass `archive_off_mode_residents=true` to bulk-archive residents in modes
+    being disabled (sets discharged_at + discharge_reason). Default is False
+    which fails-safe with a clear error if active residents exist.
+    """
+    modes = [m for m in payload.service_modes if m in VALID_SERVICE_MODES]
+    if not modes:
+        raise HTTPException(400, "At least one valid service mode required")
+    seen = set()
+    modes = [m for m in modes if not (m in seen or seen.add(m))]
+
+    current = await _read_org_settings()
+    being_removed = [m for m in current.get("service_modes", []) if m not in modes]
+    archived_count = 0
+    if being_removed:
+        sector_types: List[str] = []
+        for mode in being_removed:
+            sector_types.extend([k for k, v in SERVICE_TYPE_TO_MODE.items() if v == mode])
+        active_q = {"service_type": {"$in": sector_types}, "discharged_at": None}
+        count = await db.residents.count_documents(active_q)
+        if count > 0:
+            if not payload.archive_off_mode_residents:
+                raise HTTPException(
+                    400,
+                    f"Cannot disable {', '.join(being_removed)} mode — {count} active resident(s) "
+                    f"still in that service. Pass archive_off_mode_residents=true to archive them, "
+                    f"or discharge/transfer them first."
+                )
+            # Bulk-archive
+            now = now_iso()
+            result = await db.residents.update_many(
+                active_q,
+                {"$set": {
+                    "discharged_at": now,
+                    "discharge_reason": f"Service mode '{being_removed[0]}' disabled by {user['name']}",
+                    "archived_by_service_mode_change": True,
+                }},
+            )
+            archived_count = result.modified_count
+
+    pm = payload.primary_mode if payload.primary_mode in modes else modes[0]
+    new_doc = {
+        "service_modes": modes,
+        "primary_mode": pm,
+        "settings_initialized": True,
+        "org_display_name": payload.org_display_name or current.get("org_display_name"),
+        "updated_at": now_iso(),
+        "updated_by_name": user["name"],
+    }
+    await db.organisation_settings.update_one(
+        {"_id": "singleton"},
+        {"$set": new_doc},
+        upsert=True,
+    )
+    await record_audit(
+        db, actor=user, action="org_settings_update",
+        object_type="organisation_settings", object_id="singleton",
+        summary=f"Service modes set to {', '.join(modes)} (primary: {pm})"
+                + (f" · {archived_count} resident(s) auto-archived" if archived_count else ""),
+    )
+    if archived_count:
+        new_doc["archived_resident_count"] = archived_count
+
+    # Auto-restore previously auto-archived residents when a mode is re-enabled
+    re_added = [m for m in modes if m not in current.get("service_modes", [])]
+    restored_count = 0
+    if re_added:
+        sector_types: List[str] = []
+        for mode in re_added:
+            sector_types.extend([k for k, v in SERVICE_TYPE_TO_MODE.items() if v == mode])
+        result = await db.residents.update_many(
+            {"service_type": {"$in": sector_types}, "archived_by_service_mode_change": True},
+            {"$set": {
+                "discharged_at": None,
+                "discharge_reason": None,
+                "archived_by_service_mode_change": False,
+            }},
+        )
+        restored_count = result.modified_count
+    if restored_count:
+        new_doc["restored_resident_count"] = restored_count
+    return new_doc
 
 
 app.include_router(api_router)

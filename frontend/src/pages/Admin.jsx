@@ -2,9 +2,11 @@ import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import api, { formatApiError } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
+import { useOrg } from "@/context/OrgContext";
 import {
   Settings, Users as UsersIcon, Plus, Trash2, X, Loader2,
   ShieldCheck, Activity, FileText, History as HistoryIcon, Building2,
+  Users as UsersI, HeartHandshake, Check,
 } from "lucide-react";
 
 const ROLE_TIERS = [
@@ -209,6 +211,9 @@ export default function Admin() {
             </div>
           </section>
 
+          {/* Organisation settings — service modes */}
+          <OrganisationSettingsPanel />
+
           {/* User list */}
           <section className="rounded-2xl border divider-soft bg-white overflow-hidden" data-testid="admin-users-section">
             <div className="px-4 py-3 border-b divider-soft flex items-center gap-2">
@@ -294,5 +299,159 @@ export default function Admin() {
         />
       )}
     </div>
+  );
+}
+
+
+function OrganisationSettingsPanel() {
+  const { settings, update, orgModes } = useOrg();
+  const isChildrenActive = orgModes.includes("children");
+  const isAdultActive = orgModes.includes("adult");
+  const isDualMode = isChildrenActive && isAdultActive;
+  const [busy, setBusy] = useState(false);
+  const [orgName, setOrgName] = useState(settings.org_display_name || "");
+  // Track local modes (so we can save in one go)
+  const [children, setChildren] = useState(isChildrenActive);
+  const [adult, setAdult] = useState(isAdultActive);
+
+  useEffect(() => {
+    setChildren(isChildrenActive);
+    setAdult(isAdultActive);
+    setOrgName(settings.org_display_name || "");
+  }, [isChildrenActive, isAdultActive, settings.org_display_name]);
+
+  const dirty = (children !== isChildrenActive) || (adult !== isAdultActive) || (orgName !== (settings.org_display_name || ""));
+
+  const save = async (force = false) => {
+    if (!children && !adult) {
+      toast.error("Pick at least one service mode");
+      return;
+    }
+    const modes = [];
+    if (children) modes.push("children");
+    if (adult) modes.push("adult");
+    setBusy(true);
+    try {
+      const result = await update({
+        service_modes: modes,
+        primary_mode: modes[0],
+        org_display_name: orgName.trim() || null,
+        archive_off_mode_residents: force,
+      });
+      let msg = "Organisation settings saved";
+      if (result.archived_resident_count) msg += ` · ${result.archived_resident_count} resident(s) archived`;
+      if (result.restored_resident_count) msg += ` · ${result.restored_resident_count} resident(s) restored`;
+      toast.success(msg);
+    } catch (e) {
+      const detail = e?.response?.data?.detail || "";
+      if (e?.response?.status === 400 && detail.toLowerCase().includes("active resident")) {
+        if (window.confirm(`${detail}\n\nArchive them automatically and continue?`)) {
+          await save(true);
+          return;
+        }
+      } else {
+        toast.error(detail || "Couldn't save");
+      }
+    } finally { setBusy(false); }
+  };
+
+  const modeLabel = !isDualMode
+    ? (isChildrenActive ? "Children's home" : "Adult care service")
+    : "Multi-service provider";
+
+  return (
+    <section className="rounded-2xl border divider-soft bg-white overflow-hidden" data-testid="org-settings-section">
+      <div className="px-4 py-3 border-b divider-soft flex items-center gap-2">
+        <Building2 size={16} className="text-[#0e3b4a]" />
+        <h2 className="text-[14px] font-semibold text-[#0F1115]">Organisation settings</h2>
+        <span className="ml-auto text-[10px] uppercase tracking-wider font-bold text-stone-500" data-testid="org-mode-label">{modeLabel}</span>
+      </div>
+      <div className="p-4 grid lg:grid-cols-2 gap-4">
+        <div>
+          <label className="text-xs font-medium text-stone-700">Organisation / home name</label>
+          <input
+            type="text"
+            value={orgName}
+            onChange={(e) => setOrgName(e.target.value)}
+            placeholder="e.g. Maple House"
+            data-testid="org-settings-name"
+            className="w-full border divider-soft rounded-lg p-2 text-sm mt-1"
+          />
+          <p className="text-[11px] text-stone-500 mt-1">
+            Shown on dashboards, PDFs and exports.
+          </p>
+        </div>
+        <div>
+          <div className="text-xs font-medium text-stone-700 mb-1">Service modes active</div>
+          <div className="space-y-2">
+            <ModeToggle
+              testid="mode-toggle-children"
+              active={children} onChange={setChildren}
+              icon={UsersI} accent="#0F2A47"
+              title="Children's services"
+              sub="Ofsted · Regulation 44 · missing-from-care · key work"
+            />
+            <ModeToggle
+              testid="mode-toggle-adult"
+              active={adult} onChange={setAdult}
+              icon={HeartHandshake} accent="#3F2E5C"
+              title="Adult care service"
+              sub="CQC · care tasks · MCA · MAR · wellbeing"
+            />
+          </div>
+          <p className="text-[11px] text-stone-500 mt-2">
+            You can't disable a service while there are active residents in it — discharge or transfer first.
+          </p>
+        </div>
+      </div>
+      {dirty && (
+        <div className="px-4 pb-4 flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              setChildren(isChildrenActive); setAdult(isAdultActive);
+              setOrgName(settings.org_display_name || "");
+            }}
+            className="text-sm px-3 py-2 rounded-lg hover:bg-stone-100"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={() => save(false)}
+            disabled={busy}
+            data-testid="org-settings-save"
+            className="text-sm font-semibold bg-[#0e3b4a] text-white px-4 py-2 rounded-lg hover:bg-[#0a2e3a] flex items-center gap-1.5 disabled:opacity-60"
+          >
+            {busy ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} Save settings
+          </button>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function ModeToggle({ active, onChange, icon: Icon, accent, title, sub, testid }) {
+  return (
+    <button
+      type="button"
+      onClick={() => onChange(!active)}
+      data-testid={testid}
+      className={`w-full text-left border-l-4 rounded-lg p-2.5 flex items-center gap-3 transition-colors ${
+        active ? "bg-[#0e3b4a]/5 ring-1 ring-[#0e3b4a]/40" : "bg-stone-50 hover:bg-stone-100"
+      }`}
+      style={{ borderLeftColor: active ? accent : "#D6D6D0" }}
+    >
+      <div className="w-8 h-8 rounded-md flex items-center justify-center shrink-0 text-white" style={{ background: active ? accent : "#cbcbc4" }}>
+        <Icon size={15} />
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="text-sm font-semibold text-[#0F1115]">{title}</div>
+        <div className="text-[11px] text-stone-600">{sub}</div>
+      </div>
+      <div className={`w-5 h-5 rounded-md border-2 flex items-center justify-center ${active ? "bg-[#0e3b4a] border-[#0e3b4a]" : "border-stone-300"}`}>
+        {active && <Check size={12} className="text-white" />}
+      </div>
+    </button>
   );
 }

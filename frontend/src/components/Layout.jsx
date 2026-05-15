@@ -1,5 +1,6 @@
-import { Outlet, NavLink, Link, useLocation } from "react-router-dom";
+import { Outlet, NavLink, Link, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
+import { useOrg } from "@/context/OrgContext";
 import { useState, useRef, useEffect } from "react";
 import {
   LayoutDashboard,
@@ -14,16 +15,21 @@ import {
   X,
   Heart,
   ChevronUp,
+  Replace,
 } from "lucide-react";
 import Logo from "@/components/Logo";
 import NotificationBell from "@/components/NotificationBell";
 
-// Seven locked operational areas. Sidebar must NEVER grow beyond these without
-// explicit product approval. Sub-workflows live inside their hub page.
-const NAV = [
+// Locked operational areas. The sidebar adapts to the org's service modes:
+//   - children-only orgs hide Adult Services
+//   - adult-only orgs hide Children's Services
+//   - dual-mode orgs see both
+// Sub-workflows live inside their hub page. The sidebar must never grow beyond
+// these without explicit product approval.
+const NAV_ALL = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true, testid: "nav-dashboard" },
-  { to: "/children", label: "Children's Services", icon: Users, testid: "nav-children" },
-  { to: "/adults", label: "Adult Services", icon: HeartHandshake, testid: "nav-adults" },
+  { to: "/children", label: "Children's Services", icon: Users, testid: "nav-children", mode: "children" },
+  { to: "/adults", label: "Adult Services", icon: HeartHandshake, testid: "nav-adults", mode: "adult" },
   { to: "/operations", label: "Home Operations", icon: Building2, testid: "nav-operations" },
   { to: "/staff-operations", label: "Staff Operations", icon: UserCog, testid: "nav-staff-operations" },
   { to: "/compliance", label: "Compliance & Oversight", icon: ShieldCheck, testid: "nav-compliance" },
@@ -54,7 +60,9 @@ function NavItem({ link, onClick }) {
 
 export default function Layout() {
   const { user, logout, tier } = useAuth();
+  const { effectiveMode, isOrgDual, clearSessionMode, settings } = useOrg();
   const location = useLocation();
+  const nav = useNavigate();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef(null);
@@ -79,7 +87,14 @@ export default function Layout() {
   };
   const badge = ROLE_BADGE[user?.role] || { label: user?.role || "—", tone: "#5d6068" };
 
-  const visibleNav = NAV.filter((l) => !l.minTier || tier >= l.minTier);
+  // Sidebar always reflects a SINGLE sector — the user's effective session mode.
+  // Sub-workflows live inside their hub page. The sidebar must never grow.
+  const visibleNav = NAV_ALL
+    .filter((l) => !l.minTier || tier >= l.minTier)
+    .filter((l) => !l.mode || l.mode === effectiveMode)
+    // Always rename the residents hub to plain "Residents" — sector context is
+    // already established by the welcome selector, so no qualifier is needed.
+    .map((l) => (l.mode ? { ...l, label: "Residents" } : l));
 
   return (
     <div className="min-h-screen bg-canvas">
@@ -164,10 +179,32 @@ export default function Layout() {
                     <span className="flex-1">My Reflection</span>
                     <span className="text-[10px] text-stone-500 uppercase tracking-wider">Wellbeing</span>
                   </Link>
+                  {isOrgDual && (
+                    <>
+                      <div className="border-t divider-soft my-1" />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setMenuOpen(false);
+                          close();
+                          clearSessionMode();
+                          nav("/welcome", { replace: true });
+                        }}
+                        data-testid="switch-sector-btn"
+                        className="w-full flex items-center gap-2.5 px-3 py-2.5 text-sm text-[#0F1115] hover:bg-stone-50 text-left"
+                      >
+                        <Replace size={14} className="text-[#0e3b4a]" />
+                        <span className="flex-1">Switch sector</span>
+                        <span className="text-[10px] uppercase tracking-wider font-bold text-stone-500">
+                          {effectiveMode === "children" ? "Children's" : "Adult"}
+                        </span>
+                      </button>
+                    </>
+                  )}
                   <div className="border-t divider-soft my-1" />
                   <button
                     type="button"
-                    onClick={() => { setMenuOpen(false); logout(); }}
+                    onClick={() => { setMenuOpen(false); clearSessionMode(); logout(); }}
                     data-testid="logout-btn"
                     className="w-full flex items-center gap-2.5 px-3 py-2.5 text-sm text-[#0F1115] hover:bg-stone-50 text-left"
                   >

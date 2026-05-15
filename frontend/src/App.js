@@ -1,11 +1,13 @@
 import "@/App.css";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
+import { OrgProvider, useOrg } from "@/context/OrgContext";
 import { Toaster } from "@/components/ui/sonner";
 
 import Layout from "@/components/Layout";
 import Login from "@/pages/Login";
 import Dashboard from "@/pages/Dashboard";
+import WelcomeSelector from "@/pages/WelcomeSelector";
 
 // Hubs (locked sidebar areas)
 import ChildrensServicesHub from "@/pages/ChildrensServicesHub";
@@ -51,6 +53,7 @@ import ShiftSwaps from "@/pages/ShiftSwaps";
 
 function Protected({ children }) {
   const { user, loading } = useAuth();
+  const { effectiveMode, settings } = useOrg();
   if (loading)
     return (
       <div className="min-h-screen flex items-center justify-center bg-canvas">
@@ -58,6 +61,11 @@ function Protected({ children }) {
       </div>
     );
   if (!user) return <Navigate to="/login" replace />;
+  // After login, the user must have an active session mode. For single-sector
+  // orgs this is auto-set. For dual orgs they're redirected to /welcome.
+  if (!effectiveMode && settings.service_modes?.length > 1) {
+    return <Navigate to="/welcome" replace />;
+  }
   return children;
 }
 
@@ -75,13 +83,22 @@ function SeniorOrAbove({ children }) {
   return children;
 }
 
+function RequireMode({ mode, children }) {
+  const { effectiveMode, loading } = useOrg();
+  if (loading) return null;
+  if (effectiveMode !== mode) return <Navigate to="/" replace />;
+  return children;
+}
+
 function App() {
   return (
     <div className="App">
       <AuthProvider>
-        <BrowserRouter>
-          <Routes>
-            <Route path="/login" element={<Login />} />
+        <OrgProvider>
+          <BrowserRouter>
+            <Routes>
+              <Route path="/login" element={<Login />} />
+              <Route path="/welcome" element={<WelcomeSelector />} />
             <Route path="/missing/share/:token" element={<MissingShare />} />
             <Route
               element={
@@ -93,8 +110,8 @@ function App() {
               <Route path="/" element={<Dashboard />} />
 
               {/* === SIDEBAR: 7 LOCKED HUBS === */}
-              <Route path="/children" element={<ChildrensServicesHub />} />
-              <Route path="/adults" element={<AdultServicesHub />} />
+              <Route path="/children" element={<RequireMode mode="children"><ChildrensServicesHub /></RequireMode>} />
+              <Route path="/adults" element={<RequireMode mode="adult"><AdultServicesHub /></RequireMode>} />
               {/* Legacy /residents URL → children's hub (most common case) */}
               <Route path="/residents" element={<Navigate to="/children" replace />} />
               <Route path="/operations" element={<HomeOperations />} />
@@ -131,8 +148,8 @@ function App() {
               <Route path="/training" element={<TrainingPage />} />
               <Route path="/supervisions" element={<Supervisions />} />
               <Route path="/hr" element={<ManagerOnly><SaferRecruitment /></ManagerOnly>} />
-              <Route path="/ofsted" element={<OfstedReadiness />} />
-              <Route path="/cqc-readiness" element={<SeniorOrAbove><CQCReadiness /></SeniorOrAbove>} />
+              <Route path="/ofsted" element={<RequireMode mode="children"><OfstedReadiness /></RequireMode>} />
+              <Route path="/cqc-readiness" element={<RequireMode mode="adult"><SeniorOrAbove><CQCReadiness /></SeniorOrAbove></RequireMode>} />
               <Route path="/audit" element={<SeniorOrAbove><AuditLog /></SeniorOrAbove>} />
               <Route path="/reports" element={<ManagerOnly><Reports /></ManagerOnly>} />
 
@@ -163,6 +180,7 @@ function App() {
           </Routes>
         </BrowserRouter>
         <Toaster richColors position="top-right" />
+        </OrgProvider>
       </AuthProvider>
     </div>
   );
