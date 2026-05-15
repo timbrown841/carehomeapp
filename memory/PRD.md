@@ -357,7 +357,30 @@ A simple and fast care management app for children's homes and supported living.
 - ✅ ~~Iteration 34: Ofsted Inspection Command Centre (Phase A) — children's-only war-room~~ (2026-02-10)
 - ✅ ~~Iteration 35: Regulation 44 Operational Intelligence — 40 audit modules / 8 categories / live RAG~~ (2026-02-10)
 - ✅ ~~Iteration 36: Phase C — Inspection Simulation Mode, Pre-Inspection Scan PDF, Reg 44 auto-draft~~ (2026-02-10)
-- 🔜 **Iteration 37 candidates**: Strategy Meeting Pack PDF (per-child) · Action ownership/SLAs · Cross-module pattern dashboard · Real Twilio + Resend notifications · Refactor server.py monolith.
+- ✅ ~~Iteration 37: Phase C close-out — Action Ownership/Accountability, Cross-Module Pattern Intelligence, Strategy Meeting Pack PDF~~ (2026-02-15)
+- 🔜 **Iteration 38 candidates**: Phase D — Staff Operations expansion (sleep-in tracking, shift swaps, leave, clock-in/out) · Real Twilio + Resend notifications (currently MOCKED) · Refactor server.py monolith into /app/backend/routes/.
+
+## Implemented (2026-02-15 — Iteration 37 — Operational Ecosystem close-out)
+- **Action Ownership &amp; Accountability** — `inspection_actions` schema upgraded with `assigned_to_id`, `assigned_to_name`, `due_date`, `escalated_at/by/to/reason`, `signed_off_at/by_name`, `evidence_notes`, full `action_log[]` audit trail per action. Backend endpoints:
+  - `POST /api/inspection-actions` accepts assignee + due_date at creation (manager+).
+  - `PATCH /api/inspection-actions/{id}` (senior+) for inline reassign, due-date change, status updates, evidence notes; auto-stamps `resolved_at`/`resolved_by_name`.
+  - `POST /api/inspection-actions/{id}/escalate` (manager+) — bumps to high priority, stamps escalated_at/by/to + reason, audit-logged.
+  - `POST /api/inspection-actions/{id}/sign-off` (manager+) — only on resolved actions, records signed_off_at/by_name + evidence_notes, audit-logged.
+  - `GET /api/inspection-actions` decorates each item with computed `is_overdue` and `needs_escalation` flags.
+- **Cross-Module Pattern Intelligence** (`/app/backend/cross_module_patterns.py`) — DETERMINISTIC aggregation across 9 collections (incidents · missing_episodes · medication_admins · education_records · documents · inspection_actions · regulation_44_visits · residents · audit_events). Returns:
+  - Recurring themes (incident categories trending 30d)
+  - Repeat-concern children (≥2 distinct concern types in 30d)
+  - Escalation trends (this week vs last week deltas across 5 streams)
+  - Unresolved risks (safeguarding open >48h, high-priority actions overdue, risk reviews overdue, documents expired)
+  - Safeguarding hotspots (recurring locations, 4 time-of-day clusters with %, repeat residents ≥3 incidents)
+  - Leadership blind spots (unowned active actions, resolved actions awaiting sign-off, no Reg 44 visit in 60d)
+  - Endpoint: `GET /api/ofsted/cross-module-patterns` (senior+ only).
+- **Strategy Meeting Pack PDF** (`/app/backend/strategy_meeting_pack_pdf.py`) — per-child one-click PDF for strategy / placement / serious-incident reviews. 11 sections: cover summary, risk profile, open safeguarding (60d), chronology table (60d), missing history + RIs, body maps, key work sessions (last 5), family contact / known associates with [RISK] tag, police involvement, outstanding inspection actions (with assignee + due), latest Reg 44 manager-oversight visit.
+  - Endpoint: `GET /api/reports/strategy-meeting-pack/{resident_id}.pdf` (manager+ only). 404 on unknown resident. Audit-logged as `strategy_meeting_pack_download`.
+- **Frontend — Ofsted Command Centre 4th tab**: "Cross-module intelligence" (`/app/frontend/src/pages/CrossModulePatternsView.jsx`) — full operational intelligence dashboard with gradient header, escalation trend chips (up/down/neutral), recurring themes, repeat-concern child cards with concern-type pills + deep-link to profile, unresolved risks 2-column grid with severity pills and deep-links, hotspots three-column (locations / time-of-day with bar gauges / repeat residents), leadership blind-spot list, and "generated at" footer.
+- **Frontend — ActionPlanPanel rewrite** with full accountability UX: 4 summary tiles (Overdue / Unowned / Escalated / Awaiting sign-off — clickable to filter list); create form now exposes assignee dropdown + priority + due-date; per-action inline assignee selector + due-date picker (manager+ only); Overdue, Escalated and Signed off badges; Escalate modal with target picker + reason (audit-logged); Sign-off modal with optional evidence notes (only shown on resolved+unsigned items, manager+).
+- **Frontend — Strategy Meeting Pack download** on Resident Profile → Safeguarding tab: prominent bar with single "Strategy pack" download button. Visible ONLY for children's residents (sector strictly enforced — adults excluded by design) and ONLY for manager+ tier.
+- **Tested**: 10/10 backend pytest in `test_iteration37.py` (cross-module RBAC + payload shape + repeat-concern invariants · strategy pack RBAC + 404 + audit recording · action accountability lifecycle: create with assignee+due → reassign → escalate → resolve → sign-off; sign-off requires resolved; escalate RBAC; is_overdue flag for past due_date). 23/23 PASS Iter34/35/36 regression. Frontend testing_agent_v3_fork: 100% pass on all targeted flows including full lifecycle + sector and tier gating verification. See `/app/test_reports/iteration_33.json`.
 
 ## Implemented (2026-02-10 — Iteration 36 — Phase C: Simulation + Scan PDF + Auto-Draft)
 - **Inspection Simulation Mode** (`/app/backend/inspection_simulation.py`) — DETERMINISTIC rules engine, NOT AI. Reads Regulation 44 + Command Centre payloads. Returns predicted Ofsted rating, 9 Quality Standards predicted judgement, likely strengths (≤8), likely weaknesses with reg+QS attribution, likely inspection concerns (≤10) with **inspector probe questions**, repeated compliance failures, safeguarding exposure, prioritised P0/P1 recommendations with concrete steps.
