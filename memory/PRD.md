@@ -353,7 +353,29 @@ A simple and fast care management app for children's homes and supported living.
 - ✅ ~~Iteration 30: Sidebar split into Children's vs Adult Services~~ (2026-02-09)
 - ✅ ~~Iteration 31: Adult Services modules build-out (Care Tasks, Falls, Mobility, MCA, Wellbeing)~~ (2026-02-09)
 - ✅ ~~Iteration 32: Realistic adult demo data seeding + deployment-readiness stress regression~~ (2026-02-10)
-- 🔜 **Iteration 33 candidates**: Strategy Meeting Pack PDF (chronology + risk + missing + body maps in 1 click) · Care task scheduler/template (recurring routines) · Real Email/SMS notifications · Refactor server.py monolith.
+- ✅ ~~Iteration 33: Staff Reflective Practice &amp; Wellbeing Hub — 'My Reflection'~~ (2026-02-10)
+- 🔜 **Iteration 34 candidates**: Strategy Meeting Pack PDF · Care task scheduler (recurring routines) · Real Twilio + Resend notifications · Phase D Staff Operations expansion (sleep-in, shift swaps, clock-in/out).
+
+## Implemented (2026-02-10 — Iteration 33 — Staff Reflective Practice &amp; Wellbeing Hub)
+- **New private space "My Reflection"** for staff wellbeing &amp; reflective practice — accessed ONLY via the sidebar user-avatar dropdown (sidebar remains locked at 7 items, no surveillance feel).
+- **Privacy-first hybrid model**:
+  - Wellbeing emoji check-ins (5 moods: overwhelmed/stressed/okay/positive/confident × shift_context) — owner-only on raw data; aggregated as anonymised 14-day trend visible to manager+.
+  - Reflections (shift_reflection · win · guided) — PRIVATE by default. Staff toggles `shared_with_manager` per entry to opt in for supervision visibility.
+  - Backend GET enforces: owner always; manager+ only when `shared_with_manager=true`.
+- **5 reflection prompt sets**: shift_reflection (7 prompts: feel/went_well/challenging/emotional/supported/manager_aware/proud), Gibbs reflective cycle (6 stages), Trauma-informed reflection (6 prompts), Restorative reflection (5 prompts), Learning from incident (6 prompts).
+- **Burnout pattern engine — supportive, never punitive**:
+  - Staff view: gentle in-app nudge when 3+ stressed/overwhelmed check-ins in 14 days ("You've been stretched lately… would booking a chat with your manager — or just taking 10 minutes for yourself — help today?").
+  - Manager view: anonymised dashboard tile "X team members may benefit from a wellbeing chat". Names appear ONLY for staff who have explicitly shared a reflection (rolls into `amber_anonymous_count` otherwise).
+- **Manager supervision-prep view** (`/reflection/supervision/:userId`, manager-only): mood mix bar chart (14d), supervision flag if stress pattern detected, shared reflections list (private entries NEVER shown), win count shared.
+- **Backend endpoints** (all under `/api/reflection/`):
+  - `GET /prompt-sets` — metadata: 5 prompt sets + mood_meta (emoji/label/tone/score)
+  - `POST /checkins` · `GET /checkins/mine` · `DELETE /checkins/{cid}` (own-only)
+  - `POST /entries` · `GET /entries/mine` · `GET /entries/{eid}` (owner OR manager+ when shared) · `PATCH /entries/{eid}` · `DELETE /entries/{eid}` (owner-only)
+  - `GET /my-pattern` — gentle supportive nudge for the staff member
+  - `GET /wellbeing/awareness` (manager+) — team aggregate; names only for shared
+  - `GET /supervision/{user_id}` (manager+) — full supervision-prep view (shared reflections + mood trend + amber flag)
+- **Frontend pages**: `/reflection` (4 tabs: Overview / Shift reflections / Wins / Check-ins) + `/reflection/supervision/:userId` (manager-only) + new "Team Wellbeing" tab inside Staff Operations hub (manager+).
+- **Tested**: 14/14 backend pytest in `test_iteration33.py` (privacy, RBAC, patterns, supervision view, team awareness, 401). Frontend Playwright covered all flows: avatar dropdown, check-in modal, all 3 reflection kinds, pattern nudge appearance, manager supervision view, privacy regression (private entries NEVER leak to manager, staff redirected from supervision route). Zero console errors. Sidebar remains at locked 7 items. See `/app/test_reports/iteration_29.json`.
 
 ## Implemented (2026-02-10 — Iteration 32 — Adult demo data &amp; deployment-readiness stress regression)
 - **Realistic Adult Services demo seed** (`/app/backend/seed_adult_demo.py`, idempotent on startup):
