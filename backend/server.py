@@ -50,6 +50,10 @@ from adult_services_models import (
     MobilityAssessmentIn, MCAAssessmentIn, WellbeingObservationIn,
     is_deterioration,
 )
+from staff_reflection_models import (
+    WellbeingCheckinIn, ReflectionIn, ReflectionUpdate,
+    PROMPT_SETS, MOOD_META, MOOD_CHECKINS,
+)
 import secrets as _secrets
 
 
@@ -119,6 +123,11 @@ async def lifespan(_app: FastAPI):
     await db.mobility_assessments.create_index([("resident_id", 1), ("assessed_at", -1)])
     await db.mca_assessments.create_index([("resident_id", 1), ("assessed_at", -1)])
     await db.wellbeing_observations.create_index([("resident_id", 1), ("observed_at", -1)])
+
+    # Staff Reflective Practice & Wellbeing (Iteration 33)
+    await db.wellbeing_checkins.create_index([("user_id", 1), ("created_at", -1)])
+    await db.staff_reflections.create_index([("user_id", 1), ("created_at", -1)])
+    await db.staff_reflections.create_index([("shared_with_manager", 1), ("created_at", -1)])
 
     # Idempotent therapeutic content seed
     for fw in FRAMEWORKS:
@@ -7414,7 +7423,287 @@ async def compliance_snapshot_pdf(
     )
 
 
+# ============================================================
+# Staff Reflective Practice & Wellbeing Hub (Iteration 33)
+# Privacy: per-user data; manager+ sees aggregate trends + shared reflections.
+# ============================================================
+
+@api_router.get("/reflection/prompt-sets")
+async def get_prompt_sets(_: dict = Depends(get_current_user)):
+    """Return the 5 reflection prompt sets (shift, gibbs, trauma_informed, restorative, learning_from_incident)."""
+    return {"prompt_sets": PROMPT_SETS, "mood_meta": MOOD_META}
+
+
+# ---- Wellbeing emoji check-ins ----
+
+@api_router.post("/reflection/checkins")
+async def create_checkin(payload: WellbeingCheckinIn, user: dict = Depends(get_current_user)):
+    doc = {
+        "id": str(uuid.uuid4()),
+        "user_id": user["id"],
+        "user_name": user["name"],
+        "user_role": user["role"],
+        "mood": payload.mood,
+        "shift_context": payload.shift_context,
+        "note": payload.note,
+        "created_at": now_iso(),
+    }
+    await db.wellbeing_checkins.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api_router.get("/reflection/checkins/mine")
+async def my_checkins(limit: int = 90, user: dict = Depends(get_current_user)):
+    items = await db.wellbeing_checkins.find(
+        {"user_id": user["id"]}, {"_id": 0}
+    ).sort("created_at", -1).to_list(min(max(limit, 1), 365))
+    return items
+
+
+@api_router.delete("/reflection/checkins/{cid}")
+async def delete_my_checkin(cid: str, user: dict = Depends(get_current_user)):
+    """Own check-in only — staff fully controls their wellbeing record."""
+    existing = await db.wellbeing_checkins.find_one({"id": cid}, {"_id": 0, "user_id": 1})
+    if not existing:
+        raise HTTPException(404, "Check-in not found")
+    if existing["user_id"] != user["id"]:
+        raise HTTPException(403, "You can only delete your own check-ins")
+    await db.wellbeing_checkins.delete_one({"id": cid})
+    return {"deleted": 1}
+
+
+@api_router.get("/reflection/my-pattern")
+async def my_burnout_pattern(user: dict = Depends(get_current_user)):
+    """Gentle, supportive pattern detection — staff-side only.
+
+    Looks at the last 14 days of own check-ins. Returns supportive prompts,
+    never punitive. Returns at most ONE active nudge.
+    """
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=14)).isoformat()
+    items = await db.wellbeing_checkins.find(
+        {"user_id": user["id"], "created_at": {"$gte": cutoff}}, {"_id": 0}
+    ).sort("created_at", -1).to_list(200)
+    stressed_count = sum(1 for x in items if x["mood"] in ("overwhelmed", "stressed"))
+    total = len(items)
+    nudge = None
+    if stressed_count >= 3:
+        nudge = {
+            "tone": "supportive",
+            "title": "You've been stretched lately",
+            "message": f"You've checked in feeling overwhelmed or stressed {stressed_count} times in the last 14 days. That's a lot to carry. Would booking a chat with your manager — or just taking 10 minutes for yourself — help today?",
+            "actions": [
+                {"id": "talk_to_manager", "label": "Flag for supervision"},
+                {"id": "self_care", "label": "Plan something kind for myself"},
+            ],
+        }
+    elif stressed_count == 2:
+        nudge = {
+            "tone": "gentle",
+            "title": "A heavier patch",
+            "message": "Two recent check-ins flagged feeling stretched. That's worth noticing. Have you had a chance to talk it through with anyone?",
+            "actions": [{"id": "self_care", "label": "Plan a small reset"}],
+        }
+    return {
+        "checkin_count_14d": total,
+        "stressed_count_14d": stressed_count,
+        "nudge": nudge,
+    }
+
+
+# ---- Reflections (shift, wins, guided) ----
+
+@api_router.post("/reflection/entries")
+async def create_reflection(payload: ReflectionIn, user: dict = Depends(get_current_user)):
+    doc = {
+        "id": str(uuid.uuid4()),
+        "user_id": user["id"],
+        "user_name": user["name"],
+        "user_role": user["role"],
+        "kind": payload.kind,
+        "prompt_set": payload.prompt_set,
+        "title": payload.title,
+        "body": payload.body,
+        "responses": payload.responses or {},
+        "shared_with_manager": payload.shared_with_manager,
+        "shared_at": now_iso() if payload.shared_with_manager else None,
+        "tags": payload.tags or [],
+        "created_at": now_iso(),
+        "updated_at": now_iso(),
+    }
+    await db.staff_reflections.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api_router.get("/reflection/entries/mine")
+async def my_reflections(
+    kind: Optional[str] = None,
+    limit: int = 100,
+    user: dict = Depends(get_current_user),
+):
+    q: dict = {"user_id": user["id"]}
+    if kind in ("shift_reflection", "win", "guided"):
+        q["kind"] = kind
+    items = await db.staff_reflections.find(q, {"_id": 0}).sort("created_at", -1).to_list(
+        min(max(limit, 1), 500)
+    )
+    return items
+
+
+@api_router.get("/reflection/entries/{eid}")
+async def get_reflection(eid: str, user: dict = Depends(get_current_user)):
+    item = await db.staff_reflections.find_one({"id": eid}, {"_id": 0})
+    if not item:
+        raise HTTPException(404, "Reflection not found")
+    # Owner can always read. Manager+ can read ONLY if shared.
+    if item["user_id"] == user["id"]:
+        return item
+    if role_tier(user["role"]) >= 3 and item.get("shared_with_manager"):
+        return item
+    raise HTTPException(403, "Private reflection")
+
+
+@api_router.patch("/reflection/entries/{eid}")
+async def update_reflection(eid: str, payload: ReflectionUpdate, user: dict = Depends(get_current_user)):
+    existing = await db.staff_reflections.find_one({"id": eid}, {"_id": 0})
+    if not existing:
+        raise HTTPException(404, "Reflection not found")
+    if existing["user_id"] != user["id"]:
+        raise HTTPException(403, "You can only edit your own reflections")
+    update = payload.model_dump(exclude_unset=True)
+    update["updated_at"] = now_iso()
+    if "shared_with_manager" in update:
+        update["shared_at"] = now_iso() if update["shared_with_manager"] else None
+    await db.staff_reflections.update_one({"id": eid}, {"$set": update})
+    doc = await db.staff_reflections.find_one({"id": eid}, {"_id": 0})
+    return doc
+
+
+@api_router.delete("/reflection/entries/{eid}")
+async def delete_reflection(eid: str, user: dict = Depends(get_current_user)):
+    existing = await db.staff_reflections.find_one({"id": eid}, {"_id": 0, "user_id": 1})
+    if not existing:
+        raise HTTPException(404, "Reflection not found")
+    if existing["user_id"] != user["id"]:
+        raise HTTPException(403, "You can only delete your own reflections")
+    await db.staff_reflections.delete_one({"id": eid})
+    return {"deleted": 1}
+
+
+# ---- Manager+ supervision-prep views ----
+
+@api_router.get("/reflection/wellbeing/awareness")
+async def team_wellbeing_awareness(user: dict = Depends(require_tier(3))):
+    """Manager dashboard tile — anonymised 'team in amber zone' count.
+
+    Counts staff with >= 3 stressed/overwhelmed check-ins in the last 14 days.
+    Returns a count + names ONLY for staff who have explicitly shared a recent
+    reflection (otherwise just count, no names).
+    """
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=14)).isoformat()
+    # Aggregate stress counts per user
+    pipeline = [
+        {"$match": {
+            "created_at": {"$gte": cutoff},
+            "mood": {"$in": ["overwhelmed", "stressed"]},
+        }},
+        {"$group": {
+            "_id": {"user_id": "$user_id", "user_name": "$user_name", "user_role": "$user_role"},
+            "stress_count": {"$sum": 1},
+        }},
+        {"$match": {"stress_count": {"$gte": 3}}},
+    ]
+    rows = await db.wellbeing_checkins.aggregate(pipeline).to_list(500)
+    # Cross-check who shared something recently
+    shared_user_ids = set(await db.staff_reflections.distinct(
+        "user_id",
+        {"shared_with_manager": True, "shared_at": {"$gte": cutoff}},
+    ))
+    amber_named = []
+    amber_anon_count = 0
+    for r in rows:
+        uid = r["_id"]["user_id"]
+        if uid in shared_user_ids:
+            amber_named.append({
+                "user_id": uid,
+                "user_name": r["_id"]["user_name"],
+                "user_role": r["_id"]["user_role"],
+                "stress_count": r["stress_count"],
+            })
+        else:
+            amber_anon_count += 1
+    # Team-wide stats (total check-ins, mood mix)
+    total_checkins = await db.wellbeing_checkins.count_documents({"created_at": {"$gte": cutoff}})
+    mood_mix = {}
+    for m in MOOD_CHECKINS:
+        mood_mix[m] = await db.wellbeing_checkins.count_documents(
+            {"created_at": {"$gte": cutoff}, "mood": m}
+        )
+    return {
+        "amber_count_total": len(rows),
+        "amber_named": amber_named,
+        "amber_anonymous_count": amber_anon_count,
+        "total_checkins_14d": total_checkins,
+        "mood_mix_14d": mood_mix,
+    }
+
+
+@api_router.get("/reflection/supervision/{user_id}")
+async def supervision_view(user_id: str, _: dict = Depends(require_tier(3))):
+    """Senior+ supervision-prep view for ONE staff member.
+
+    Returns: their wellbeing mood trend (last 90 days), shared reflections only,
+    and gentle wellbeing-pattern flag if active. Private (un-shared) reflections
+    are NEVER returned.
+    """
+    target = await db.users.find_one({"id": user_id}, {"_id": 0, "id": 1, "name": 1, "role": 1, "email": 1})
+    if not target:
+        raise HTTPException(404, "Staff member not found")
+
+    cutoff_90 = (datetime.now(timezone.utc) - timedelta(days=90)).isoformat()
+    cutoff_14 = (datetime.now(timezone.utc) - timedelta(days=14)).isoformat()
+
+    checkins = await db.wellbeing_checkins.find(
+        {"user_id": user_id, "created_at": {"$gte": cutoff_90}}, {"_id": 0}
+    ).sort("created_at", -1).to_list(500)
+
+    # Reflections — SHARED ONLY
+    reflections = await db.staff_reflections.find(
+        {"user_id": user_id, "shared_with_manager": True},
+        {"_id": 0},
+    ).sort("created_at", -1).to_list(200)
+
+    # Mood mix last 14d
+    mood_mix = {m: 0 for m in MOOD_CHECKINS}
+    for c in checkins:
+        if c["created_at"] >= cutoff_14:
+            mood_mix[c["mood"]] = mood_mix.get(c["mood"], 0) + 1
+
+    stressed_14 = mood_mix.get("overwhelmed", 0) + mood_mix.get("stressed", 0)
+    flag = None
+    if stressed_14 >= 3:
+        flag = {
+            "severity": "amber",
+            "title": "Wellbeing check-in recommended",
+            "message": f"{target['name']} has flagged feeling overwhelmed or stressed {stressed_14} times in the last 14 days. Consider opening with a wellbeing-focused supervision question.",
+        }
+
+    win_count = sum(1 for r in reflections if r["kind"] == "win")
+    return {
+        "staff": target,
+        "checkins": checkins,
+        "checkins_count_90d": len(checkins),
+        "mood_mix_14d": mood_mix,
+        "stressed_count_14d": stressed_14,
+        "shared_reflections": reflections,
+        "win_count_shared": win_count,
+        "flag": flag,
+    }
+
+
 app.include_router(api_router)
+
 
 app.add_middleware(
     CORSMiddleware,

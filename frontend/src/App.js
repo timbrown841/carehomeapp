@@ -44,6 +44,8 @@ import KeyWorkSessionEditor from "@/pages/KeyWorkSessionEditor";
 import KeyWorkSessionDetail from "@/pages/KeyWorkSessionDetail";
 import { FrameworksList, FrameworkDetail } from "@/pages/Frameworks";
 import { ResourcesList, ResourcePackDetail } from "@/pages/Resources";
+import Reflection from "@/pages/Reflection";
+import ReflectionSupervision from "@/pages/ReflectionSupervision";
 
 function Protected({ children }) {
   const { user, loading } = useAuth();
@@ -145,6 +147,13 @@ function App() {
               <Route path="/frameworks/:id" element={<FrameworkDetail />} />
               <Route path="/resources" element={<ResourcesList />} />
               <Route path="/resources/:id" element={<ResourcePackDetail />} />
+
+              {/* Staff Reflection &amp; Wellbeing — personal, accessed via avatar menu */}
+              <Route path="/reflection" element={<Reflection />} />
+              <Route
+                path="/reflection/supervision/:userId"
+                element={<ManagerOnly><ReflectionSupervision /></ManagerOnly>}
+              />
             </Route>
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>

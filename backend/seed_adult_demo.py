@@ -61,7 +61,7 @@ async def seed_adult_demo_if_empty(db) -> None:
     senior_user = senior_user or manager_user
 
     now = datetime.now(timezone.utc)
-    logger.info("Seeding realistic Adult Services demo data for Tom &amp; Margaret…")
+    logger.info("Seeding realistic Adult Services demo data for Tom & Margaret…")
 
     if tom:
         await _seed_tom(db, tom["id"], now, staff_user, senior_user, manager_user)
@@ -83,7 +83,7 @@ async def _seed_tom(db, rid: str, now: datetime, staff, senior, manager) -> None
     care_tasks = [
         # Today
         {
-            "kind": "morning_routine", "title": "Morning routine prompt &amp; check-in",
+            "kind": "morning_routine", "title": "Morning routine prompt & check-in",
             "due_at": today_at(8, 30), "status": "completed",
             "completed_at": today_at(8, 42), "completed_by_name": staff["name"],
             "notes": "Tom up and dressed independently. Brief chat about CMHT appointment tomorrow.",
@@ -279,7 +279,7 @@ async def _seed_tom(db, rid: str, now: datetime, staff, senior, manager) -> None
         "walking_aids": [],
         "transfer_support": "Independent. Monitor for medication-related drowsiness.",
         "falls_risk": "low",
-        "moving_handling_needs": "No specific moving &amp; handling needs.",
+        "moving_handling_needs": "No specific moving & handling needs.",
         "equipment_required": [],
         "environmental_risks": "Stairwell — Tom occasionally reports dizziness after evening dose. Bathroom mat secured.",
         "staff_guidance": "Monitor for sedation post-evening dose (Quetiapine). Encourage water intake. Escalate to GP if balance affected.",
@@ -402,7 +402,7 @@ async def _seed_maggie(db, rid: str, now: datetime, staff, senior, manager) -> N
     today_tasks = [
         ("morning_routine", "Morning routine — wash, dress, breakfast", 8, 0, "completed", staff["name"],
          "Maggie compliant this morning. Used walking frame. Ate toast and tea.", 30),
-        ("personal_care", "Continence care &amp; personal hygiene", 8, 30, "completed", staff["name"],
+        ("personal_care", "Continence care & personal hygiene", 8, 30, "completed", staff["name"],
          "Two-staff support. Maggie compliant today. Skin checked — intact.", 25),
         ("hygiene_support", "Mid-morning hygiene support (handwashing prompt)", 11, 0, "pending", None, None, 10),
         ("evening_routine", "Evening routine — bedtime support, medication, falls sensor check", 19, 30, "pending", None,
@@ -421,7 +421,7 @@ async def _seed_maggie(db, rid: str, now: datetime, staff, senior, manager) -> N
         day = now - timedelta(days=d)
         for kind, title, h, m, mins in [
             ("morning_routine", "Morning routine — wash, dress, breakfast", 8, 0, 30),
-            ("personal_care", "Continence care &amp; personal hygiene", 8, 30, 25),
+            ("personal_care", "Continence care & personal hygiene", 8, 30, 25),
             ("evening_routine", "Evening routine — bedtime support, medication", 19, 30, 30),
         ]:
             # Inject 3 personal_care refusals over the last 7 days (days 2, 4, 6)
@@ -502,7 +502,7 @@ async def _seed_maggie(db, rid: str, now: datetime, staff, senior, manager) -> N
         "body_map_id": None,
         "hospital_involvement": "a_and_e",
         "equipment_involved": "Falls sensor mat triggered alarm — staff on scene within 90s.",
-        "action_taken": "999 called. Maggie taken to A&amp;E by ambulance. X-ray clear — no fracture. Returned same day.",
+        "action_taken": "999 called. Maggie taken to A&E by ambulance. X-ray clear — no fracture. Returned same day.",
         "follow_up": "Orthopaedic review booked. PT to reassess weight-bearing. Night-time toileting plan in place. Two-staff transfers at night.",
         "notes": "Second fall in 30 days. Pattern of getting up unaided overnight. MCA assessment on bed-rail consent in progress.",
         "reported_by_id": senior["id"],
@@ -527,7 +527,7 @@ async def _seed_maggie(db, rid: str, now: datetime, staff, senior, manager) -> N
             "falls sensor mat", "raised toilet seat", "grab rails (en-suite)", "hoist (M sling)",
         ],
         "environmental_risks": "Bedroom rug removed. Bathroom grab-rails installed last week. Night-light fitted.",
-        "staff_guidance": "Two-staff bath transfers. Maggie MUST use walking frame at all transfers (verbal reminder every time). Falls sensor mat checked at handover. PT visits Mon &amp; Thu.",
+        "staff_guidance": "Two-staff bath transfers. Maggie MUST use walking frame at all transfers (verbal reminder every time). Falls sensor mat checked at handover. PT visits Mon & Thu.",
         "review_date": (now + timedelta(days=30)).date().isoformat(),
         "assessed_at": _iso(now - timedelta(days=7)),
         "assessor_name": senior["name"],
@@ -539,7 +539,7 @@ async def _seed_maggie(db, rid: str, now: datetime, staff, senior, manager) -> N
     await db.mca_assessments.insert_one({
         "id": str(uuid.uuid4()),
         "resident_id": rid,
-        "decision_topic": "Consent to bed rails &amp; falls sensor mat in bedroom",
+        "decision_topic": "Consent to bed rails & falls sensor mat in bedroom",
         "communication_needs": "Hearing aid in. Speak clearly facing her. Allow processing time.",
         "can_understand": True,
         "can_retain": True,
@@ -563,7 +563,7 @@ async def _seed_maggie(db, rid: str, now: datetime, staff, senior, manager) -> N
     await db.mca_assessments.insert_one({
         "id": str(uuid.uuid4()),
         "resident_id": rid,
-        "decision_topic": "Capacity to refuse personal care &amp; hygiene support",
+        "decision_topic": "Capacity to refuse personal care & hygiene support",
         "communication_needs": "Hearing aid. Allow processing time. Better engagement in mornings.",
         "can_understand": True,
         "can_retain": False,
@@ -598,11 +598,11 @@ async def _seed_maggie(db, rid: str, now: datetime, staff, senior, manager) -> N
         # 8 days ago — night of the 2nd fall
         {"at": now - timedelta(days=8) + timedelta(hours=10), "mood": "flat",
          "hydration": "adequate", "nutrition": "poor", "sleep": "disturbed",
-         "engagement": "Quiet after A&amp;E visit. Sore.",
+         "engagement": "Quiet after A&E visit. Sore.",
          "presentation": "Tired. Bruising visible.",
          "mental_health_concerns": "Shaken by fall. Reassured.",
          "deterioration_indicators": ["post_fall", "poor_intake"],
-         "notes": "Returned from A&amp;E this morning. Refused lunch."},
+         "notes": "Returned from A&E this morning. Refused lunch."},
         # 6 days ago
         {"at": now - timedelta(days=6), "mood": "stable", "hydration": "adequate",
          "nutrition": "poor", "sleep": "poor",
@@ -670,15 +670,15 @@ async def _seed_maggie(db, rid: str, now: datetime, staff, senior, manager) -> N
          "status": "attended",
          "notes": "Bruising healing. Falls risk discussed. PT referral made."},
         # 10 days ago — physio (attended)
-        {"kind": "physio", "title": "Physiotherapy — strength &amp; balance",
+        {"kind": "physio", "title": "Physiotherapy — strength & balance",
          "date": (now - timedelta(days=10)).date().isoformat(), "time": "14:00",
          "location": "Manchester Royal Physiotherapy", "with_whom": "Olivia Tan (PT)",
          "status": "attended",
          "notes": "Tolerated 25 mins. Home programme issued — sit-to-stand x10, daily."},
         # 8 days ago — A&E (attended, after 2nd fall)
-        {"kind": "hospital", "title": "A&amp;E attendance — post-fall (right hip)",
+        {"kind": "hospital", "title": "A&E attendance — post-fall (right hip)",
          "date": (now - timedelta(days=8)).date().isoformat(), "time": "03:30",
-         "location": "Manchester Royal Infirmary — A&amp;E", "with_whom": "ED Consultant",
+         "location": "Manchester Royal Infirmary — A&E", "with_whom": "ED Consultant",
          "status": "attended",
          "notes": "X-ray clear. Discharged same day. Orthopaedic OPD referral made."},
         # In 3 days — physio
@@ -691,7 +691,7 @@ async def _seed_maggie(db, rid: str, now: datetime, staff, senior, manager) -> N
          "date": (now + timedelta(days=9)).date().isoformat(), "time": "11:15",
          "location": "Manchester Royal Infirmary — Ortho OPD", "with_whom": "Mr Ahmed (Consultant)",
          "status": "scheduled",
-         "notes": "Bring discharge letter from A&amp;E. Two-staff escort. Wheelchair transport booked."},
+         "notes": "Bring discharge letter from A&E. Two-staff escort. Wheelchair transport booked."},
     ]
     for a in appts:
         await db.health_appointments.insert_one({

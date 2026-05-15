@@ -1,6 +1,6 @@
-import { Outlet, NavLink, useLocation } from "react-router-dom";
+import { Outlet, NavLink, Link, useLocation } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import {
   LayoutDashboard,
   Users,
@@ -12,6 +12,8 @@ import {
   LogOut,
   Menu,
   X,
+  Heart,
+  ChevronUp,
 } from "lucide-react";
 import Logo from "@/components/Logo";
 import NotificationBell from "@/components/NotificationBell";
@@ -54,6 +56,18 @@ export default function Layout() {
   const { user, logout, tier } = useAuth();
   const location = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef(null);
+
+  // Close the user-menu dropdown on outside click
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onDoc = (e) => {
+      if (menuRef.current && !menuRef.current.contains(e.target)) setMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [menuOpen]);
 
   const close = () => setMobileOpen(false);
 
@@ -103,39 +117,65 @@ export default function Layout() {
             ))}
           </nav>
           <div className="p-3 mt-auto border-t divider-soft sticky bottom-0 bg-white">
-            <div
-              className="flex items-center gap-2.5 px-3 py-2 rounded-lg bg-stone-50"
-              data-testid="user-card"
-            >
-              <div className="w-8 h-8 rounded-full bg-[#0e3b4a] text-white text-[11px] font-semibold flex items-center justify-center shrink-0">
-                {(user?.name || "—")
-                  .split(" ")
-                  .map((s) => s[0])
-                  .join("")
-                  .slice(0, 2)
-                  .toUpperCase()}
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="text-[13px] font-semibold text-[#0F1115] truncate">
-                  {user?.name || "—"}
-                </div>
-                <div
-                  className="text-[10px] uppercase tracking-wider font-bold inline-block"
-                  style={{ color: badge.tone }}
-                  data-testid="user-role-badge"
-                >
-                  {badge.label}
-                </div>
-              </div>
+            <div className="relative" ref={menuRef}>
               <button
                 type="button"
-                onClick={logout}
-                data-testid="logout-btn"
-                className="text-[#5d6068] hover:text-[#A8273A] p-1.5 rounded-md hover:bg-white transition-colors"
-                title="Sign out"
+                onClick={() => setMenuOpen((v) => !v)}
+                data-testid="user-card"
+                className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg bg-stone-50 hover:bg-stone-100 transition-colors text-left"
               >
-                <LogOut size={14} />
+                <div className="w-8 h-8 rounded-full bg-[#0e3b4a] text-white text-[11px] font-semibold flex items-center justify-center shrink-0">
+                  {(user?.name || "—")
+                    .split(" ")
+                    .map((s) => s[0])
+                    .join("")
+                    .slice(0, 2)
+                    .toUpperCase()}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="text-[13px] font-semibold text-[#0F1115] truncate">
+                    {user?.name || "—"}
+                  </div>
+                  <div
+                    className="text-[10px] uppercase tracking-wider font-bold inline-block"
+                    style={{ color: badge.tone }}
+                    data-testid="user-role-badge"
+                  >
+                    {badge.label}
+                  </div>
+                </div>
+                <ChevronUp
+                  size={14}
+                  className={`text-stone-500 transition-transform ${menuOpen ? "rotate-0" : "rotate-180"}`}
+                />
               </button>
+              {menuOpen && (
+                <div
+                  className="absolute bottom-full left-0 right-0 mb-2 bg-white border divider-soft rounded-xl shadow-lg py-1.5 z-30"
+                  data-testid="user-menu"
+                >
+                  <Link
+                    to="/reflection"
+                    onClick={() => { setMenuOpen(false); close(); }}
+                    data-testid="user-menu-reflection"
+                    className="flex items-center gap-2.5 px-3 py-2.5 text-sm text-[#0F1115] hover:bg-stone-50"
+                  >
+                    <Heart size={14} className="text-[#A8273A]" />
+                    <span className="flex-1">My Reflection</span>
+                    <span className="text-[10px] text-stone-500 uppercase tracking-wider">Wellbeing</span>
+                  </Link>
+                  <div className="border-t divider-soft my-1" />
+                  <button
+                    type="button"
+                    onClick={() => { setMenuOpen(false); logout(); }}
+                    data-testid="logout-btn"
+                    className="w-full flex items-center gap-2.5 px-3 py-2.5 text-sm text-[#0F1115] hover:bg-stone-50 text-left"
+                  >
+                    <LogOut size={14} className="text-stone-600" />
+                    Sign out
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         </aside>

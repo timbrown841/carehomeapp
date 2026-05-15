@@ -1,11 +1,12 @@
 import HubTabs from "@/components/HubTabs";
-import { CalendarClock, ClipboardList, ClipboardCheck, GraduationCap, ShieldCheck } from "lucide-react";
+import { CalendarClock, ClipboardList, ClipboardCheck, GraduationCap, ShieldCheck, Heart } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 
 import Staff, { TrainingPage } from "@/pages/Staff";
 import Handover from "@/pages/Handover";
 import Supervisions from "@/pages/Supervisions";
 import SaferRecruitment from "@/pages/SaferRecruitment";
+import { TeamWellbeingAwarenessCard } from "@/pages/ReflectionSupervision";
 
 export default function StaffOperationsHub() {
   const { tier } = useAuth();
@@ -13,6 +14,7 @@ export default function StaffOperationsHub() {
     { id: "rota", label: "Rota & Shifts", icon: CalendarClock },
     { id: "handover", label: "Shift Handover", icon: ClipboardList },
     { id: "supervisions", label: "Supervisions", icon: ClipboardCheck },
+    { id: "wellbeing", label: "Team Wellbeing", icon: Heart, hidden: tier < 3 },
     { id: "training", label: "Training", icon: GraduationCap },
     { id: "recruitment", label: "Safer Recruitment", icon: ShieldCheck, hidden: tier < 3 },
   ];
@@ -31,6 +33,7 @@ export default function StaffOperationsHub() {
           if (active === "rota") return <Staff />;
           if (active === "handover") return <Handover />;
           if (active === "supervisions") return <Supervisions />;
+          if (active === "wellbeing") return <TeamWellbeingPanel />;
           if (active === "training") return <TrainingPage />;
           if (active === "recruitment") return <SaferRecruitment />;
           return null;
@@ -39,3 +42,19 @@ export default function StaffOperationsHub() {
     </div>
   );
 }
+
+function TeamWellbeingPanel() {
+  return (
+    <div className="space-y-4" data-testid="team-wellbeing-panel">
+      <div className="bg-stone-50 border divider-soft rounded-2xl p-5">
+        <p className="text-sm text-stone-700 leading-relaxed">
+          A non-punitive, aggregate view of team wellbeing. Names appear only for staff who have
+          explicitly shared a reflection for supervision; otherwise you'll see anonymised counts.
+          Use this to <strong>open a conversation</strong>, not for monitoring.
+        </p>
+      </div>
+      <TeamWellbeingAwarenessCard />
+    </div>
+  );
+}
+
