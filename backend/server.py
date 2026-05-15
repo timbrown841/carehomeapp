@@ -55,6 +55,7 @@ from staff_reflection_models import (
     PROMPT_SETS, MOOD_META, MOOD_CHECKINS,
 )
 from ofsted_command_centre import build_command_centre
+from regulation_44_modules import build_regulation_44, MODULES as REG44_MODULES
 import secrets as _secrets
 
 
@@ -133,6 +134,10 @@ async def lifespan(_app: FastAPI):
     # Ofsted Inspection Actions (Iteration 34)
     await db.inspection_actions.create_index([("status", 1), ("priority", -1), ("created_at", -1)])
     await db.inspection_actions.create_index([("resolved_at", -1)])
+
+    # Regulation 44 (Iteration 35)
+    await db.regulation_44_visits.create_index([("visit_date", -1)])
+    await db.regulation_44_notes.create_index([("module_id", 1), ("updated_at", -1)])
 
     # Idempotent therapeutic content seed
     for fw in FRAMEWORKS:
@@ -7811,6 +7816,104 @@ async def delete_inspection_action(aid: str, user: dict = Depends(require_tier(3
             db, actor=user, action="inspection_action_delete",
             object_type="inspection_action", object_id=aid,
             summary="Inspection action deleted",
+        )
+    return {"deleted": res.deleted_count}
+
+
+# ============================================================
+# Regulation 44 — Live operational intelligence (Iteration 35)
+# 40 audit modules, 8 categories, children's-services only.
+# ============================================================
+
+
+class Regulation44NoteIn(BaseModel):
+    module_id: str = Field(min_length=1, max_length=80)
+    note: str = Field(min_length=1, max_length=4000)
+
+
+class Regulation44VisitIn(BaseModel):
+    visit_date: str = Field(..., description="ISO date of the visit")
+    visitor_name: str = Field(min_length=1, max_length=200)
+    overall_judgement: str = Field("good", pattern="^(outstanding|good|requires_improvement|inadequate)$")
+    strengths: Optional[str] = Field(None, max_length=8000)
+    areas_for_development: Optional[str] = Field(None, max_length=8000)
+    immediate_concerns: Optional[str] = Field(None, max_length=8000)
+    progress_since_last: Optional[str] = Field(None, max_length=8000)
+    recommendations: Optional[str] = Field(None, max_length=8000)
+    manager_comments: Optional[str] = Field(None, max_length=8000)
+
+
+@api_router.get("/ofsted/regulation-44")
+async def regulation_44_payload(_: dict = Depends(require_tier(2))):
+    """Senior+ Regulation 44 operational intelligence (40 modules, children's-only)."""
+    return await build_regulation_44(db)
+
+
+@api_router.get("/ofsted/regulation-44/modules")
+async def list_regulation_44_modules(_: dict = Depends(require_tier(2))):
+    """Static registry of all 40 modules with regulation_refs &amp; quality_standards."""
+    return {"modules": REG44_MODULES}
+
+
+@api_router.post("/ofsted/regulation-44/notes")
+async def upsert_reg44_note(payload: Regulation44NoteIn, user: dict = Depends(require_tier(3))):
+    """Upsert a manager evidence note against a (typically manual) Reg 44 module."""
+    valid_ids = {m["id"] for m in REG44_MODULES}
+    if payload.module_id not in valid_ids:
+        raise HTTPException(400, "Unknown module_id")
+    doc = {
+        "id": str(uuid.uuid4()),
+        "module_id": payload.module_id,
+        "note": payload.note,
+        "updated_at": now_iso(),
+        "updated_by_id": user["id"],
+        "updated_by_name": user["name"],
+    }
+    await db.regulation_44_notes.insert_one(doc)
+    doc.pop("_id", None)
+    await record_audit(
+        db, actor=user, action="reg44_note_upsert",
+        object_type="regulation_44_note", object_id=doc["id"],
+        summary=f"Reg 44 note added: {payload.module_id}",
+    )
+    return doc
+
+
+@api_router.get("/ofsted/regulation-44/visits")
+async def list_reg44_visits(limit: int = 12, _: dict = Depends(require_tier(2))):
+    items = await db.regulation_44_visits.find({}, {"_id": 0}).sort(
+        "visit_date", -1
+    ).to_list(min(max(limit, 1), 60))
+    return items
+
+
+@api_router.post("/ofsted/regulation-44/visits")
+async def create_reg44_visit(payload: Regulation44VisitIn, user: dict = Depends(require_tier(3))):
+    doc = {
+        "id": str(uuid.uuid4()),
+        **payload.model_dump(),
+        "created_at": now_iso(),
+        "created_by_id": user["id"],
+        "created_by_name": user["name"],
+    }
+    await db.regulation_44_visits.insert_one(doc)
+    doc.pop("_id", None)
+    await record_audit(
+        db, actor=user, action="reg44_visit_create",
+        object_type="regulation_44_visit", object_id=doc["id"],
+        summary=f"Reg 44 visit logged: {payload.visit_date} by {payload.visitor_name}",
+    )
+    return doc
+
+
+@api_router.delete("/ofsted/regulation-44/visits/{vid}")
+async def delete_reg44_visit(vid: str, user: dict = Depends(require_tier(3))):
+    res = await db.regulation_44_visits.delete_one({"id": vid})
+    if res.deleted_count:
+        await record_audit(
+            db, actor=user, action="reg44_visit_delete",
+            object_type="regulation_44_visit", object_id=vid,
+            summary="Reg 44 visit deleted",
         )
     return {"deleted": res.deleted_count}
 

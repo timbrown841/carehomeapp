@@ -8,7 +8,9 @@ import {
   HeartHandshake, ShieldCheck, MessageSquare, AlertTriangle, CheckCircle2,
   Loader2, RefreshCw, Download, ChevronRight, ClipboardCheck, CalendarClock,
   Plus, Trash2, Filter, Search, Clock3, Sparkles, ArrowRight, BadgeCheck,
+  LayoutDashboard, BookOpen,
 } from "lucide-react";
+import Regulation44View from "@/pages/Regulation44View";
 
 const ICONS = {
   ShieldAlert, Siren, Pill, GraduationCap, FileText, Users, Building2,
@@ -327,6 +329,7 @@ export default function OfstedReadiness() {
   const [filterDomain, setFilterDomain] = useState("all");
   const [q, setQ] = useState("");
   const [downloading, setDownloading] = useState(false);
+  const [tab, setTab] = useState("command");  // command | regulation_44
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -432,6 +435,34 @@ export default function OfstedReadiness() {
           </div>
         </div>
       </header>
+
+      {/* ---------- TAB STRIP ---------- */}
+      <div className="flex gap-1 border-b divider-soft overflow-x-auto -mt-2">
+        <button
+          type="button"
+          onClick={() => setTab("command")}
+          data-testid="ofsted-tab-command"
+          className={`text-sm font-semibold px-4 py-2.5 border-b-2 transition-colors flex items-center gap-1.5 whitespace-nowrap ${
+            tab === "command" ? "border-[#0e3b4a] text-[#0e3b4a]" : "border-transparent text-stone-600 hover:text-stone-900"
+          }`}
+        >
+          <LayoutDashboard size={14} /> Command centre
+        </button>
+        <button
+          type="button"
+          onClick={() => setTab("regulation_44")}
+          data-testid="ofsted-tab-regulation_44"
+          className={`text-sm font-semibold px-4 py-2.5 border-b-2 transition-colors flex items-center gap-1.5 whitespace-nowrap ${
+            tab === "regulation_44" ? "border-[#0e3b4a] text-[#0e3b4a]" : "border-transparent text-stone-600 hover:text-stone-900"
+          }`}
+        >
+          <BookOpen size={14} /> Regulation 44 modules
+        </button>
+      </div>
+
+      {tab === "regulation_44" && <Regulation44View />}
+
+      {tab === "command" && <>
 
       {/* ---------- 1b. 10 DOMAIN TILES ---------- */}
       <section data-testid="ofsted-domains">
@@ -609,6 +640,7 @@ export default function OfstedReadiness() {
 
       {/* ---------- 5. ACTION PLAN ---------- */}
       <ActionPlanPanel tier={tier} />
+      </>}
     </div>
   );
 }
