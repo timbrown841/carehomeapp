@@ -94,8 +94,15 @@ def _is_asleep_window(start_at: str, end_at: str, cfg: dict) -> bool:
     return False
 
 
-async def build_staffing_overview(db) -> dict:
-    """Single-call live operational picture for the home."""
+async def build_staffing_overview(db, sector: Optional[str] = None, shift_filter: Optional[str] = None) -> dict:
+    """Single-call live operational picture for the home.
+
+    Optional filters (UI controlled, never enforce sector silos at the org level):
+      - sector: narrow ratios to a single service_type ("children", "adult_supported_living", ...).
+                Returns `sectors_available[]` so the UI can render filter chips.
+      - shift_filter: narrow on_shift_now / coverage_gaps to one of:
+                "awake" | "sleep_in" | "agency". Pressure indicators stay org-wide.
+    """
     now = datetime.now(timezone.utc)
     cfg = await get_staffing_config(db)
     grace = cfg["clock_in_grace_minutes"]
@@ -105,19 +112,18 @@ async def build_staffing_overview(db) -> dict:
     # ============================================================
     now_iso = now.isoformat()
     in_24h = (now + timedelta(hours=24)).isoformat()
-    last_24h = (now - timedelta(hours=24)).isoformat()
 
     cur_shifts = await db.shifts.find(
         {"start_at": {"$lte": now_iso}, "end_at": {"$gte": now_iso}},
         {"_id": 0},
     ).sort("start_at", 1).to_list(50)
 
-    on_shift = []
+    on_shift_all = []
     for s in cur_shifts:
         clocked_in = bool(s.get("clocked_in_at"))
         start_dt = _parse_iso(s["start_at"])
         is_late = (not clocked_in) and start_dt and (now - start_dt) > timedelta(minutes=grace)
-        on_shift.append({
+        on_shift_all.append({
             **s,
             "is_sleep_in": bool(s.get("is_sleep_in")) or _is_asleep_window(s["start_at"], s["end_at"], cfg),
             "clocked_in": clocked_in,
@@ -126,11 +132,22 @@ async def build_staffing_overview(db) -> dict:
             "disturbance_count": len(s.get("sleep_in_disturbances") or []),
         })
 
+    # Shift-mode filter (on_shift + gaps only — pressure stays org-wide)
+    def _shift_pass(s):
+        if shift_filter == "awake": return not s["is_sleep_in"]
+        if shift_filter == "sleep_in": return s["is_sleep_in"]
+        if shift_filter == "agency": return bool(s.get("is_agency"))
+        return True
+
+    on_shift = [s for s in on_shift_all if _shift_pass(s)]
+
     # Next 24h roster (not yet started but starts in 24h)
-    next_shifts = await db.shifts.find(
-        {"start_at": {"$gt": now_iso, "$lte": in_24h}},
-        {"_id": 0},
-    ).sort("start_at", 1).to_list(80)
+    next_q = {"start_at": {"$gt": now_iso, "$lte": in_24h}}
+    if shift_filter == "agency":
+        next_q["is_agency"] = True
+    elif shift_filter == "sleep_in":
+        next_q["is_sleep_in"] = True
+    next_shifts = await db.shifts.find(next_q, {"_id": 0}).sort("start_at", 1).to_list(80)
 
     # ============================================================
     # Coverage gaps (rota slots whose start is in the past but no clock-in)
@@ -141,6 +158,11 @@ async def build_staffing_overview(db) -> dict:
         if start_dt and not s.get("clocked_in_at"):
             mins_late = (now - start_dt).total_seconds() / 60
             if mins_late > grace:
+                if shift_filter and shift_filter != "agency":
+                    s_is_sleep = bool(s.get("is_sleep_in")) or _is_asleep_window(s["start_at"], s["end_at"], cfg)
+                    if shift_filter == "awake" and s_is_sleep: continue
+                    if shift_filter == "sleep_in" and not s_is_sleep: continue
+                if shift_filter == "agency" and not s.get("is_agency"): continue
                 gaps.append({
                     "shift_id": s["id"],
                     "staff_name": s.get("staff_name") or "—",
@@ -161,15 +183,21 @@ async def build_staffing_overview(db) -> dict:
         st = r.get("service_type") or "children"
         residents_by_sector[st] = residents_by_sector.get(st, 0) + 1
 
-    awake_count = sum(1 for s in on_shift if not s["is_sleep_in"] and s["clocked_in"])
-    asleep_count = sum(1 for s in on_shift if s["is_sleep_in"] and s["clocked_in"])
+    awake_count = sum(1 for s in on_shift_all if not s["is_sleep_in"] and s["clocked_in"])
+    asleep_count = sum(1 for s in on_shift_all if s["is_sleep_in"] and s["clocked_in"])
+
+    sectors_available = [
+        {"sector": s, "residents": residents_by_sector.get(s, 0)}
+        for s in sectors if residents_by_sector.get(s, 0) > 0
+    ]
 
     ratios = []
-    for sector in sectors:
-        rc = residents_by_sector.get(sector, 0)
+    iterate = [sector] if sector else sectors
+    for sec in iterate:
+        rc = residents_by_sector.get(sec, 0)
         if rc == 0:
             continue
-        sec_cfg = cfg["ratios"].get(sector, cfg["ratios"]["children"])
+        sec_cfg = cfg["ratios"].get(sec, cfg["ratios"]["children"])
         is_asleep_window = (now.hour >= cfg["asleep_hours_start"] or now.hour < cfg["asleep_hours_end"])
         if is_asleep_window:
             required = max(sec_cfg["min_asleep"], int(round(sec_cfg["asleep_per_resident"] * rc)))
@@ -187,7 +215,7 @@ async def build_staffing_overview(db) -> dict:
         else:
             status = "critical"
         ratios.append({
-            "sector": sector,
+            "sector": sec,
             "residents": rc,
             "mode": mode,
             "required": required,
@@ -294,7 +322,10 @@ async def build_staffing_overview(db) -> dict:
     return {
         "generated_at": now.isoformat(),
         "is_asleep_window": (now.hour >= cfg["asleep_hours_start"] or now.hour < cfg["asleep_hours_end"]),
+        "filters_applied": {"sector": sector, "shift_filter": shift_filter},
+        "sectors_available": sectors_available,
         "on_shift_now": on_shift,
+        "on_shift_total": len(on_shift_all),
         "next_24h": next_shifts,
         "coverage_gaps": gaps,
         "ratios": ratios,

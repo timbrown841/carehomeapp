@@ -8128,9 +8128,15 @@ async def strategy_meeting_pack_pdf(resident_id: str, user: dict = Depends(requi
 
 
 @api_router.get("/staffing/overview")
-async def staffing_overview(_: dict = Depends(get_current_user)):
-    """Single-call live operational picture for the home — for managers and shift staff."""
-    return await build_staffing_overview(db)
+async def staffing_overview(
+    sector: Optional[str] = None,
+    shift_filter: Optional[str] = None,
+    _: dict = Depends(get_current_user),
+):
+    """Single-call live operational picture for the home — for managers and shift staff.
+    Optional filters never split sectors — they only narrow the view for one screen.
+    """
+    return await build_staffing_overview(db, sector=sector, shift_filter=shift_filter)
 
 
 @api_router.get("/staffing/config")

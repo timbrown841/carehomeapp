@@ -66,6 +66,37 @@ def test_staffing_overview_ratios_compute(manager):
         assert r["mode"] in ("awake", "asleep")
 
 
+
+def test_staffing_overview_sector_filter_narrows_ratios(manager):
+    """sector=children → ratios contains only that sector."""
+    d = requests.get(f"{API}/staffing/overview", params={"sector": "children"}, headers=manager).json()
+    assert d["filters_applied"]["sector"] == "children"
+    assert all(r["sector"] == "children" for r in d["ratios"])
+    # Sectors_available still lists every sector with residents (org-wide context preserved)
+    assert any(s["sector"] == "children" for s in d["sectors_available"])
+
+
+def test_staffing_overview_shift_filter_narrows_on_shift(manager):
+    """shift_filter=sleep_in narrows on_shift_now but on_shift_total preserves org total."""
+    d_all = requests.get(f"{API}/staffing/overview", headers=manager).json()
+    d_sleep = requests.get(f"{API}/staffing/overview", params={"shift_filter": "sleep_in"}, headers=manager).json()
+    assert d_sleep["filters_applied"]["shift_filter"] == "sleep_in"
+    # All filtered items must be sleep-in
+    assert all(s["is_sleep_in"] for s in d_sleep["on_shift_now"])
+    # on_shift_total preserves org-wide truth
+    assert d_sleep["on_shift_total"] == d_all["on_shift_total"]
+
+
+def test_staffing_overview_pressure_unaffected_by_filters(manager):
+    """Pressure indicators are intentionally organisation-wide regardless of filter."""
+    a = requests.get(f"{API}/staffing/overview", headers=manager).json()["pressure"]
+    b = requests.get(f"{API}/staffing/overview", params={"sector": "children"}, headers=manager).json()["pressure"]
+    c = requests.get(f"{API}/staffing/overview", params={"shift_filter": "agency"}, headers=manager).json()["pressure"]
+    # Compare the org-wide numbers (overtime/agency/sickness etc.)
+    for k in ("agency_pct_14d", "sickness_pct_14d", "sleep_ins_30d", "disturbance_count_30d"):
+        assert a[k] == b[k] == c[k]
+
+
 # ============================================================
 # Config
 # ============================================================

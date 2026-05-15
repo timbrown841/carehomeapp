@@ -23,6 +23,13 @@ const SECTOR_LABEL = {
   veteran: "Veteran care",
 };
 
+const SHIFT_FILTER_LABEL = {
+  all: "All shifts",
+  awake: "Awake cover",
+  sleep_in: "Sleep-in",
+  agency: "Agency only",
+};
+
 function fmtTime(iso) {
   if (!iso) return "—";
   try {
@@ -159,16 +166,21 @@ export default function LiveStaffingOps() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [disturbanceFor, setDisturbanceFor] = useState(null);
+  const [sectorFilter, setSectorFilter] = useState("all");
+  const [shiftFilter, setShiftFilter] = useState("all");
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const r = await api.get("/staffing/overview");
+      const params = {};
+      if (sectorFilter !== "all") params.sector = sectorFilter;
+      if (shiftFilter !== "all") params.shift_filter = shiftFilter;
+      const r = await api.get("/staffing/overview", { params });
       setData(r.data);
     } catch (e) {
       toast.error("Couldn't load staffing overview");
     } finally { setLoading(false); }
-  }, []);
+  }, [sectorFilter, shiftFilter]);
   useEffect(() => { load(); }, [load]);
 
   const isManager = tier >= 3;
@@ -190,6 +202,48 @@ export default function LiveStaffingOps() {
     <div className="space-y-5" data-testid="live-staffing-ops">
       <MyShiftBar onAction={load} />
 
+      {/* Filter strip — sector + shift mode + active state */}
+      <div className="bg-white border divider-soft rounded-2xl p-3 sm:p-4 flex flex-wrap items-center gap-3" data-testid="staffing-filters">
+        <span className="text-[10px] font-bold uppercase tracking-wider text-stone-500">View</span>
+        <div className="flex gap-1 flex-wrap" data-testid="filter-sectors">
+          <FilterChip
+            active={sectorFilter === "all"}
+            onClick={() => setSectorFilter("all")}
+            testid="sector-all"
+          >Organisation-wide</FilterChip>
+          {(data?.sectors_available || []).map((s) => (
+            <FilterChip
+              key={s.sector}
+              active={sectorFilter === s.sector}
+              onClick={() => setSectorFilter(s.sector)}
+              testid={`sector-${s.sector}`}
+            >
+              {SECTOR_LABEL[s.sector] || s.sector} <span className="opacity-60">· {s.residents}</span>
+            </FilterChip>
+          ))}
+        </div>
+        <span className="hidden sm:inline text-stone-300">|</span>
+        <div className="flex gap-1 flex-wrap" data-testid="filter-shifts">
+          {Object.entries(SHIFT_FILTER_LABEL).map(([k, label]) => (
+            <FilterChip
+              key={k}
+              active={shiftFilter === k}
+              onClick={() => setShiftFilter(k)}
+              testid={`shift-filter-${k}`}
+            >{label}</FilterChip>
+          ))}
+        </div>
+        {(sectorFilter !== "all" || shiftFilter !== "all") && (
+          <button
+            onClick={() => { setSectorFilter("all"); setShiftFilter("all"); }}
+            data-testid="filter-clear"
+            className="text-[11px] text-stone-600 hover:text-[#0e3b4a] underline ml-auto"
+          >
+            Clear filters
+          </button>
+        )}
+      </div>
+
       {/* Header banner — Now / asleep mode / refresh */}
       <div
         className="rounded-2xl p-4 sm:p-5 text-white flex flex-wrap items-center gap-3"
@@ -201,9 +255,22 @@ export default function LiveStaffingOps() {
         <div className="flex-1 min-w-0">
           <div className="text-[10px] uppercase tracking-[0.2em] font-bold opacity-80">
             {data.is_asleep_window ? "Asleep cover · 22:00–06:00" : "Awake cover · 06:00–22:00"}
+            {sectorFilter !== "all" && (
+              <span className="ml-2 px-1.5 py-0.5 rounded bg-white/15 backdrop-blur">
+                {SECTOR_LABEL[sectorFilter] || sectorFilter}
+              </span>
+            )}
+            {shiftFilter !== "all" && (
+              <span className="ml-2 px-1.5 py-0.5 rounded bg-white/15 backdrop-blur">
+                {SHIFT_FILTER_LABEL[shiftFilter]}
+              </span>
+            )}
           </div>
           <div className="text-base sm:text-lg font-semibold">
             {onShift.filter((s) => s.clocked_in).length}/{onShift.length} on shift now
+            {(sectorFilter !== "all" || shiftFilter !== "all") && data.on_shift_total !== onShift.length && (
+              <span className="text-[10px] opacity-70 ml-2">of {data.on_shift_total} org-wide</span>
+            )}
             {gaps.length > 0 && (
               <span className="text-[10px] ml-2 px-1.5 py-0.5 rounded bg-white/20 backdrop-blur uppercase tracking-wider font-bold">
                 {gaps.length} coverage gap{gaps.length === 1 ? "" : "s"}
@@ -330,9 +397,14 @@ export default function LiveStaffingOps() {
 
       {/* Pressure indicators */}
       <section className="bg-white border divider-soft rounded-2xl p-4 sm:p-5" data-testid="pressure-indicators">
-        <h3 className="text-sm font-semibold text-[#0F1115] flex items-center gap-2 mb-3">
-          <Activity size={15} /> Rota pressure · 7–30 day signals
-        </h3>
+        <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
+          <h3 className="text-sm font-semibold text-[#0F1115] flex items-center gap-2">
+            <Activity size={15} /> Rota pressure · 7–30 day signals
+          </h3>
+          <span className="text-[10px] uppercase tracking-wider font-bold text-stone-500" data-testid="pressure-org-wide-note">
+            Organisation-wide
+          </span>
+        </div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <PressureTile
             tone={pr.agency_status} label="Agency cover · 14d"
@@ -413,6 +485,22 @@ export default function LiveStaffingOps() {
         />
       )}
     </div>
+  );
+}
+
+function FilterChip({ active, onClick, testid, children }) {
+  return (
+    <button
+      onClick={onClick}
+      data-testid={testid}
+      className={`text-[11px] font-semibold px-2.5 py-1 rounded-full border transition-colors ${
+        active
+          ? "border-[#0e3b4a] bg-[#0e3b4a] text-white"
+          : "border-stone-300 text-stone-700 hover:border-stone-400 bg-white"
+      }`}
+    >
+      {children}
+    </button>
   );
 }
 
