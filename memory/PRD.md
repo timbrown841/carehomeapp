@@ -352,7 +352,19 @@ A simple and fast care management app for children's homes and supported living.
 - ✅ ~~Iteration 29: Sector-aware Resident Profile + Key Work in Quick Actions~~ (2026-02-09)
 - ✅ ~~Iteration 30: Sidebar split into Children's vs Adult Services~~ (2026-02-09)
 - ✅ ~~Iteration 31: Adult Services modules build-out (Care Tasks, Falls, Mobility, MCA, Wellbeing)~~ (2026-02-09)
-- 🔜 **Iteration 32 candidates**: Pre-deploy health check · Strategy Meeting Pack PDF (chronology + risk + missing + body maps in 1 click) · Adult-services demo data seeding so adult residents arrive populated · Care task scheduler/template (recurring routines).
+- ✅ ~~Iteration 32: Realistic adult demo data seeding + deployment-readiness stress regression~~ (2026-02-10)
+- 🔜 **Iteration 33 candidates**: Strategy Meeting Pack PDF (chronology + risk + missing + body maps in 1 click) · Care task scheduler/template (recurring routines) · Real Email/SMS notifications · Refactor server.py monolith.
+
+## Implemented (2026-02-10 — Iteration 32 — Adult demo data &amp; deployment-readiness stress regression)
+- **Realistic Adult Services demo seed** (`/app/backend/seed_adult_demo.py`, idempotent on startup):
+  - **Tom Whitfield** (adult_supported_living): 10 care_tasks (4 missed in 7d → triggers `missed_care_cluster` pattern, 2 refused, 2 pending today, 2 completed), 5 wellbeing observations across 12 days showing a deterioration trend (mood: stable → flat → low → withdrawn → low, with sleep/nutrition decline) → triggers `wellbeing_deterioration` pattern, 1 near-miss fall (stairwell, signed off), 1 mobility assessment (low risk, sedation watch), 1 unsigned fluctuating MCA on evening medication refusal (with Voiceability advocate + family), 3 appointments (escalated CMHT review tomorrow).
+  - **Margaret Lewis** (elderly_residential): 25 care_tasks (recurring 4-routine daily schedule across 7 days, 3 hygiene refusals per MCA-fluctuating plan, 2 pending today, 20 completed), 6 wellbeing observations (mood mostly stable but 1 agitated day, nutrition oscillating, sleep mostly poor/disturbed, 5 deterioration-flagged) → triggers `wellbeing_deterioration`, 2 falls in 30 days (1 signed off, 1 unsigned — A&E attendance, manager-action visible) → triggers `falls_cluster` pattern, 1 high-falls-risk mobility assessment (walking_aid, two-staff hoist), 2 MCA assessments (1 signed-off has_capacity, 1 unsigned fluctuating personal-care refusal with advocate), 5 health appointments (past GP/physio/A&amp;E + upcoming physio/orthopaedic).
+- **Deliberately triggered**: 4 pattern engine rules (Tom: missed_care_cluster + wellbeing_deterioration · Margaret: falls_cluster + wellbeing_deterioration), high-severity operational alerts on both, manager-action backlog (2 unsigned items), CQC oversight indicators (fluctuating capacity status, nutrition/sleep concerns).
+- **Cosmetic frontend fixes** (caught by testing agent, applied inline):
+  - `ResidentDetail.jsx` header: `Young person` badge → `Service user` for adult sector.
+  - `ResidentDetail.jsx` top action: `Child Missing` button now sector-gated (children's only). Active-missing badge text adapts to "Missing person" for adult sector.
+- **Tested**: 31/31 backend pytest in `test_iteration32.py` (operational summary + chronology + pattern detection + filtering + PDF export + RBAC + audit). Backend perf excellent: operational-summary 7ms, timeline (49 events) 10ms, PDF 64ms — all well below 500/800/3000ms thresholds. Sector partitioning regression-clean. Frontend smoke verified Adult sector ribbons, 8 sector-correct Quick Actions, operational alerts visible on both adult profiles, mobile 390×844 clean. See `/app/test_reports/iteration_28.json` (testing agent's auto-numbered output).
+- **Deployment Health Check**: env vars OK, no hardcoded URLs, CORS allows all, MongoDB-only persistence, uploads dir persistent, no secrets in source, supervisor managing backend+frontend+mongodb. Production-ready.
 
 ### P1
 - Phase D — Staff Operations expansion inside the hub (sleep-in tracking, shift swaps, leave, clock in/out, daily staffing overview) — adds tabs to `/staff-operations`.
