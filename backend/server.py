@@ -9042,6 +9042,7 @@ from referral_extractor import extract_referral_from_text, extract_pdf_text
 from placement_stability import (
     build_resident_placement_stability,
     build_emerging_placement_concerns,
+    build_resident_placement_trajectory,
 )
 
 
@@ -9573,6 +9574,26 @@ async def get_resident_placement_stability(resident_id: str, _: dict = Depends(g
 async def get_emerging_placement_concerns(_: dict = Depends(require_tier(3))):
     """Manager+ — org-wide emerging placement concerns and stabilising trends."""
     return await build_emerging_placement_concerns(db)
+
+
+@api_router.get("/placement-stability/trajectory/{resident_id}")
+async def get_resident_placement_trajectory(
+    resident_id: str,
+    weeks: int = 10,
+    _: dict = Depends(get_current_user),
+):
+    """Per-child deterministic placement-stability trajectory (Iteration 42b).
+
+    Returns a weekly score series (4-12 weeks) with deterministic trajectory
+    label (stabilising / improving / steady / fluctuating / deteriorating /
+    insufficient_data) and an evidence-linked "what changed" event list per
+    week. Reuses the same factor engine as the snapshot — same data in, same
+    trajectory out.
+    """
+    snap = await build_resident_placement_trajectory(db, resident_id, weeks_back=weeks)
+    if snap.get("error") == "resident_not_found":
+        raise HTTPException(404, "Resident not found")
+    return snap
 
 
 app.include_router(api_router)

@@ -587,3 +587,297 @@ def _lite(snap: dict) -> dict:
         "top_risk":       snap["risk_factors"][0]["label"] if snap["risk_factors"] else None,
         "top_protective": snap["protective_factors"][0]["label"] if snap["protective_factors"] else None,
     }
+
+
+# =============================================================================
+# Placement Stability Trajectory — Iteration 42b
+#
+# Longitudinal layer. Compares the same first-14-days post-admission baseline
+# against a rolling 14-day window that walks back week-by-week, producing a
+# weekly score series. Reuses the snapshot's deterministic factor engine — the
+# trajectory IS the snapshot computed at multiple points in time.
+#
+# Surfaces both stabilisation and deterioration with equal clarity. Each weekly
+# point includes the "delta events" (a lightweight, evidence-linked event list
+# for the 7 days leading up to that week) so managers can answer
+# "what changed around this time?" without leaving the card.
+# =============================================================================
+
+
+TRAJECTORY_LABELS = {
+    "stabilising":        "Stabilising — placement settling over time",
+    "improving":          "Improving — recent weeks calmer than earlier",
+    "steady":             "Steady — placement profile consistent",
+    "fluctuating":        "Fluctuating — mixed signals across recent weeks",
+    "deteriorating":      "Support recommended — trajectory rising",
+    "insufficient_data":  "Building trajectory — not enough history yet",
+    "no_admission":       "No admission date recorded",
+}
+
+
+async def _week_delta_events(db, resident_id: str, start: datetime,
+                              end: datetime) -> list[dict]:
+    """Evidence-linked event list for a 7-day delta window — no narratives,
+    no PII, just references to source records so the UI can deep-link to
+    chronology / incident detail."""
+    s, e = start.isoformat(), end.isoformat()
+    events: list[dict] = []
+
+    incs = await db.incidents.find(
+        {"resident_id": resident_id, "created_at": {"$gte": s, "$lt": e}},
+        {"_id": 0, "id": 1, "created_at": 1, "category": 1,
+         "incident_type": 1, "safeguarding": 1, "tags": 1},
+    ).sort("created_at", 1).to_list(50)
+    for i in incs:
+        cat = (i.get("category") or i.get("incident_type") or "incident") or "incident"
+        is_sg = bool(i.get("safeguarding")) or i.get("incident_type") == "safeguarding"
+        tags = i.get("tags") or []
+        is_police = "police" in tags or "police_involved" in tags
+        if is_sg:
+            label = "Safeguarding concern"
+            severity = "high"
+        elif cat == "physical":
+            label = "Physical-intervention event"
+            severity = "high"
+        elif cat == "self-harm":
+            label = "Self-harm event"
+            severity = "high"
+        elif is_police:
+            label = "Police-involved event"
+            severity = "high"
+        else:
+            label = (cat.replace("_", " ").replace("-", " ").strip().capitalize()
+                     or "Incident")
+            severity = "watch"
+        events.append({
+            "kind": "incident",
+            "id": i.get("id"),
+            "at": i.get("created_at"),
+            "label": label,
+            "category": cat,
+            "severity": severity,
+        })
+
+    miss = await db.missing_episodes.find(
+        {"resident_id": resident_id, "reported_at": {"$gte": s, "$lt": e}},
+        {"_id": 0, "id": 1, "reported_at": 1},
+    ).sort("reported_at", 1).to_list(20)
+    for m in miss:
+        events.append({
+            "kind": "missing",
+            "id": m.get("id"),
+            "at": m.get("reported_at"),
+            "label": "Missing episode",
+            "category": "missing",
+            "severity": "high",
+        })
+
+    notes = await db.notes.find(
+        {"resident_id": resident_id,
+         "category": {"$in": ["wellbeing", "education", "activity"]},
+         "created_at": {"$gte": s, "$lt": e}},
+        {"_id": 0, "id": 1, "category": 1, "created_at": 1},
+    ).sort("created_at", 1).to_list(20)
+    for n in notes:
+        cat = (n.get("category") or "note").replace("_", " ").capitalize()
+        events.append({
+            "kind": "note",
+            "id": n.get("id"),
+            "at": n.get("created_at"),
+            "label": f"{cat} note",
+            "category": n.get("category") or "note",
+            "severity": "protective",
+        })
+
+    events.sort(key=lambda ev: ev.get("at") or "")
+    return events
+
+
+def _compute_trajectory(points: list[dict]) -> tuple[str, str]:
+    """Deterministic trajectory classification from the weekly score series."""
+    if len(points) < 3:
+        return "insufficient_data", TRAJECTORY_LABELS["insufficient_data"]
+
+    scores = [p["score"] for p in points]
+    n = len(scores)
+    xs = list(range(n))  # 0 = oldest week, n-1 = most recent
+    mean_x = sum(xs) / n
+    mean_y = sum(scores) / n
+    num = sum((xs[i] - mean_x) * (scores[i] - mean_y) for i in range(n))
+    den = sum((xs[i] - mean_x) ** 2 for i in range(n)) or 1
+    slope = num / den  # score change per week — positive = rising = worse
+
+    mad = sum(abs(sc - mean_y) for sc in scores) / n  # variability indicator
+
+    # First-half vs second-half mean — sanity check on slope direction
+    half = max(1, n // 2)
+    early_mean = sum(scores[:half]) / half
+    recent_mean = sum(scores[-half:]) / half
+    delta = recent_mean - early_mean
+
+    if slope <= -1.5 or (slope <= -0.8 and delta <= -4):
+        return "stabilising", TRAJECTORY_LABELS["stabilising"]
+    if slope <= -0.5 and recent_mean < early_mean:
+        return "improving", TRAJECTORY_LABELS["improving"]
+    if slope >= 1.5 or (slope >= 0.8 and delta >= 4):
+        return "deteriorating", TRAJECTORY_LABELS["deteriorating"]
+    if mad >= 8 and max(scores) - min(scores) >= 14:
+        return "fluctuating", TRAJECTORY_LABELS["fluctuating"]
+    return "steady", TRAJECTORY_LABELS["steady"]
+
+
+async def build_resident_placement_trajectory(
+    db, resident_id: str, weeks_back: int = 10,
+    cfg_override: Optional[dict] = None,
+) -> dict:
+    """Weekly stability-score trajectory over the last `weeks_back` weeks.
+
+    Each point reuses the snapshot's factor engine against a rolling 14d window
+    versus first 14d post-admission, so trajectory and snapshot stay consistent.
+    """
+    cfg = {**PLACEMENT_STABILITY_CONFIG, **(cfg_override or {})}
+    weeks_back = max(4, min(int(weeks_back or 10), 12))
+
+    resident = await db.residents.find_one({"id": resident_id}, {"_id": 0})
+    if not resident:
+        return {"error": "resident_not_found"}
+
+    now = datetime.now(timezone.utc)
+    admission = _parse_admission(resident)
+    name = resident.get("preferred_name") or resident.get("name")
+
+    if not admission:
+        return {
+            "resident_id": resident_id,
+            "name": name,
+            "weeks_back": weeks_back,
+            "points": [],
+            "trajectory_label": "no_admission",
+            "trajectory_label_text": TRAJECTORY_LABELS["no_admission"],
+            "score_min": 0,
+            "score_max": 0,
+            "score_current": 0,
+            "score_earliest": 0,
+            "explainable_note": (
+                "No admission date recorded — set placement date to enable "
+                "longitudinal stability trajectory."
+            ),
+        }
+
+    days_in_placement = max(0, (now - admission).days)
+    baseline_start = admission
+    baseline_end = admission + timedelta(days=14)
+
+    points: list[dict] = []
+    for w in range(weeks_back):  # w=0 is most recent
+        current_end = now - timedelta(days=w * 7)
+        current_start = current_end - timedelta(days=14)
+        # Skip weeks whose 14d window overlaps with the baseline window —
+        # comparing the baseline against itself is meaningless.
+        if current_start < baseline_end:
+            continue
+        delta_start = current_end - timedelta(days=7)
+        # Clamp the delta window so it never reaches before the baseline either
+        if delta_start < baseline_end:
+            delta_start = baseline_end
+
+        sig = await _resident_signals(
+            db, resident_id, baseline_start, baseline_end,
+            current_start, current_end,
+        )
+        days_at_week = max(0, (current_end - admission).days)
+        risks, protectives = _build_factors(sig, cfg, days_at_week)
+        risk_score = sum(f["weight"] for f in risks)
+        protective_score = sum(f["weight"] for f in protectives)
+        score = max(0, risk_score - protective_score)
+
+        status, status_label = _status_from_score(
+            score, days_at_week, cfg, len(protectives), len(risks),
+        )
+
+        key_events = await _week_delta_events(db, resident_id, delta_start, current_end)
+
+        points.append({
+            "week_index":          w,  # 0 = current, larger = older
+            "week_ending_at":      current_end.isoformat(),
+            "week_starting_at":    current_start.isoformat(),
+            "delta_starting_at":   delta_start.isoformat(),
+            "days_in_placement_at_week": days_at_week,
+            "score":               score,
+            "risk_score":          risk_score,
+            "protective_score":    protective_score,
+            "status":              status,
+            "status_label":        status_label,
+            "top_risk":            risks[0]["label"] if risks else None,
+            "top_protective":      protectives[0]["label"] if protectives else None,
+            "risk_factor_count":       len(risks),
+            "protective_factor_count": len(protectives),
+            "key_events":          key_events,
+            "key_event_count":     len(key_events),
+        })
+
+    # Order: oldest → newest (left to right on a sparkline)
+    points.reverse()
+
+    if points:
+        scores = [p["score"] for p in points]
+        score_min = min(scores)
+        score_max = max(scores)
+        score_current = points[-1]["score"]
+        score_earliest = points[0]["score"]
+    else:
+        score_min = score_max = score_current = score_earliest = 0
+
+    trajectory_label, trajectory_label_text = _compute_trajectory(points)
+
+    # Tiny human-readable summary for screen-reader / sparkline tooltip
+    if trajectory_label == "stabilising":
+        summary = (
+            f"Stability score reduced from {score_earliest} to {score_current} "
+            f"over {len(points)} weeks — placement settling."
+        )
+    elif trajectory_label == "improving":
+        summary = (
+            f"Recent weeks calmer than earlier ({score_earliest} → {score_current})."
+        )
+    elif trajectory_label == "deteriorating":
+        summary = (
+            f"Stability score moved from {score_earliest} to {score_current} "
+            f"over {len(points)} weeks — support recommended."
+        )
+    elif trajectory_label == "fluctuating":
+        summary = (
+            f"Score range {score_min}–{score_max} across {len(points)} weeks — "
+            "mixed signals."
+        )
+    elif trajectory_label == "steady":
+        summary = (
+            f"Stability profile consistent ({score_min}–{score_max}) across "
+            f"{len(points)} weeks."
+        )
+    else:
+        summary = "Building longitudinal trajectory — not enough history yet."
+
+    return {
+        "resident_id": resident_id,
+        "name": name,
+        "admission_at": admission.isoformat(),
+        "days_in_placement": days_in_placement,
+        "weeks_back": weeks_back,
+        "weeks_returned": len(points),
+        "points": points,
+        "trajectory_label": trajectory_label,
+        "trajectory_label_text": trajectory_label_text,
+        "trajectory_summary": summary,
+        "score_min": score_min,
+        "score_max": score_max,
+        "score_current": score_current,
+        "score_earliest": score_earliest,
+        "config": cfg,
+        "explainable_note": (
+            "Each weekly point is a 14-day rolling window compared against the "
+            "first 14 days post-admission, using the same factor engine as the "
+            "snapshot. Same data in → same trajectory out. Use as longitudinal "
+            "supportive intelligence — never as a label for the child."
+        ),
+    }
