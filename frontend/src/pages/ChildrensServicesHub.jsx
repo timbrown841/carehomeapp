@@ -1,11 +1,12 @@
 import HubTabs from "@/components/HubTabs";
-import { Users, Pill, ShieldAlert, CalendarCheck, Wallet } from "lucide-react";
+import { Users, Pill, ShieldAlert, CalendarCheck, Wallet, Sparkles } from "lucide-react";
 
 import Residents from "@/pages/Residents";
 import MedicationRound from "@/pages/MedicationRound";
 import Incidents from "@/pages/Incidents";
 import Visits from "@/pages/Visits";
 import PocketMoney from "@/pages/PocketMoney";
+import ReferralsMatching from "@/pages/ReferralsMatching";
 
 /**
  * Children's Services hub — Ofsted-regulated children's homes & semi-independent.
@@ -18,6 +19,7 @@ export default function ChildrensServicesHub() {
     { id: "incidents", label: "Incidents", icon: ShieldAlert },
     { id: "visits", label: "Statutory Visits", icon: CalendarCheck },
     { id: "finance", label: "Pocket Money", icon: Wallet },
+    { id: "referrals", label: "Referrals & Matching", icon: Sparkles },
   ];
 
   return (
@@ -41,6 +43,7 @@ export default function ChildrensServicesHub() {
           if (active === "incidents") return <Incidents />;
           if (active === "visits") return <Visits />;
           if (active === "finance") return <PocketMoney />;
+          if (active === "referrals") return <ReferralsMatching />;
           return null;
         }}
       </HubTabs>

@@ -1,0 +1,57 @@
+{
+  "summary": "Iteration 41 — Placement Intelligence & Matching Engine fully verified. 18/18 backend tests PASS (12 existing + 6 new edge-case tests added). Frontend UI verified end-to-end for manager flow (list → detail → factor modal → decision modal → editor) and RBAC for staff (graceful 403 handling, no crash). Adult Services Hub sector boundary preserved.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "PATCH /api/referrals/{rid}",
+        "issue": "PATCH binds to the full ReferralIn model and requires yp_initials even on partial updates. Not strictly broken (frontend sends full body) but semantically PATCH should accept partial. Consider a separate ReferralPatchIn with optional fields or switching to PUT."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration41.py",
+    "/app/backend/tests/test_iteration41_extra.py",
+    "/app/test_reports/pytest/iter41_results.xml",
+    "/app/test_reports/pytest/iter41_extra_results.xml"
+  ],
+  "action_items": [
+    "OPTIONAL: Refactor PATCH /api/referrals/{rid} to accept partial updates via a separate ReferralPatchIn model. Current impl forces yp_initials in body. Frontend currently works because it re-sends the full ref object — so no user-facing impact."
+  ],
+  "critical_code_review_comments": [
+    "server.py is 9046 lines — well over the 700-line guideline. Should be split into routers per feature (referrals, placement_intelligence, etc.). Iteration 41 endpoints (~165 lines) could live in a dedicated router module.",
+    "PATCH endpoint semantically should accept partial body; using POST model on PATCH is a minor REST violation.",
+    "Good: all referral endpoints correctly exclude `_id` from Mongo via projection `{\"_id\": 0}`.",
+    "Good: deterministic engine verified — same input yields same score/confidence/factor list across calls.",
+    "Good: explainability arithmetic verified — sum(group_warning.weight) == analysis.score holds.",
+    "Good: audit_trail is appended on every decision and edit; suitable for Ofsted/RI evidence.",
+    "Good: unknown needs/conditions are filtered out server-side (defense in depth)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration41_extra.py (new — 6 additional tests for listing, partial 404, PATCH lock-after-accept, factor_chain, decision condition filtering, decision RBAC)"
+  ],
+  "success_rate": {
+    "backend": "100% (18/18 tests pass)",
+    "frontend": "100% (all required data-testids found and verified; modals open; sector boundary preserved; RBAC graceful)"
+  },
+  "test_credentials": "All four roles verified working: admin@care.local / Admin@123, manager@care.local / Manager@123, senior@care.local / Senior@123, staff@care.local / Staff@123",
+  "seed_data_creation": "Tests create TEST-prefixed referrals (ZZTEST, PATCH1, CHAIN, DECF, LOWT, TMP1, JUNK) and clean them up via admin DELETE in finally blocks.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iteration 41 (Placement Intelligence) is fully green. Backend tests live in /app/backend/tests/test_iteration41.py (original 12) and test_iteration41_extra.py (additional 6). Must export REACT_APP_BACKEND_URL before running pytest (frontend/.env value). Frontend UI verified at /children?tab=referrals — all data-testids match spec exactly: referrals-matching-root, home-readiness-panel, home-readiness-tile-{emotional_climate|behaviour_pressure|missing_trend|safeguarding_pressure|staffing_readiness}, referral-new-btn, referrals-list, referral-row-{id}, referral-editor, ref-initials, referral-save-btn, referral-detail, matching-confidence-banner, referral-home-readiness, group-dynamics-section, group-warning-{domain}, what-needs-to-change, referral-decide-btn, referral-pdf-btn, factor-modal, decision-modal, decision-save. Staff users get 403 from API and see 'Could not load referrals' toast + empty state (no crash). Adult Hub does not include the referrals tab.",
+  "frontend_verified_flows": [
+    "Welcome → Enter workspace (Children's) → login (manager) → /children?tab=referrals renders home-readiness panel with 5 tiles + active referrals list",
+    "Click referral-row → detail view shows matching-confidence-banner (Manageable, score 28), referral-home-readiness, group-dynamics-section with 3 weighted warnings (exploitation 8, missing-influence 10, behaviour-trigger 10), what-needs-to-change",
+    "Click group-warning-* → factor-modal opens showing evidence (NEEDS: cse) and linked residents (Mads, Aisha)",
+    "Click referral-decide-btn → decision-modal opens with decision dropdown, reason textarea, 13 condition chips, Save decision button",
+    "Click referral-new-btn → referral-editor renders with ref-initials input and referral-save-btn",
+    "Sector boundary: /adults does NOT contain 'Referrals & Matching' text or referrals-matching-root testid",
+    "Staff RBAC: tab is visible but API returns 403; UI shows 'Could not load referrals' error toast and empty referrals state, no crash"
+  ],
+  "rca_of_the_issue": "No critical issues found. Single minor observation: PATCH /api/referrals/{rid} requires the full ReferralIn body (yp_initials required field) — this is a semantic REST violation but does not affect users because the frontend re-sends the full referral object on edit."
+}

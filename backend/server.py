@@ -8797,6 +8797,242 @@ async def intelligence_burnout_forecast(_: dict = Depends(require_tier(3))):
     return await build_burnout_forecast(db)
 
 
+# ============================================================
+# Iteration 41 — Placement Intelligence & Matching Engine
+# Children's services only. Manager+ only.
+# ============================================================
+
+from placement_intelligence import (
+    build_home_readiness, build_match_analysis,
+    NEED_OPTIONS, CONDITION_OPTIONS,
+)
+from referral_pdf import build_referral_pdf
+
+
+_RISK_RATING = Literal["low", "medium", "high"]
+_DECISION = Literal["pending", "accepted", "rejected", "more_info", "escalated_to_ri"]
+
+
+class ReferralIn(BaseModel):
+    # 1. Referral information
+    yp_initials: str = Field(min_length=1, max_length=20)
+    yp_full_name: Optional[str] = Field(None, max_length=120)
+    age: Optional[int] = Field(None, ge=0, le=25)
+    gender: Optional[str] = Field(None, max_length=40)
+    local_authority: Optional[str] = Field(None, max_length=120)
+    social_worker_name: Optional[str] = Field(None, max_length=120)
+    social_worker_contact: Optional[str] = Field(None, max_length=200)
+    referral_date: Optional[str] = None
+    reason_for_referral: Optional[str] = Field(None, max_length=4000)
+    placement_type_requested: Optional[str] = Field(None, max_length=60)
+    urgency_level: Optional[Literal["emergency", "urgent", "planned"]] = None
+    legal_status: Optional[str] = Field(None, max_length=120)
+    current_placement_situation: Optional[str] = Field(None, max_length=2000)
+
+    # 2. Needs
+    needs: List[str] = Field(default_factory=list)
+
+    # 3. Risk matching
+    risk_to_self: Optional[_RISK_RATING] = None
+    risk_to_others: Optional[_RISK_RATING] = None
+    risk_from_others: Optional[_RISK_RATING] = None
+    absconding_risk: Optional[_RISK_RATING] = None
+    exploitation_risk: Optional[_RISK_RATING] = None
+    peer_influence_risk: Optional[_RISK_RATING] = None
+    known_associates: List[str] = Field(default_factory=list)
+    police_involvement_history: Optional[str] = Field(None, max_length=2000)
+    safeguarding_history: Optional[str] = Field(None, max_length=2000)
+
+    # 4. Group impact (manager notes — system also computes via intelligence)
+    group_impact_notes: Optional[str] = Field(None, max_length=2000)
+
+    # 5. Home capacity & staff skills (manager assessment notes)
+    bed_available: Optional[bool] = None
+    capacity_notes: Optional[str] = Field(None, max_length=1000)
+    staffing_skills_notes: Optional[str] = Field(None, max_length=1000)
+    transport_education_notes: Optional[str] = Field(None, max_length=1000)
+    professional_support_notes: Optional[str] = Field(None, max_length=1000)
+
+    # 6. Conditions
+    conditions: List[str] = Field(default_factory=list)
+    conditions_notes: Optional[str] = Field(None, max_length=2000)
+
+
+class ReferralDecisionIn(BaseModel):
+    decision: _DECISION
+    decision_reason: Optional[str] = Field(None, max_length=2000)
+    conditions: Optional[List[str]] = None
+
+
+def _clean_lists(payload: dict) -> dict:
+    """Filter unknown needs/conditions to keep storage consistent."""
+    if "needs" in payload:
+        payload["needs"] = [n for n in (payload["needs"] or []) if n in NEED_OPTIONS]
+    if "conditions" in payload:
+        payload["conditions"] = [c for c in (payload["conditions"] or []) if c in CONDITION_OPTIONS]
+    return payload
+
+
+@api_router.get("/placement-intelligence/home-readiness")
+async def get_home_readiness(_: dict = Depends(require_tier(3))):
+    """Live operational readiness for a new placement — manager+ only."""
+    return await build_home_readiness(db)
+
+
+@api_router.get("/referrals")
+async def list_referrals(
+    status: Optional[str] = None,
+    decision: Optional[str] = None,
+    _: dict = Depends(require_tier(3)),
+):
+    q: dict = {}
+    if status:
+        q["status"] = status
+    if decision:
+        q["decision"] = decision
+    items = await db.referrals.find(q, {"_id": 0}).sort("created_at", -1).to_list(500)
+    return items
+
+
+@api_router.post("/referrals")
+async def create_referral(payload: ReferralIn, user: dict = Depends(require_tier(3))):
+    now = now_iso()
+    data = _clean_lists(payload.model_dump())
+    doc = {
+        "id": str(uuid.uuid4()),
+        "created_at": now,
+        "updated_at": now,
+        "created_by_id": user["id"],
+        "created_by_name": user["name"],
+        "status": "open",
+        "decision": "pending",
+        "decision_reason": None,
+        "decision_by_id": None,
+        "decision_by_name": None,
+        "decision_at": None,
+        "audit_trail": [{
+            "at": now, "by_id": user["id"], "by_name": user["name"],
+            "action": "created", "summary": f"Referral opened for {data.get('yp_initials')}",
+        }],
+        **data,
+    }
+    await db.referrals.insert_one(doc)
+    doc.pop("_id", None)
+    await record_audit(
+        db, actor=user, action="referral_create",
+        object_type="referral", object_id=doc["id"],
+        summary=f"Referral opened for {data.get('yp_initials')}",
+    )
+    return doc
+
+
+@api_router.get("/referrals/{rid}")
+async def get_referral(rid: str, _: dict = Depends(require_tier(3))):
+    doc = await db.referrals.find_one({"id": rid}, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, "Referral not found")
+    return doc
+
+
+@api_router.patch("/referrals/{rid}")
+async def patch_referral(rid: str, payload: ReferralIn, user: dict = Depends(require_tier(3))):
+    existing = await db.referrals.find_one({"id": rid}, {"_id": 0})
+    if not existing:
+        raise HTTPException(404, "Referral not found")
+    if existing.get("decision") not in (None, "pending", "more_info"):
+        raise HTTPException(400, f"Referral is {existing.get('decision')} — cannot edit. Reopen by changing decision back to pending.")
+    update = _clean_lists(payload.model_dump())
+    update["updated_at"] = now_iso()
+    trail = existing.get("audit_trail") or []
+    trail.append({
+        "at": update["updated_at"], "by_id": user["id"], "by_name": user["name"],
+        "action": "edited", "summary": "Referral updated",
+    })
+    update["audit_trail"] = trail
+    await db.referrals.update_one({"id": rid}, {"$set": update})
+    await record_audit(
+        db, actor=user, action="referral_update",
+        object_type="referral", object_id=rid,
+        summary="Referral updated",
+    )
+    return {**existing, **update}
+
+
+@api_router.post("/referrals/{rid}/decision")
+async def decide_referral(rid: str, payload: ReferralDecisionIn, user: dict = Depends(require_tier(3))):
+    existing = await db.referrals.find_one({"id": rid}, {"_id": 0})
+    if not existing:
+        raise HTTPException(404, "Referral not found")
+    now = now_iso()
+    update = {
+        "decision": payload.decision,
+        "decision_reason": payload.decision_reason,
+        "decision_by_id": user["id"],
+        "decision_by_name": user["name"],
+        "decision_at": now,
+        "updated_at": now,
+        "status": "closed" if payload.decision in ("accepted", "rejected") else "open",
+    }
+    if payload.conditions is not None:
+        update["conditions"] = [c for c in payload.conditions if c in CONDITION_OPTIONS]
+    trail = existing.get("audit_trail") or []
+    trail.append({
+        "at": now, "by_id": user["id"], "by_name": user["name"],
+        "action": f"decision_{payload.decision}",
+        "summary": f"Decision recorded: {payload.decision}",
+    })
+    update["audit_trail"] = trail
+    await db.referrals.update_one({"id": rid}, {"$set": update})
+    await record_audit(
+        db, actor=user, action=f"referral_decision_{payload.decision}",
+        object_type="referral", object_id=rid,
+        summary=f"Decision: {payload.decision}",
+    )
+    return {**existing, **update}
+
+
+@api_router.delete("/referrals/{rid}")
+async def delete_referral(rid: str, user: dict = Depends(require_tier(4))):
+    existing = await db.referrals.find_one({"id": rid}, {"_id": 0, "id": 1, "yp_initials": 1})
+    if not existing:
+        raise HTTPException(404, "Referral not found")
+    await db.referrals.delete_one({"id": rid})
+    await record_audit(
+        db, actor=user, action="referral_delete",
+        object_type="referral", object_id=rid,
+        summary=f"Referral deleted ({existing.get('yp_initials')})",
+    )
+    return {"status": "deleted"}
+
+
+@api_router.get("/referrals/{rid}/intelligence")
+async def referral_intelligence(rid: str, _: dict = Depends(require_tier(3))):
+    """Deterministic placement intelligence for one referral — live operational analysis."""
+    referral = await db.referrals.find_one({"id": rid}, {"_id": 0})
+    if not referral:
+        raise HTTPException(404, "Referral not found")
+    return await build_match_analysis(db, referral)
+
+
+@api_router.get("/referrals/{rid}/pdf")
+async def referral_pdf(rid: str, user: dict = Depends(require_tier(3))):
+    referral = await db.referrals.find_one({"id": rid}, {"_id": 0})
+    if not referral:
+        raise HTTPException(404, "Referral not found")
+    pdf = await build_referral_pdf(db, referral)
+    await record_audit(
+        db, actor=user, action="referral_pdf_download",
+        object_type="referral", object_id=rid,
+        summary=f"Referral Matching Assessment PDF downloaded for {referral.get('yp_initials')}",
+    )
+    fname = f"referral-matching-assessment-{referral.get('yp_initials', rid)}.pdf"
+    return Response(
+        content=pdf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
 app.include_router(api_router)
 
 
