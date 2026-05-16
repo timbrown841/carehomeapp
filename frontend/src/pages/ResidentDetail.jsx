@@ -9,6 +9,7 @@ import BodyMapsTab from "@/components/resident/BodyMapsTab";
 import HealthTab from "@/components/resident/HealthTab";
 import EducationTab from "@/components/resident/EducationTab";
 import { ResidentStabilityCard } from "@/components/intelligence/EmergingRisksPanel";
+import PlacementStabilityCard from "@/components/intelligence/PlacementStabilityCard";
 import VisitsTab from "@/components/resident/VisitsTab";
 import PocketMoneyTab from "@/components/resident/PocketMoneyTab";
 import IndependenceTracker from "@/components/resident/IndependenceTracker";
@@ -369,6 +370,9 @@ export default function ResidentDetail() {
               residentId={resident.id}
               mode={isAdultService(resident.service_type) ? "adult" : "children"}
             />
+            {!isAdultService(resident.service_type) && (
+              <PlacementStabilityCard residentId={resident.id} />
+            )}
             <OverviewOperational resident={resident} onTabChange={setTab} />
             <AccordionSection
               title="Identity & demographics"

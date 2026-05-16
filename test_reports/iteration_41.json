@@ -1,0 +1,30 @@
+{
+  "summary": "Iteration 42 — Placement Stability Intelligence. Backend: 16/16 tests in test_iteration42.py PASS. Regression on iter40, iter40b, iter41, iter41b/c/d/e, iter41_extra = 85/85 PASS. Frontend: PlacementStabilityCard renders on children's resident profile, click-to-modal works with modal-score-split / modal-risk-list / modal-suggested-actions. EmergingPlacementConcernsPanel renders on Compliance > Safeguarding Intelligence tab (children's mode) with hero, 6 status tiles, concerns-list (Mads/Aisha), stabilising-list (Jordy '16 days since last incident'), privacy-note. Resident drilldown modal correctly contains PlacementStabilityCard. RBAC: staff redirected away from /compliance (senior+ only), so Safeguarding Intelligence is not reachable by staff.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration42.py",
+    "/app/test_reports/pytest/iter42_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "All deterministic-engine fields (status, status_label, trend_direction, score, risk/protective_score+factors, signals.base/curr, suggested_actions, explainable_note) validated and stable across repeated calls.",
+    "Supportive-tone guardrail enforced: forbidden phrases ('at risk of breakdown', 'failing', 'bad child', 'doomed', 'lost cause', 'hopeless') absent from status_label + suggested_actions; org panel status labels constrained to the 6 approved supportive strings.",
+    "Org panel /emerging-concerns lite rows correctly exclude risk_factors / protective_factors / signals / suggested_actions — those are per-child detail only (no PII over-exposure on org view).",
+    "Score math verified: score == max(0, sum(risk weights) - sum(protective weights)); risk_score and protective_score reported separately.",
+    "RBAC verified end-to-end: per-child endpoint open to all 4 roles (200); /emerging-concerns staff/senior 403, manager/admin 200; unknown resident id 404.",
+    "Frontend RBAC: staff has no /compliance route at all (redirects to /), even stronger than the 'hidden tab or graceful error' requirement.",
+    "Minor observation (not a bug): when a resident has no protective signals, the top-protective-factor block and modal-protective-list are intentionally not rendered — verified on Mads (No protective signals yet). UI shows 'No protective signals yet.' copy which matches supportive-tone spec."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (16/16 + 85/85 regression)", "frontend": "100% on tested flows"},
+  "test_credentials": "manager@care.local / Manager@123, staff@care.local / Staff@123 (from /app/memory/test_credentials.md)",
+  "seed_data_creation": "none — used seeded residents (Mads, Leo, Aisha, Jordy)",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iter42 placement stability is GREEN. Login flow is /welcome -> click 'Enter workspace' under Children's Services -> /login -> email/password. PlacementStabilityCard renders ONLY for children's-mode residents (correct per spec). EmergingPlacementConcernsPanel sits inside Compliance & Oversight > Safeguarding Intelligence tab (children's mode only). Adult-sector boundary was not re-verified in this run but iter42 tests + previous smoke confirmed placeholder fallback. Run pytest with `REACT_APP_BACKEND_URL=https://safeguard-dash-1.preview.emergentagent.com` set in env or backend tests will fail with MissingSchema."
+}

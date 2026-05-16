@@ -9039,6 +9039,10 @@ async def referral_pdf(rid: str, user: dict = Depends(require_tier(3))):
 # upload, or manual overrides. NEVER persists a referral — purely transient.
 
 from referral_extractor import extract_referral_from_text, extract_pdf_text
+from placement_stability import (
+    build_resident_placement_stability,
+    build_emerging_placement_concerns,
+)
 
 
 _SIM_TEXT_MAX = 200_000  # ~200KB of text
@@ -9550,6 +9554,25 @@ async def save_simulation_as_referral(
                 summary=f"Simulation converted to referral {referral['id']}",
             )
     return referral
+
+
+# ---------- Placement Stability Intelligence (Iteration 42) ----------
+# Children's-only. Per-resident: any authenticated user. Org panel: manager+.
+
+
+@api_router.get("/placement-stability/resident/{resident_id}")
+async def get_resident_placement_stability(resident_id: str, _: dict = Depends(get_current_user)):
+    """Per-child deterministic placement-stability snapshot with evidence chain."""
+    snap = await build_resident_placement_stability(db, resident_id)
+    if snap.get("error") == "resident_not_found":
+        raise HTTPException(404, "Resident not found")
+    return snap
+
+
+@api_router.get("/placement-stability/emerging-concerns")
+async def get_emerging_placement_concerns(_: dict = Depends(require_tier(3))):
+    """Manager+ — org-wide emerging placement concerns and stabilising trends."""
+    return await build_emerging_placement_concerns(db)
 
 
 app.include_router(api_router)

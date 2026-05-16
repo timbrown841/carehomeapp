@@ -16,6 +16,7 @@ import Regulation44View from "@/pages/Regulation44View";
 import InspectionSimulationView from "@/pages/InspectionSimulationView";
 import CrossModulePatternsView from "@/pages/CrossModulePatternsView";
 import PlacementAnalytics from "@/pages/PlacementAnalytics";
+import EmergingPlacementConcernsPanel from "@/components/intelligence/EmergingPlacementConcernsPanel";
 
 const ICONS = {
   BadgeCheck, HeartPulse, History, FileText, ShieldCheck,
@@ -108,12 +109,15 @@ function ComingSoon({ title, body, icon: Icon = Sparkles, accent = "#0e3b4a", te
 }
 
 function SafeguardingIntelligencePlaceholder({ mode }) {
+  if (mode === "children") {
+    return <EmergingPlacementConcernsPanel />;
+  }
   return (
     <ComingSoon
       icon={AlertTriangle}
       accent="#A8273A"
       title="Safeguarding intelligence"
-      body={`Patterns across ${mode === "children" ? "missing episodes, allegations, restraints and behaviour incidents" : "adult safeguarding alerts, capacity concerns and welfare incidents"}. The Cross-module intelligence panel on Ofsted/CQC already surfaces these — a dedicated drill-down view will live here.`}
+      body="Patterns across adult safeguarding alerts, capacity concerns and welfare incidents. The Cross-module intelligence panel on CQC already surfaces these — a dedicated drill-down view will live here."
       testid="safeguarding-placeholder"
     />
   );
