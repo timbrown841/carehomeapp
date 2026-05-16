@@ -1,0 +1,26 @@
+{
+  "summary": "Iteration 41d — Placement Conversion Analytics tile end-to-end testing complete. Backend 12/12 PASS + regression 45/45 PASS (iter41 + 41b + 41c + 41_extra). Frontend RBAC verified: Manager (tier 3) and Admin (tier 4) can see and use the 'Placement Analytics' tab inside Compliance & Oversight; Staff (tier 1) is blocked at /compliance entirely (redirect to /), Senior (tier 2) reaches /compliance but the Placement Analytics tab is correctly hidden (minTier=3). All 18 required data-testid elements render. Period switcher (7/30/90) refetches successfully. Privacy notice present and mentions 'aggregate'. No forbidden keys (yp_initials, ran_by_id, raw_text, simulation_id, etc.) appear in the analytics payload (recursive walk passes). Unique narrative token written via /simulate never leaks into the analytics response.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration41d.py",
+    "/app/test_reports/pytest/pytest_iter41d_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Minor testability gap: individual referral-pressure bars in <ReferralPressureCard/> do not carry data-testid='pressure-bar-{n}' attributes. The card itself (data-testid='analytics-pressure-card') is fine and bars render visually. Future automated tests verifying bucket count would benefit from per-bar testids.",
+    "Top-level analytics response is clean — verified keys: averages, confidence_distribution, conversion_rate_pct, generated_at, home_readiness_distribution, out_of_hours, outcomes, outcomes_pct, period_days, period_end, period_start, privacy_notice, risk_distribution, totals, weekly_pressure, weekly_spikes. Matches spec exactly."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (12/12 iter41d + 45/45 regression iter41/41b/41c/41_extra)", "frontend": "100% on all stated UI acceptance criteria"},
+  "test_credentials": "manager@care.local/Manager@123 (tier 3), admin@care.local/Admin@123 (tier 4), senior@care.local/Senior@123 (tier 2), staff@care.local/Staff@123 (tier 1)",
+  "seed_data_creation": "Test runs added a few simulation_logs entries during regression (via _run_sim helper) — no PII, narrative dropped after risk extraction as per privacy design.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iter41d Placement Analytics fully GREEN. UI screenshot at compliance > Placement Analytics shows: hero with 87 simulations / 6.9% converted, KPI strip (Total/Conversion/Avg Risk Band/Modal Confidence), Simulation outcomes, Risk distribution, Matching confidence, Referral pressure with weekly bars (4 buckets on 30d), Home readiness, Out-of-hours + weekly spikes tiles, and privacy boundary footer. Period buttons 7/30/90 refetch correctly. Staff blocked at /compliance route level; Senior reaches /compliance but Placement Analytics tab hidden (minTier=3). Adult sector tab visibility was not directly tested in UI — sectorCopy.js only adds placement_analytics to CHILDREN.complianceTabs (per file_of_reference), and the children-only OFSTED badge in compliance hub confirms sector wiring.",
+  "rca of the issue": "N/A — no issues found."
+}

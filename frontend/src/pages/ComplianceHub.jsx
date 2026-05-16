@@ -2,7 +2,7 @@ import { useState } from "react";
 import HubTabs from "@/components/HubTabs";
 import {
   BadgeCheck, HeartPulse, History, FileText, ShieldCheck,
-  AlertTriangle, Sparkles, Network, Pill,
+  AlertTriangle, Sparkles, Network, Pill, BarChart3,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { useOrg } from "@/context/OrgContext";
@@ -15,10 +15,11 @@ import Reports from "@/pages/Reports";
 import Regulation44View from "@/pages/Regulation44View";
 import InspectionSimulationView from "@/pages/InspectionSimulationView";
 import CrossModulePatternsView from "@/pages/CrossModulePatternsView";
+import PlacementAnalytics from "@/pages/PlacementAnalytics";
 
 const ICONS = {
   BadgeCheck, HeartPulse, History, FileText, ShieldCheck,
-  AlertTriangle, Sparkles, Network, Pill,
+  AlertTriangle, Sparkles, Network, Pill, BarChart3,
 };
 
 export default function ComplianceHub() {
@@ -40,6 +41,7 @@ export default function ComplianceHub() {
     if (active === "reg44") return <Regulation44View />;
     if (active === "simulation") return <InspectionSimulationView />;
     if (active === "patterns") return <CrossModulePatternsView />;
+    if (active === "placement_analytics") return <PlacementAnalytics />;
     if (active === "safeguarding") return <SafeguardingIntelligencePlaceholder mode="children" />;
     // Adult
     if (active === "cqc") return <CQCReadiness />;

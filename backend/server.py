@@ -9164,6 +9164,9 @@ async def simulate_match(
         "converted_referral_id": None,
         "source": source_kind,
         "manager_note": None,
+        # Home state snapshot at run-time (operational metadata, no PII)
+        "home_readiness_at_run": (analysis.get("home_readiness") or {}).get("overall_readiness"),
+        "home_score_at_run":    int((analysis.get("home_readiness") or {}).get("score") or 0),
         # NOTE: We deliberately do NOT store raw_text, file content, narrative,
         # needs list, known associates, reason or any sensitive referral content.
     }
@@ -9261,6 +9264,170 @@ async def delete_simulation(sim_id: str, user: dict = Depends(require_tier(4))):
         summary="Simulation log deleted by admin",
     )
     return {"status": "deleted"}
+
+
+# ---------- Conversion analytics ----------
+# Lightweight, executive-style trends derived purely from the audit log.
+# Aggregate-only. Never exposes initials, narrative, or any PII.
+
+from datetime import timedelta as _td
+
+
+def _empty_outcome_buckets():
+    return {"under_review": 0, "more_info_requested": 0, "converted": 0, "not_progressed": 0}
+
+
+def _empty_risk_buckets():
+    return {"low": 0, "medium": 0, "high": 0, "critical": 0}
+
+
+def _empty_confidence_buckets():
+    return {"strong": 0, "manageable": 0, "elevated": 0, "not_recommended": 0}
+
+
+def _empty_home_readiness_buckets():
+    return {"good": 0, "watch": 0, "elevated": 0, "high_risk": 0}
+
+
+def _is_out_of_hours_iso(iso: str) -> bool:
+    """Out-of-hours = 18:00–08:00 UTC (rough proxy for OOH placement calls)."""
+    try:
+        dt = datetime.fromisoformat(str(iso).replace("Z", "+00:00"))
+        h = dt.hour
+        return h >= 18 or h < 8
+    except Exception:
+        return False
+
+
+def _pct(n: int, total: int) -> float:
+    return round((n / total) * 100, 1) if total > 0 else 0.0
+
+
+def _delta_pct(curr: int, prev: int) -> int:
+    if prev == 0:
+        return 100 if curr > 0 else 0
+    return int(round(((curr - prev) / prev) * 100))
+
+
+@api_router.get("/placement-intelligence/conversion-analytics")
+async def conversion_analytics(
+    days: int = 30,
+    _: dict = Depends(require_tier(3)),
+):
+    """Executive-style placement decision analytics.
+
+    Aggregates from simulation_logs ONLY. No PII, no narrative, no initials in output.
+    """
+    days = max(7, min(int(days or 30), 90))
+    now = datetime.now(timezone.utc)
+    period_start = now - _td(days=days)
+    prev_start = now - _td(days=days * 2)
+    prev_end = period_start
+
+    rows = await db.simulation_logs.find(
+        {"ran_at": {"$gte": prev_start.isoformat()}},
+        {"_id": 0},
+    ).sort("ran_at", 1).to_list(5000)
+
+    curr_rows = [r for r in rows if r["ran_at"] >= period_start.isoformat()]
+    prev_rows = [r for r in rows if prev_end.isoformat() > r["ran_at"] >= prev_start.isoformat()]
+
+    # Outcomes
+    outcomes = _empty_outcome_buckets()
+    risk = _empty_risk_buckets()
+    confidence = _empty_confidence_buckets()
+    home_readiness = _empty_home_readiness_buckets()
+    out_of_hours = 0
+    risk_score_total = 0
+    home_score_total = 0
+    for r in curr_rows:
+        outcomes[r.get("status", "under_review")] = outcomes.get(r.get("status", "under_review"), 0) + 1
+        risk[r.get("risk_band", "low")] = risk.get(r.get("risk_band", "low"), 0) + 1
+        confidence[r.get("matching_confidence", "strong")] = confidence.get(r.get("matching_confidence", "strong"), 0) + 1
+        hr = r.get("home_readiness_at_run")
+        if hr in home_readiness:
+            home_readiness[hr] += 1
+        if _is_out_of_hours_iso(r.get("ran_at", "")):
+            out_of_hours += 1
+        risk_score_total += int(r.get("score") or 0)
+        home_score_total += int(r.get("home_score_at_run") or 0)
+
+    total = len(curr_rows)
+    prev_total = len(prev_rows)
+
+    conversion_rate = _pct(outcomes["converted"], total)
+    avg_risk_score = round(risk_score_total / total, 1) if total else 0
+    avg_home_score = round(home_score_total / total, 1) if total else 0
+    avg_risk_band = (
+        "critical" if avg_risk_score >= 55
+        else "high" if avg_risk_score >= 35
+        else "medium" if avg_risk_score >= 15
+        else "low"
+    )
+    # Modal (most common) confidence
+    avg_confidence = (
+        max(confidence.items(), key=lambda kv: kv[1])[0] if total else "—"
+    )
+
+    # Per-week buckets (weekly_pressure sparkline data)
+    weeks: list[dict] = []
+    week_count = max(1, days // 7)
+    for w in range(week_count):
+        w_start = now - _td(days=(w + 1) * 7)
+        w_end = now - _td(days=w * 7)
+        n = sum(
+            1 for r in curr_rows
+            if w_start.isoformat() <= r.get("ran_at", "") < w_end.isoformat()
+        )
+        weeks.append({
+            "week_start": w_start.date().isoformat(),
+            "week_end": w_end.date().isoformat(),
+            "count": n,
+        })
+    weeks.reverse()  # chronological asc
+
+    # Spike detection: any week ≥ 1.6× rolling-avg of the others (and ≥ 3 sims)
+    counts = [w["count"] for w in weeks]
+    spikes: list[dict] = []
+    if len(counts) >= 2:
+        rolling_avg = sum(counts) / len(counts)
+        for w in weeks:
+            if w["count"] >= max(3, int(rolling_avg * 1.6)) and rolling_avg > 0:
+                spikes.append(w)
+
+    return {
+        "generated_at": now.isoformat(),
+        "period_days": days,
+        "period_start": period_start.isoformat(),
+        "period_end": now.isoformat(),
+        "totals": {
+            "simulations": total,
+            "simulations_previous_period": prev_total,
+            "simulations_delta_pct": _delta_pct(total, prev_total),
+        },
+        "outcomes": outcomes,
+        "outcomes_pct": {k: _pct(v, total) for k, v in outcomes.items()},
+        "conversion_rate_pct": conversion_rate,
+        "risk_distribution": risk,
+        "confidence_distribution": confidence,
+        "home_readiness_distribution": home_readiness,
+        "averages": {
+            "avg_risk_score": avg_risk_score,
+            "avg_risk_band": avg_risk_band,
+            "avg_confidence": avg_confidence,
+            "avg_home_score": avg_home_score,
+        },
+        "weekly_pressure": weeks,
+        "weekly_spikes": spikes,
+        "out_of_hours": {
+            "count": out_of_hours,
+            "pct": _pct(out_of_hours, total),
+        },
+        "privacy_notice": (
+            "Aggregate analytics only. Derived purely from audit metadata — no referral narrative, "
+            "no initials, no PII. Useful for RI / Ofsted leadership oversight."
+        ),
+    }
 
 
 @api_router.post("/placement-intelligence/simulate/save")

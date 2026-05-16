@@ -23,13 +23,14 @@ const CHILDREN = {
   // Compliance vocabulary
   complianceFramework: "Ofsted",
   complianceTabs: [
-    { id: "ofsted",      label: "Ofsted Readiness",         icon: "BadgeCheck", minTier: 0 },
-    { id: "reg44",       label: "Regulation 44",            icon: "ShieldCheck", minTier: 1 },
-    { id: "safeguarding",label: "Safeguarding Intelligence",icon: "AlertTriangle", minTier: 1 },
-    { id: "simulation",  label: "Inspection Simulation",    icon: "Sparkles", minTier: 2 },
-    { id: "patterns",    label: "Cross-Module Intelligence",icon: "Network", minTier: 1 },
-    { id: "audit",       label: "Audit Log",                icon: "History", minTier: 2 },
-    { id: "reports",     label: "AI Reports",               icon: "FileText", minTier: 3 },
+    { id: "ofsted",            label: "Ofsted Readiness",         icon: "BadgeCheck", minTier: 0 },
+    { id: "reg44",             label: "Regulation 44",            icon: "ShieldCheck", minTier: 1 },
+    { id: "safeguarding",      label: "Safeguarding Intelligence",icon: "AlertTriangle", minTier: 1 },
+    { id: "simulation",        label: "Inspection Simulation",    icon: "Sparkles", minTier: 2 },
+    { id: "patterns",          label: "Cross-Module Intelligence",icon: "Network", minTier: 1 },
+    { id: "placement_analytics", label: "Placement Analytics",    icon: "BarChart3", minTier: 3 },
+    { id: "audit",             label: "Audit Log",                icon: "History", minTier: 2 },
+    { id: "reports",           label: "AI Reports",               icon: "FileText", minTier: 3 },
   ],
   // Theme
   accent: "#0F2A47",
