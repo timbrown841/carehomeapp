@@ -116,7 +116,8 @@ def test_la_breakdown_top_10_cap(manager):
 
 def test_la_conversion_math(manager, admin):
     """Convert two of three sims for a unique LA and verify conversion_rate matches."""
-    unique_la = "ReadingTest"
+    import random, string
+    unique_la = "Test" + "".join(random.choices(string.ascii_letters, k=10))
     ids = [_seed(manager, unique_la) for _ in range(3)]
     # Convert two via /simulate/save
     converted_referral_ids: list[str] = []
