@@ -1,0 +1,36 @@
+{
+  "summary": "Iteration 41c — Recent Simulations log inside Referrals & Matching. Backend: 14/14 tests in test_iteration41c.py PASS (RBAC on list/patch/delete, simulate now returns simulation_id, simulation row written with status=under_review, privacy boundary holds — unique narrative token NEVER leaks, forbidden keys absent, privacy_notice present, PATCH status+note, invalid status 400, unknown id 404, manager_note >400 chars rejected 422, /simulate/save?simulation_id=X links + marks converted, /simulate/save w/o sim id still creates referral, list respects limit + descending ran_at order). Regression on iter41 + iter41b GREEN (25/25). Frontend manager flow end-to-end works — /children?tab=referrals shows 'Recent simulations' panel BELOW active referrals, privacy notice visible, 10 rows render with confidence pills (Manageable with safeguards / Strong match / Elevated placement risk) + status pills (Under review / More info requested / Converted to referral) + metadata (timestamp, manager name, source paste/upload_pdf/upload_txt/quick, score, risk band). Click row → edit modal opens, change status to 'more_info_requested' + rationale note 'Need CAMHS summary before deciding' → save → toast 'Simulation log updated.' → row reflects new status and shows note. Convert flow: ran simulator with 'ZX aged 13 male' narrative → saved as formal referral → returned to /children?tab=referrals → simulation row now shows 'Converted to referral' pill + '→ Linked to formal referral' label. Adult Services hub (/adults) does NOT render simulations panel (count=0) and does NOT expose a Referrals tab — sector boundary intact. Staff RBAC graceful — simulations panel renders empty state 'No simulations recorded yet…' with no JS crash; backend 403 handled gracefully.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration41c.py",
+    "/app/test_reports/pytest/iter41c_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py is now ~9000+ lines and growing — placement_intelligence endpoints (simulate, simulations list/patch/delete, simulate/save) should ideally be extracted into a dedicated router module along with the rest of placement_intelligence. Not a blocker.",
+    "Good: privacy boundary verified explicitly — a unique narrative token inserted into raw_text does NOT appear anywhere in the GET /simulations response text, and forbidden keys (raw_text, needs, known_associates, reason_for_referral, social_worker_name, social_worker_contact, file_name, extracted, police_involvement_history, safeguarding_history) are confirmed absent from log items. This is exactly the right shape for an audit-only log.",
+    "Good: pydantic max_length=400 on manager_note correctly returns 422 on overflow.",
+    "Good: convert link is bidirectional — /simulate/save?simulation_id=X both creates the referral and updates the source simulation row to status='converted' with converted_referral_id set to the new referral's id. UI surfaces this with a 'Linked to formal referral' label.",
+    "Good: staff/senior 403 handled gracefully on the frontend — panel shows empty state instead of crashing. Active referrals card on staff view shows 'Could not load referrals.' toast which is acceptable but could be silenced for RBAC-403 specifically to make the UX cleaner (minor polish, not a defect).",
+    "Good: privacy_notice string in list response gives RI/Ofsted reviewers explicit confidence that the audit log is metadata-only — useful when this evidence is exported."
+  ],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "100% (14/14 iter41c + 14/14 iter41 + 11/11 iter41b regression = 39/39 PASS)",
+    "frontend": "100% (all required data-testids present and verified end-to-end: recent-simulations-panel, sim-log-privacy-notice, simulation-row-*, simulation-edit-modal, sim-edit-status, sim-edit-note, sim-edit-save; convert flow links simulation to referral; adults sector boundary holds; staff RBAC graceful)"
+  },
+  "test_credentials": "manager@care.local / Manager@123, admin@care.local / Admin@123, senior@care.local / Senior@123, staff@care.local / Staff@123 — all confirmed working.",
+  "seed_data_creation": "Test runs created ~10+ simulation_logs rows + 2 referrals via convert flow tests. Referrals were cleaned up via admin DELETE inside the test bodies. Simulation log rows are intentionally retained as audit history (consistent with the log's purpose).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iter 41c is fully green. Recent Simulations panel lives at /children?tab=referrals BELOW the active referrals card. Key testids: recent-simulations-panel, sim-log-privacy-notice, simulation-row-{id}, simulation-edit-modal, sim-edit-status (status dropdown: under_review|more_info_requested|not_progressed|converted), sim-edit-note (textarea, max 400 chars), sim-edit-save. POST /api/placement-intelligence/simulate now returns simulation_id in response (required for convert linkage). POST /api/placement-intelligence/simulate/save?simulation_id=X links the new referral to the source simulation and marks the simulation row as status='converted'. GET /api/placement-intelligence/simulations returns {items, privacy_notice, limit}. RBAC: list/patch manager+admin, delete admin only, staff/senior get 403 — frontend handles 403 by showing empty state (no crash). Adult Services hub (/adults) deliberately omits the simulations panel and referrals tab (sector boundary). Backend tests: cd /app && export REACT_APP_BACKEND_URL=$(grep REACT_APP_BACKEND_URL frontend/.env | cut -d= -f2) && pytest backend/tests/test_iteration41c.py -v.",
+  "rca_of_the_issue": "No issues to RCA — all 14 backend tests pass, regression on iter41 + iter41b is GREEN, every frontend flow (panel render, privacy notice, row pills, edit modal patch, convert linkage label, adult sector boundary, staff RBAC graceful) behaves exactly as specified."
+}

@@ -99,32 +99,43 @@ export default function ReferralsMatching() {
   const [creating, setCreating] = useState(false);
   const [simulating, setSimulating] = useState(false);
   const [seedFromSim, setSeedFromSim] = useState(null);
+  const [seedSimId, setSeedSimId] = useState(null);
+  const [listKey, setListKey] = useState(0);
+  const reloadList = () => setListKey((k) => k + 1);
 
   return (
     <div className="space-y-5" data-testid="referrals-matching-root">
       {!openId && !creating && !simulating && (
         <ReferralsList
+          key={listKey}
           onOpen={setOpenId}
-          onNew={() => { setSeedFromSim(null); setCreating(true); }}
+          onNew={() => { setSeedFromSim(null); setSeedSimId(null); setCreating(true); }}
           onSimulate={() => setSimulating(true)}
         />
       )}
       {simulating && (
         <Simulator
-          onClose={() => setSimulating(false)}
-          onSaveAsReferral={(seed) => { setSimulating(false); setSeedFromSim(seed); setCreating(true); }}
+          onClose={() => { setSimulating(false); reloadList(); }}
+          onSaveAsReferral={(seed, simId) => {
+            setSimulating(false); setSeedFromSim(seed); setSeedSimId(simId); setCreating(true);
+          }}
         />
       )}
       {creating && (
         <ReferralEditor
           seed={seedFromSim}
-          onClose={(newId) => { setCreating(false); setSeedFromSim(null); if (newId) setOpenId(newId); }}
+          fromSimulationId={seedSimId}
+          onClose={(newId) => {
+            setCreating(false); setSeedFromSim(null); setSeedSimId(null);
+            reloadList();
+            if (newId) setOpenId(newId);
+          }}
         />
       )}
       {openId && (
         <ReferralDetail
           referralId={openId}
-          onClose={() => setOpenId(null)}
+          onClose={() => { setOpenId(null); reloadList(); }}
         />
       )}
     </div>
@@ -199,6 +210,8 @@ function ReferralsList({ onOpen, onNew, onSimulate }) {
           </ul>
         )}
       </div>
+
+      <RecentSimulationsPanel />
     </>
   );
 }
@@ -369,7 +382,7 @@ const BLANK = {
   group_impact_notes: "",
 };
 
-function ReferralEditor({ onClose, seed }) {
+function ReferralEditor({ onClose, seed, fromSimulationId }) {
   const [form, setForm] = useState(() => {
     if (!seed) return BLANK;
     const base = { ...BLANK };
@@ -413,8 +426,13 @@ function ReferralEditor({ onClose, seed }) {
           .split(",").map((s) => s.trim()).filter(Boolean),
       };
       delete payload.known_associates_raw;
-      const r = await api.post("/referrals", payload);
-      toast.success("Referral created — running matching analysis.");
+      const endpoint = fromSimulationId
+        ? `/placement-intelligence/simulate/save?simulation_id=${encodeURIComponent(fromSimulationId)}`
+        : "/referrals";
+      const r = await api.post(endpoint, payload);
+      toast.success(fromSimulationId
+        ? "Referral created from simulation — analysis updated."
+        : "Referral created — running matching analysis.");
       onClose(r.data.id);
     } catch (err) {
       toast.error(err?.response?.data?.detail || "Could not create referral.");
@@ -1038,7 +1056,7 @@ function Simulator({ onClose, onSaveAsReferral }) {
 
   const saveAsReferral = () => {
     if (!result?.extracted) return;
-    onSaveAsReferral(result.extracted);
+    onSaveAsReferral(result.extracted, result.simulation_id);
   };
 
   if (result) {
@@ -1339,6 +1357,223 @@ function SimulationResult({ result, onBack, onClose, onSaveAsReferral, showFacto
       </div>
 
       {showFactor && <FactorModal factor={showFactor} onClose={() => setShowFactor(null)} />}
+    </div>
+  );
+}
+
+
+/* ------------------------------------------------------------------ */
+/* Recent simulations log — audit trail (metadata only)                */
+/* ------------------------------------------------------------------ */
+const SIM_STATUS_META = {
+  under_review:         { label: "Under review",          fg: "#5D6068", bg: "#5D606818" },
+  more_info_requested:  { label: "More info requested",   fg: "#B8772F", bg: "#B8772F18" },
+  converted:            { label: "Converted to referral", fg: "#2F6A3A", bg: "#2F6A3A18" },
+  not_progressed:       { label: "Not progressed",        fg: "#A8273A", bg: "#A8273A18" },
+};
+
+function fmtTimestamp(iso) {
+  if (!iso) return "—";
+  try {
+    const d = new Date(iso);
+    return d.toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+  } catch { return iso.slice(0, 16).replace("T", " "); }
+}
+
+function RecentSimulationsPanel() {
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [openSim, setOpenSim] = useState(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const r = await api.get("/placement-intelligence/simulations?limit=10");
+      setItems(r.data?.items || []);
+    } catch (e) {
+      /* graceful — non-blocking section */
+    } finally { setLoading(false); }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  return (
+    <section className="bg-white border divider-soft rounded-2xl p-5" data-testid="recent-simulations-panel">
+      <div className="flex items-center justify-between gap-2 flex-wrap mb-3">
+        <div>
+          <div className="flex items-center gap-2">
+            <BookOpen size={14} className="text-[#0e3b4a]" />
+            <h2 className="text-lg font-semibold text-[#0F1115]">Recent simulations</h2>
+          </div>
+          <p className="text-[12px] text-[#5d6068] mt-0.5">
+            Placement decision audit history. <strong>Audit metadata only</strong> — referral narrative
+            and uploaded documents are never persisted unless converted to a formal referral.
+          </p>
+        </div>
+      </div>
+
+      <div className="bg-stone-50 rounded-lg p-2.5 mb-3 flex items-start gap-2" data-testid="sim-log-privacy-notice">
+        <Lock size={12} className="text-stone-500 mt-0.5 shrink-0" />
+        <p className="text-[11px] text-stone-700">
+          Useful for RI oversight, Ofsted evidence and management accountability — without retaining sensitive content.
+        </p>
+      </div>
+
+      {loading ? (
+        <div className="flex items-center gap-2 text-stone-600 text-sm">
+          <Loader2 size={14} className="animate-spin" /> Loading…
+        </div>
+      ) : items.length === 0 ? (
+        <p className="text-sm text-stone-500" data-testid="recent-simulations-empty">
+          No simulations recorded yet. Use <em>Run match simulation</em> for rapid referral assessments.
+        </p>
+      ) : (
+        <ul className="divide-y divide-stone-200" data-testid="recent-simulations-list">
+          {items.map((s) => (
+            <SimulationRow key={s.id} sim={s} onOpen={() => setOpenSim(s)} />
+          ))}
+        </ul>
+      )}
+
+      {openSim && (
+        <SimulationEditModal
+          sim={openSim}
+          onClose={() => setOpenSim(null)}
+          onSaved={() => { setOpenSim(null); load(); }}
+        />
+      )}
+    </section>
+  );
+}
+
+function SimulationRow({ sim, onOpen }) {
+  const conf = CONFIDENCE[sim.matching_confidence] || CONFIDENCE.strong;
+  const status = SIM_STATUS_META[sim.status] || SIM_STATUS_META.under_review;
+  return (
+    <li>
+      <button
+        type="button"
+        onClick={onOpen}
+        data-testid={`simulation-row-${sim.id}`}
+        className="w-full text-left py-2.5 flex items-start gap-3 hover:bg-stone-50 px-2 rounded-lg transition-colors"
+      >
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="font-semibold text-[#0F1115] text-[13px]">{sim.yp_initials || "SIM"}</span>
+            <span className="text-[10px] uppercase tracking-wider font-bold px-1.5 py-0.5 rounded"
+              style={{ background: conf.bg, color: conf.fg }}>
+              {conf.label}
+            </span>
+            <span className="text-[10px] uppercase tracking-wider font-bold px-1.5 py-0.5 rounded"
+              style={{ background: status.bg, color: status.fg }}>
+              {status.label}
+            </span>
+          </div>
+          <div className="text-[11px] text-stone-600 mt-0.5">
+            {fmtTimestamp(sim.ran_at)} · {sim.ran_by_name} ·{" "}
+            <span className="uppercase tracking-wider">{sim.source}</span> ·{" "}
+            score {sim.score} · risk {sim.risk_band}
+          </div>
+          {sim.manager_note && (
+            <div className="text-[11px] text-[#0F1115] mt-0.5 italic truncate">&quot;{sim.manager_note}&quot;</div>
+          )}
+          {sim.converted_referral_id && (
+            <div className="text-[10px] text-[#2F6A3A] mt-0.5 font-semibold">
+              → Linked to formal referral
+            </div>
+          )}
+        </div>
+        <ChevronRight size={14} className="text-stone-400 mt-1" />
+      </button>
+    </li>
+  );
+}
+
+function SimulationEditModal({ sim, onClose, onSaved }) {
+  const [status, setStatus] = useState(sim.status || "under_review");
+  const [note, setNote] = useState(sim.manager_note || "");
+  const [saving, setSaving] = useState(false);
+  const conf = CONFIDENCE[sim.matching_confidence] || CONFIDENCE.strong;
+
+  const save = async (e) => {
+    e?.preventDefault();
+    setSaving(true);
+    try {
+      await api.patch(`/placement-intelligence/simulations/${sim.id}`, {
+        status, manager_note: note,
+      });
+      toast.success("Simulation log updated.");
+      onSaved();
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || "Could not update simulation.");
+    } finally { setSaving(false); }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-2 sm:p-4"
+      style={{ background: "rgba(11,14,22,0.6)", backdropFilter: "blur(4px)" }}
+      onClick={onClose}
+      data-testid="simulation-edit-modal">
+      <form onSubmit={save} className="bg-white rounded-t-2xl sm:rounded-2xl max-w-lg w-full max-h-[90vh] overflow-y-auto"
+        onClick={(e) => e.stopPropagation()}>
+        <div className="p-5 border-b divider-soft flex items-start justify-between gap-2">
+          <div>
+            <div className="text-[10px] font-bold uppercase tracking-wider text-stone-500">
+              {sim.yp_initials} · {fmtTimestamp(sim.ran_at)} · {sim.ran_by_name}
+            </div>
+            <h3 className="font-display font-semibold text-lg text-[#0F1115] mt-1">Simulation audit record</h3>
+            <div className="flex items-center gap-1.5 mt-1">
+              <span className="text-[10px] uppercase tracking-wider font-bold px-1.5 py-0.5 rounded"
+                style={{ background: conf.bg, color: conf.fg }}>
+                {conf.label}
+              </span>
+              <span className="text-[10px] uppercase tracking-wider text-stone-500">score {sim.score}</span>
+              <span className="text-[10px] uppercase tracking-wider text-stone-500">risk {sim.risk_band}</span>
+              <span className="text-[10px] uppercase tracking-wider text-stone-500">source {sim.source}</span>
+            </div>
+          </div>
+          <button type="button" onClick={onClose} className="p-1.5 rounded-md hover:bg-stone-100 text-stone-500"><X size={18} /></button>
+        </div>
+        <div className="p-5 space-y-3">
+          <Field label="Outcome status">
+            <Sel
+              v={status}
+              onChange={setStatus}
+              options={[
+                ["under_review", "Under review"],
+                ["more_info_requested", "More info requested"],
+                ["not_progressed", "Not progressed"],
+                ["converted", "Converted to formal referral"],
+              ]}
+              testid="sim-edit-status"
+            />
+          </Field>
+          <Field label="Manager rationale (optional, audit-only)">
+            <Txt v={note} onChange={setNote} rows={3}
+              placeholder='e.g. "Requested further safeguarding chronology" / "Not suitable due to current group dynamics" / "Awaiting CAMHS info"'
+              testid="sim-edit-note" />
+          </Field>
+          {sim.converted_referral_id && (
+            <div className="bg-[#2F6A3A14] rounded-lg p-2.5 text-[12px] text-[#0F1115]">
+              <span className="font-semibold">Linked referral:</span> {sim.converted_referral_id}
+            </div>
+          )}
+          <div className="bg-stone-50 rounded-lg p-3 flex items-start gap-2">
+            <Lock size={13} className="text-stone-500 mt-0.5 shrink-0" />
+            <p className="text-[11px] text-stone-600">
+              Only audit metadata is stored on simulations — no referral narrative, no uploaded documents,
+              no extracted free-text. Manager rationale notes are limited to 400 characters and are visible
+              to Manager+ only.
+            </p>
+          </div>
+        </div>
+        <div className="p-4 border-t divider-soft bg-stone-50 flex justify-end gap-2 sticky bottom-0">
+          <button type="button" onClick={onClose} className="text-sm px-3 py-2 rounded-lg hover:bg-white">Cancel</button>
+          <button type="submit" disabled={saving} data-testid="sim-edit-save"
+            className="text-sm font-semibold bg-[#0e3b4a] hover:bg-[#0a2e3a] text-white px-3 py-2 rounded-lg disabled:opacity-60">
+            {saving ? "Saving…" : "Save audit update"}
+          </button>
+        </div>
+      </form>
     </div>
   );
 }

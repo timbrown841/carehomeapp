@@ -9131,18 +9131,58 @@ async def simulate_match(
 
     analysis = await build_match_analysis(db, merged)
 
+    # ---- Lightweight simulation log (audit metadata only — never the narrative) ----
+    score = int(analysis.get("score") or 0)
+    if score >= 55:
+        risk_band = "critical"
+    elif score >= 35:
+        risk_band = "high"
+    elif score >= 15:
+        risk_band = "medium"
+    else:
+        risk_band = "low"
+
+    source_kind = (
+        "upload_pdf" if source_meta.get("file_kind") == "pdf"
+        else "upload_txt" if source_meta.get("file_kind") == "txt"
+        else "paste" if source_meta.get("used_text")
+        else "quick"
+    )
+
+    sim_log = {
+        "id": str(uuid.uuid4()),
+        "ran_at": now_iso(),
+        "ran_by_id": user["id"],
+        "ran_by_name": user["name"],
+        "yp_initials": (merged.get("yp_initials") or "SIM")[:8],
+        "sector": "children",
+        "matching_confidence": analysis.get("matching_confidence"),
+        "matching_confidence_label": analysis.get("matching_confidence_label"),
+        "score": score,
+        "risk_band": risk_band,
+        "status": "under_review",       # under_review | converted | more_info_requested | not_progressed
+        "converted_referral_id": None,
+        "source": source_kind,
+        "manager_note": None,
+        # NOTE: We deliberately do NOT store raw_text, file content, narrative,
+        # needs list, known associates, reason or any sensitive referral content.
+    }
+    await db.simulation_logs.insert_one(sim_log)
+    sim_log.pop("_id", None)
+
     await record_audit(
         db, actor=user, action="placement_simulation_run",
-        object_type="simulation", object_id="-",
-        summary=f"Non-binding match simulation run "
-                f"({'+'.join(k for k, v in source_meta.items() if v is True) or 'manual'})",
+        object_type="simulation", object_id=sim_log["id"],
+        summary=f"Non-binding match simulation ({source_kind}, {analysis.get('matching_confidence')})",
     )
 
     return {
         "is_simulation": True,
+        "simulation_id": sim_log["id"],
         "non_binding_notice":
             "NON-BINDING SIMULATION — management judgement required. "
-            "Nothing has been saved. Use this to inform discussion only.",
+            "Only lightweight audit metadata is stored. The referral narrative, "
+            "uploaded documents and detailed extracted content are not persisted.",
         "extracted": merged,
         "extraction_evidence": extraction.get("evidence", []),
         "raw_text_length": extraction.get("raw_text_length", 0),
@@ -9151,10 +9191,109 @@ async def simulate_match(
     }
 
 
+# ---------- Recent simulations log ----------
+
+_SIM_STATUSES = {"under_review", "converted", "more_info_requested", "not_progressed"}
+
+
+class SimulationLogPatchIn(BaseModel):
+    status: Optional[str] = None
+    manager_note: Optional[str] = Field(None, max_length=400)
+
+
+@api_router.get("/placement-intelligence/simulations")
+async def list_simulations(
+    limit: int = 10,
+    _: dict = Depends(require_tier(3)),
+):
+    """Recent simulation history — manager+ only.
+
+    Returns audit metadata only. No referral narrative is ever stored or returned.
+    """
+    limit = max(1, min(int(limit or 10), 100))
+    items = await db.simulation_logs.find({}, {"_id": 0}).sort("ran_at", -1).to_list(limit)
+    return {
+        "items": items,
+        "privacy_notice": (
+            "This log contains audit metadata only — never the referral narrative, "
+            "uploaded documents or extracted free-text content. If a manager converted "
+            "a simulation into a formal referral, that record lives in the normal "
+            "referrals workflow with its own audit trail."
+        ),
+    }
+
+
+@api_router.patch("/placement-intelligence/simulations/{sim_id}")
+async def patch_simulation(sim_id: str, payload: SimulationLogPatchIn, user: dict = Depends(require_tier(3))):
+    existing = await db.simulation_logs.find_one({"id": sim_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(404, "Simulation not found")
+    update: dict = {}
+    if payload.status is not None:
+        if payload.status not in _SIM_STATUSES:
+            raise HTTPException(400, f"Invalid status. Must be one of {sorted(_SIM_STATUSES)}")
+        update["status"] = payload.status
+    if payload.manager_note is not None:
+        update["manager_note"] = payload.manager_note.strip() or None
+    if not update:
+        return existing
+    update["updated_at"] = now_iso()
+    update["updated_by_id"] = user["id"]
+    update["updated_by_name"] = user["name"]
+    await db.simulation_logs.update_one({"id": sim_id}, {"$set": update})
+    await record_audit(
+        db, actor=user, action="placement_simulation_update",
+        object_type="simulation", object_id=sim_id,
+        summary=f"Simulation log updated: {update.get('status') or 'note'}",
+    )
+    return {**existing, **update}
+
+
+@api_router.delete("/placement-intelligence/simulations/{sim_id}")
+async def delete_simulation(sim_id: str, user: dict = Depends(require_tier(4))):
+    existing = await db.simulation_logs.find_one({"id": sim_id}, {"_id": 0, "id": 1})
+    if not existing:
+        raise HTTPException(404, "Simulation not found")
+    await db.simulation_logs.delete_one({"id": sim_id})
+    await record_audit(
+        db, actor=user, action="placement_simulation_delete",
+        object_type="simulation", object_id=sim_id,
+        summary="Simulation log deleted by admin",
+    )
+    return {"status": "deleted"}
+
+
 @api_router.post("/placement-intelligence/simulate/save")
-async def save_simulation_as_referral(payload: ReferralIn, user: dict = Depends(require_tier(3))):
-    """Convert a simulator session into a formal referral — uses the standard create flow."""
-    return await create_referral(payload, user)
+async def save_simulation_as_referral(
+    payload: ReferralIn,
+    simulation_id: Optional[str] = None,
+    user: dict = Depends(require_tier(3)),
+):
+    """Convert a simulator session into a formal referral.
+
+    If `simulation_id` is provided, links the simulation log to the new referral
+    and marks the simulation as 'converted' for audit trail purposes.
+    """
+    referral = await create_referral(payload, user)
+    if simulation_id:
+        sim = await db.simulation_logs.find_one({"id": simulation_id}, {"_id": 0, "id": 1})
+        if sim:
+            await db.simulation_logs.update_one(
+                {"id": simulation_id},
+                {"$set": {
+                    "status": "converted",
+                    "converted_referral_id": referral["id"],
+                    "converted_at": now_iso(),
+                    "converted_by_id": user["id"],
+                    "converted_by_name": user["name"],
+                }},
+            )
+            await record_audit(
+                db, actor=user, action="placement_simulation_converted",
+                object_type="simulation", object_id=simulation_id,
+                summary=f"Simulation converted to referral {referral['id']}",
+            )
+    return referral
 
 
 app.include_router(api_router)
