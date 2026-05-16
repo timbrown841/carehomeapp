@@ -97,15 +97,28 @@ const DOMAIN_LABEL = {
 export default function ReferralsMatching() {
   const [openId, setOpenId] = useState(null);
   const [creating, setCreating] = useState(false);
+  const [simulating, setSimulating] = useState(false);
+  const [seedFromSim, setSeedFromSim] = useState(null);
 
   return (
     <div className="space-y-5" data-testid="referrals-matching-root">
-      {!openId && !creating && (
-        <ReferralsList onOpen={setOpenId} onNew={() => setCreating(true)} />
+      {!openId && !creating && !simulating && (
+        <ReferralsList
+          onOpen={setOpenId}
+          onNew={() => { setSeedFromSim(null); setCreating(true); }}
+          onSimulate={() => setSimulating(true)}
+        />
+      )}
+      {simulating && (
+        <Simulator
+          onClose={() => setSimulating(false)}
+          onSaveAsReferral={(seed) => { setSimulating(false); setSeedFromSim(seed); setCreating(true); }}
+        />
       )}
       {creating && (
         <ReferralEditor
-          onClose={(newId) => { setCreating(false); if (newId) setOpenId(newId); }}
+          seed={seedFromSim}
+          onClose={(newId) => { setCreating(false); setSeedFromSim(null); if (newId) setOpenId(newId); }}
         />
       )}
       {openId && (
@@ -121,7 +134,7 @@ export default function ReferralsMatching() {
 /* ------------------------------------------------------------------ */
 /* List view — referrals + always-on Home Readiness panel              */
 /* ------------------------------------------------------------------ */
-function ReferralsList({ onOpen, onNew }) {
+function ReferralsList({ onOpen, onNew, onSimulate }) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -150,14 +163,24 @@ function ReferralsList({ onOpen, onNew }) {
               Placement intelligence supports — never replaces — manager judgement.
             </p>
           </div>
-          <button
-            type="button"
-            onClick={onNew}
-            data-testid="referral-new-btn"
-            className="inline-flex items-center gap-1.5 text-sm font-semibold bg-[#0e3b4a] hover:bg-[#0a2e3a] text-white px-3 py-2 rounded-lg"
-          >
-            <Plus size={14} /> New referral
-          </button>
+          <div className="flex gap-2 flex-wrap">
+            <button
+              type="button"
+              onClick={onSimulate}
+              data-testid="simulator-open-btn"
+              className="inline-flex items-center gap-1.5 text-sm font-semibold bg-white border-2 border-[#0e3b4a] text-[#0e3b4a] hover:bg-[#0e3b4a]/5 px-3 py-2 rounded-lg"
+            >
+              <Sparkles size={14} /> Run match simulation
+            </button>
+            <button
+              type="button"
+              onClick={onNew}
+              data-testid="referral-new-btn"
+              className="inline-flex items-center gap-1.5 text-sm font-semibold bg-[#0e3b4a] hover:bg-[#0a2e3a] text-white px-3 py-2 rounded-lg"
+            >
+              <Plus size={14} /> New referral
+            </button>
+          </div>
         </div>
 
         {loading ? (
@@ -346,8 +369,19 @@ const BLANK = {
   group_impact_notes: "",
 };
 
-function ReferralEditor({ onClose }) {
-  const [form, setForm] = useState(BLANK);
+function ReferralEditor({ onClose, seed }) {
+  const [form, setForm] = useState(() => {
+    if (!seed) return BLANK;
+    const base = { ...BLANK };
+    for (const [k, v] of Object.entries(seed)) {
+      if (k === "known_associates" && Array.isArray(v)) {
+        base.known_associates_raw = v.join(", ");
+      } else if (k in base) {
+        base[k] = v;
+      }
+    }
+    return base;
+  });
   const [saving, setSaving] = useState(false);
 
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
@@ -937,3 +971,374 @@ function ChipPicker({ options, value, onToggle, testidPrefix }) {
   );
 }
 function ListChecks() { return <Heart size={16} className="text-[#0e3b4a]" />; }
+
+
+/* ------------------------------------------------------------------ */
+/* Instant Match Simulator                                             */
+/* ------------------------------------------------------------------ */
+function Simulator({ onClose, onSaveAsReferral }) {
+  const [mode, setMode] = useState("paste"); // paste | upload | quick
+  const [rawText, setRawText] = useState("");
+  const [file, setFile] = useState(null);
+  const [quick, setQuick] = useState({
+    yp_initials: "", age: "", gender: "",
+    urgency_level: "", legal_status: "",
+    needs: [], known_associates_raw: "",
+    risk_to_self: "", absconding_risk: "", exploitation_risk: "",
+    bed_available: null,
+  });
+  const [running, setRunning] = useState(false);
+  const [result, setResult] = useState(null);
+  const [showFactor, setShowFactor] = useState(null);
+
+  const toggleNeed = (v) => {
+    setQuick((q) => {
+      const s = new Set(q.needs || []);
+      if (s.has(v)) s.delete(v); else s.add(v);
+      return { ...q, needs: [...s] };
+    });
+  };
+
+  const run = async () => {
+    setRunning(true); setResult(null);
+    try {
+      const fd = new FormData();
+      if (mode === "paste" && rawText.trim()) {
+        fd.append("raw_text", rawText);
+      } else if (mode === "upload" && file) {
+        fd.append("file", file);
+        if (rawText.trim()) fd.append("raw_text", rawText);
+      } else if (mode === "quick") {
+        // For quick mode, send overrides only
+        const overrides = {
+          ...quick,
+          age: quick.age === "" ? null : Number(quick.age),
+          known_associates: (quick.known_associates_raw || "")
+            .split(",").map((s) => s.trim()).filter(Boolean),
+        };
+        delete overrides.known_associates_raw;
+        for (const k of Object.keys(overrides)) {
+          if (overrides[k] === "" || overrides[k] === null || (Array.isArray(overrides[k]) && overrides[k].length === 0)) {
+            delete overrides[k];
+          }
+        }
+        fd.append("overrides_json", JSON.stringify(overrides));
+      } else {
+        toast.error("Add some referral information first.");
+        setRunning(false); return;
+      }
+      const r = await api.post("/placement-intelligence/simulate", fd, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+      setResult(r.data);
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || "Could not run simulation.");
+    } finally { setRunning(false); }
+  };
+
+  const saveAsReferral = () => {
+    if (!result?.extracted) return;
+    onSaveAsReferral(result.extracted);
+  };
+
+  if (result) {
+    return <SimulationResult result={result} onBack={() => setResult(null)} onClose={onClose}
+                              onSaveAsReferral={saveAsReferral} showFactor={showFactor} setShowFactor={setShowFactor} />;
+  }
+
+  return (
+    <div className="space-y-4" data-testid="simulator">
+      {/* Always-on non-binding banner */}
+      <div className="rounded-2xl p-4 border-2"
+        style={{ borderColor: "#B8772F", background: "#B8772F12" }}
+        data-testid="simulator-non-binding-notice">
+        <div className="flex items-start gap-2.5">
+          <AlertTriangle size={16} className="text-[#B8772F] mt-0.5 shrink-0" />
+          <div>
+            <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#B8772F]">Non-binding simulation</div>
+            <p className="text-[12px] text-[#0F1115] mt-0.5">
+              This is a live decision-support sandbox. Nothing is saved. Manager judgement is required for any actual placement decision.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <h2 className="text-lg font-semibold text-[#0F1115]">Run match simulation</h2>
+        <button type="button" onClick={onClose} className="text-sm text-stone-600 hover:text-stone-900">
+          ← Back to referrals
+        </button>
+      </div>
+
+      <div className="bg-white border divider-soft rounded-2xl p-5">
+        <div className="flex gap-1.5 mb-4 border-b divider-soft" data-testid="simulator-mode-tabs">
+          {[
+            ["paste", "Paste text / email", null],
+            ["upload", "Upload PDF / TXT", null],
+            ["quick", "Quick manual entry", null],
+          ].map(([k, l]) => (
+            <button key={k} type="button" onClick={() => setMode(k)}
+              data-testid={`sim-mode-${k}`}
+              className={`text-[12px] font-semibold px-3 py-2 border-b-2 transition-colors ${
+                mode === k ? "border-[#0e3b4a] text-[#0e3b4a]" : "border-transparent text-stone-500 hover:text-stone-800"
+              }`}>{l}</button>
+          ))}
+        </div>
+
+        {mode === "paste" && (
+          <div className="space-y-2">
+            <Field label="Paste referral text, email body, or phone-call notes">
+              <textarea value={rawText} onChange={(e) => setRawText(e.target.value)} rows={10}
+                data-testid="sim-paste-textarea"
+                className="w-full text-[13px] border divider-soft rounded-lg px-2.5 py-2 focus:outline-none focus:ring-2 focus:ring-[#0e3b4a]/30 font-mono"
+                placeholder="e.g.&#10;Re: AB, aged 14 male. Local Authority: Camden. Social worker: Sara Khan. URGENT placement needed. History of CSE concerns and grooming. High exploitation risk. Repeat missing episodes. Known associates: JM, AT. S20." />
+            </Field>
+            <p className="text-[11px] text-stone-500">
+              Safelyn detects needs, risks, urgency, legal status and associates using deterministic keyword analysis — no AI inference.
+            </p>
+          </div>
+        )}
+
+        {mode === "upload" && (
+          <div className="space-y-3">
+            <Field label="Upload referral PDF or text file (max 10MB)">
+              <input type="file" accept=".pdf,.txt,application/pdf,text/plain"
+                onChange={(e) => setFile(e.target.files?.[0] || null)}
+                data-testid="sim-file-input"
+                className="text-[13px]" />
+            </Field>
+            {file && (
+              <p className="text-[12px] text-stone-600">Ready: <span className="font-semibold">{file.name}</span> ({Math.round(file.size / 1024)} KB)</p>
+            )}
+            <Field label="Optional — also paste extra context">
+              <textarea value={rawText} onChange={(e) => setRawText(e.target.value)} rows={4}
+                data-testid="sim-upload-textarea"
+                className="w-full text-[13px] border divider-soft rounded-lg px-2.5 py-2 focus:outline-none focus:ring-2 focus:ring-[#0e3b4a]/30"
+                placeholder="Any phone-call notes that aren't in the file…" />
+            </Field>
+          </div>
+        )}
+
+        {mode === "quick" && (
+          <div className="space-y-3" data-testid="sim-quick-form">
+            <Grid>
+              <Field label="Initials"><Inp v={quick.yp_initials} onChange={(v) => setQuick({ ...quick, yp_initials: v })} testid="sim-q-initials" /></Field>
+              <Field label="Age"><Inp type="number" v={quick.age} onChange={(v) => setQuick({ ...quick, age: v })} testid="sim-q-age" /></Field>
+              <Field label="Gender"><Inp v={quick.gender} onChange={(v) => setQuick({ ...quick, gender: v })} /></Field>
+              <Field label="Urgency"><Sel v={quick.urgency_level} onChange={(v) => setQuick({ ...quick, urgency_level: v })} options={URGENCY} /></Field>
+              <Field label="Legal status"><Inp v={quick.legal_status} onChange={(v) => setQuick({ ...quick, legal_status: v })} /></Field>
+              <Field label="Bed available?">
+                <Sel
+                  v={quick.bed_available === null || quick.bed_available === undefined ? "" : String(quick.bed_available)}
+                  onChange={(v) => setQuick({ ...quick, bed_available: v === "" ? null : v === "true" })}
+                  options={[["true", "Yes"], ["false", "No"]]}
+                />
+              </Field>
+            </Grid>
+            <Field label="Needs (chip-pick)">
+              <ChipPicker options={NEED_OPTIONS} value={quick.needs} onToggle={toggleNeed} testidPrefix="sim-q-need" />
+            </Field>
+            <Grid>
+              <Field label="Risk to self"><Sel v={quick.risk_to_self} onChange={(v) => setQuick({ ...quick, risk_to_self: v })} options={RISK_LEVELS} /></Field>
+              <Field label="Absconding risk"><Sel v={quick.absconding_risk} onChange={(v) => setQuick({ ...quick, absconding_risk: v })} options={RISK_LEVELS} /></Field>
+              <Field label="Exploitation risk"><Sel v={quick.exploitation_risk} onChange={(v) => setQuick({ ...quick, exploitation_risk: v })} options={RISK_LEVELS} /></Field>
+            </Grid>
+            <Field label="Known associates (comma-separated)">
+              <Inp v={quick.known_associates_raw} onChange={(v) => setQuick({ ...quick, known_associates_raw: v })} placeholder="JM, AT" />
+            </Field>
+          </div>
+        )}
+
+        <div className="flex justify-end gap-2 mt-4 pt-3 border-t divider-soft">
+          <button type="button" onClick={onClose} className="text-sm px-3 py-2 rounded-lg hover:bg-stone-100">Cancel</button>
+          <button type="button" onClick={run} disabled={running}
+            data-testid="sim-run-btn"
+            className="text-sm font-semibold bg-[#0e3b4a] hover:bg-[#0a2e3a] text-white px-4 py-2 rounded-lg disabled:opacity-60 inline-flex items-center gap-1.5">
+            {running ? <><Loader2 size={14} className="animate-spin" /> Analysing…</> : <><Sparkles size={14} /> Run simulation</>}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SimulationResult({ result, onBack, onClose, onSaveAsReferral, showFactor, setShowFactor }) {
+  const { extracted, analysis, extraction_evidence: evidence = [], source_meta } = result;
+  const conf = CONFIDENCE[analysis.matching_confidence] || CONFIDENCE.strong;
+  const warnings = analysis.group_warnings || [];
+
+  return (
+    <div className="space-y-4" data-testid="simulation-result">
+      <div className="rounded-2xl p-4 border-2"
+        style={{ borderColor: "#B8772F", background: "#B8772F12" }}
+        data-testid="simulator-non-binding-notice">
+        <div className="flex items-start gap-2.5">
+          <AlertTriangle size={16} className="text-[#B8772F] mt-0.5 shrink-0" />
+          <div className="flex-1 min-w-0">
+            <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#B8772F]">Non-binding simulation</div>
+            <p className="text-[12px] text-[#0F1115] mt-0.5">{result.non_binding_notice}</p>
+          </div>
+        </div>
+      </div>
+
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <button type="button" onClick={onBack} className="text-sm text-stone-600 hover:text-stone-900">← Edit inputs</button>
+        <div className="flex gap-2">
+          <button type="button" onClick={onClose} className="text-sm text-stone-600 hover:text-stone-900 px-3 py-2">Close</button>
+          <button type="button" onClick={onSaveAsReferral} data-testid="sim-save-as-referral"
+            className="text-sm font-semibold bg-[#0e3b4a] hover:bg-[#0a2e3a] text-white px-3 py-2 rounded-lg inline-flex items-center gap-1.5">
+            <Plus size={14} /> Save as formal referral
+          </button>
+        </div>
+      </div>
+
+      {/* Confidence banner */}
+      <section className="rounded-2xl p-5 relative overflow-hidden"
+        style={{ background: `linear-gradient(135deg, ${conf.line} 0%, ${conf.line}dd 100%)`, color: "white" }}
+        data-testid="sim-confidence-banner">
+        <div className="flex items-start justify-between gap-3 flex-wrap">
+          <div>
+            <div className="text-[10px] font-bold uppercase tracking-[0.22em] text-white/70">Simulated matching confidence</div>
+            <h2 className="font-display font-semibold text-2xl mt-1" style={{ letterSpacing: "-0.02em" }}>
+              {conf.label}
+            </h2>
+            <p className="text-[12px] text-white/75 mt-1">
+              Score {analysis.score} · Deterministic · supports manager judgement
+            </p>
+          </div>
+          <span className="text-[11px] font-bold uppercase tracking-wider px-3 py-1.5 rounded-full"
+            style={{ background: "rgba(255,255,255,0.18)" }}>
+            SIMULATION
+          </span>
+        </div>
+      </section>
+
+      {/* Extracted preview */}
+      <section className="bg-white border divider-soft rounded-2xl p-5" data-testid="sim-extracted-preview">
+        <div className="flex items-center gap-2 mb-3">
+          <Info size={16} className="text-[#0e3b4a]" />
+          <h3 className="font-semibold text-[#0F1115] text-[15px]">What Safelyn detected</h3>
+          {source_meta?.file_kind && (
+            <span className="text-[10px] uppercase tracking-wider text-stone-500 ml-auto">
+              from {source_meta.file_kind} · {source_meta.extracted_chars} chars
+            </span>
+          )}
+        </div>
+        <div className="grid sm:grid-cols-2 gap-x-6 gap-y-1.5 text-[12px]">
+          {[
+            ["Initials", extracted.yp_initials],
+            ["Age", extracted.age],
+            ["Gender", extracted.gender],
+            ["Local authority", extracted.local_authority],
+            ["Social worker", extracted.social_worker_name],
+            ["Urgency", extracted.urgency_level],
+            ["Legal status", extracted.legal_status],
+            ["Bed available", extracted.bed_available === undefined ? null : (extracted.bed_available ? "yes" : "no")],
+          ].map(([l, v]) => (
+            <div key={l} className="flex">
+              <span className="font-semibold text-stone-500 uppercase tracking-wider text-[10px] w-28 shrink-0">{l}</span>
+              <span className="text-[#0F1115]">{v == null || v === "" ? "—" : String(v)}</span>
+            </div>
+          ))}
+        </div>
+        {extracted.needs?.length > 0 && (
+          <div className="mt-3">
+            <div className="text-[10px] font-bold uppercase tracking-wider text-stone-500 mb-1">Needs</div>
+            <div className="flex flex-wrap gap-1.5">
+              {extracted.needs.map((n) => (
+                <span key={n} className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-stone-100 text-[#0F1115] uppercase tracking-wider">
+                  {n.replace("_", " ")}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+        {evidence.length > 0 && (
+          <details className="mt-3">
+            <summary className="cursor-pointer text-[11px] font-bold uppercase tracking-wider text-stone-500">
+              Extraction evidence ({evidence.length})
+            </summary>
+            <ul className="mt-2 space-y-1" data-testid="sim-extraction-evidence">
+              {evidence.map((e, i) => (
+                <li key={i} className="text-[11px] text-stone-700 bg-stone-50 rounded p-1.5 flex items-center gap-2">
+                  <span className="text-[10px] uppercase tracking-wider font-semibold text-stone-500">{e.field}</span>
+                  <span className="text-[#0F1115] font-mono">{e.value}</span>
+                  <span className="text-stone-500">·</span>
+                  <span className="italic text-stone-600 truncate">"{e.matched_phrase}"</span>
+                </li>
+              ))}
+            </ul>
+          </details>
+        )}
+      </section>
+
+      {/* Live home readiness */}
+      <HomeReadinessSection data={analysis.home_readiness} />
+
+      {/* Group dynamics warnings */}
+      <section className="bg-white border divider-soft rounded-2xl p-5" data-testid="sim-group-dynamics">
+        <div className="flex items-center gap-2 mb-3">
+          <Users size={16} className="text-[#0e3b4a]" />
+          <h3 className="font-semibold text-[#0F1115] text-[15px]">Group dynamics & placement impact</h3>
+        </div>
+        {warnings.length === 0 ? (
+          <div className="rounded-lg bg-[#2F6A3A14] p-3 text-[13px] text-[#0F1115] flex items-center gap-2">
+            <CheckCircle2 size={14} className="text-[#2F6A3A]" /> No group dynamics concerns flagged.
+          </div>
+        ) : (
+          <ul className="space-y-2">
+            {warnings.map((w, i) => (
+              <li key={i} className="bg-stone-50 rounded-lg p-3 border-l-4"
+                style={{ borderLeftColor: w.weight >= 12 ? "#A8273A" : w.weight >= 6 ? "#B8772F" : "#5D6068" }}>
+                <button type="button" onClick={() => setShowFactor(w)}
+                  data-testid={`sim-warning-${w.domain}`}
+                  className="w-full text-left flex items-start gap-2">
+                  <AlertTriangle size={14} className="mt-0.5 shrink-0"
+                    style={{ color: w.weight >= 12 ? "#A8273A" : w.weight >= 6 ? "#B8772F" : "#5D6068" }} />
+                  <div className="flex-1 min-w-0">
+                    <div className="text-[10px] font-bold uppercase tracking-wider text-stone-500">
+                      {DOMAIN_LABEL[w.domain] || w.domain} · weight {w.weight}
+                    </div>
+                    <div className="text-[13px] text-[#0F1115] mt-0.5">{w.label}</div>
+                    {w.residents?.length > 0 && (
+                      <div className="text-[11px] text-stone-600 mt-1">
+                        Linked residents: {w.residents.map((r) => r.name).join(", ")}
+                      </div>
+                    )}
+                  </div>
+                  <ChevronRight size={14} className="text-stone-400 mt-1" />
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      {/* What would need to change */}
+      <section className="bg-white border divider-soft rounded-2xl p-5" data-testid="sim-what-needs-to-change">
+        <div className="flex items-center gap-2 mb-3">
+          <Heart size={16} className="text-[#0e3b4a]" />
+          <h3 className="font-semibold text-[#0F1115] text-[15px]">What would need to change</h3>
+        </div>
+        <ul className="space-y-1.5">
+          {(analysis.what_would_need_to_change || []).map((r, i) => (
+            <li key={i} className="bg-[#0e3b4a08] border-l-4 rounded-lg p-2.5 text-[13px] text-[#0F1115] leading-relaxed"
+              style={{ borderLeftColor: "#0e3b4a" }}>
+              {r}
+            </li>
+          ))}
+        </ul>
+      </section>
+
+      <div className="bg-stone-50 border divider-soft rounded-xl p-3 flex items-start gap-3" data-testid="sim-footer-reminder">
+        <Lock size={14} className="text-stone-500 mt-0.5 shrink-0" />
+        <p className="text-[12px] text-stone-700">
+          This was a non-binding simulation. Nothing has been saved. To proceed,
+          click <strong>Save as formal referral</strong> to record the matching assessment and decision in the audit trail.
+        </p>
+      </div>
+
+      {showFactor && <FactorModal factor={showFactor} onClose={() => setShowFactor(null)} />}
+    </div>
+  );
+}

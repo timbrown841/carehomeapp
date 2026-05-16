@@ -1,0 +1,37 @@
+{
+  "summary": "Iteration 41b — Instant Match Simulator fully verified. Backend: 13/13 tests in test_iteration41b.py PASS (RBAC manager+only, non-persistence, deterministic text extraction, overrides priority, unknown-needs filter, output shape, TXT upload, PDF upload, .exe rejection, >200KB rejection, save-as-referral flow). Regression on iter41 (14 tests) + iter40b (9 tests) GREEN. Frontend: manager flow end-to-end works — simulator opens, non-binding notice persistent, all 3 mode tabs present, paste-mode submission produces full result page (confidence banner, extracted preview, group dynamics, what-needs-to-change, footer reminder), warning click opens factor-modal, 'Save as formal referral' opens prefilled editor with all extracted values (AB / 14 / male / Sara Khan / Urgent / S20 / Missing+CSE / JM,AT / High exploitation+absconding risk). Staff RBAC graceful — button visible, API returns 403, no JS crash. Adult Services Hub does NOT expose simulator or referrals tab (sector boundary intact).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration41b.py",
+    "/app/test_reports/pytest/iter41b_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py is still 9000+ lines — the iter41b simulator endpoints (POST /api/placement-intelligence/simulate and /simulate/save) should ideally live in a dedicated router along with the rest of placement_intelligence. Same observation as iter41 — not a blocker.",
+    "Good: deterministic extraction verified (identical input → identical extracted dict and matching_confidence/score across runs).",
+    "Good: simulator never persists (before/after referrals count identical).",
+    "Good: overrides_json correctly take priority over text-extracted fields and unknown enum values are filtered out server-side.",
+    "Good: non_binding_notice and is_simulation=true are always present in the response, and the same notice is rendered as a persistent banner in both the input form and the result view.",
+    "Good: file_kind/used_file/source_meta surface upload provenance so the UI can show the user where extracted text came from.",
+    "Good: .exe and >200KB inputs cleanly rejected with 400 — proper input validation, no leaks to the engine."
+  ],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "100% (13/13 iter41b + 14/14 iter41 + 9/9 iter40b regression = 36/36 PASS)",
+    "frontend": "100% (every required data-testid found and verified end-to-end)"
+  },
+  "test_credentials": "manager@care.local / Manager@123, admin@care.local / Admin@123, senior@care.local / Senior@123, staff@care.local / Staff@123 — all confirmed working.",
+  "seed_data_creation": "test_save_simulation_as_referral creates a referral via /simulate/save then cleans it up via admin DELETE in the test body. No residual TEST data.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iter 41b is fully green. The simulator lives at /children?tab=referrals → 'Run match simulation' (data-testid='simulator-open-btn'). All simulator testids: simulator, simulator-non-binding-notice, simulator-mode-tabs, sim-mode-{paste|upload|quick}, sim-paste-textarea, sim-file-input, sim-upload-textarea, sim-quick-form, sim-q-initials, sim-q-age, sim-q-need-* (chips), sim-run-btn. Result page: sim-confidence-banner, sim-extracted-preview, sim-extraction-evidence, sim-group-dynamics, sim-warning-{domain}, sim-what-needs-to-change, sim-footer-reminder, sim-save-as-referral. Save-as-referral opens the standard referral-editor (ref-initials, referral-save-btn) prefilled from extracted+overrides. RBAC: manager/admin only on backend; staff/senior get 403. Adult sector (/adults) intentionally excludes the simulator and referrals tab. Backend tests must be run with REACT_APP_BACKEND_URL exported from frontend/.env (cd /app && export REACT_APP_BACKEND_URL=$(grep REACT_APP_BACKEND_URL frontend/.env | cut -d= -f2) && pytest backend/tests/test_iteration41b.py -v).",
+  "rca_of_the_issue": "No issues to RCA — all 13 backend tests, the frontend manager simulator flow, the staff RBAC graceful-degradation path, and the adult-services sector boundary all behave exactly as specified."
+}

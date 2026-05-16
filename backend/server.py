@@ -6,6 +6,7 @@ load_dotenv(ROOT_DIR / ".env")
 
 import os
 import io
+import json
 import uuid
 import logging
 import bcrypt
@@ -9031,6 +9032,129 @@ async def referral_pdf(rid: str, user: dict = Depends(require_tier(3))):
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{fname}"'},
     )
+
+
+# ---------- Instant Match Simulator ----------
+# Non-binding, on-demand matching intelligence. Accepts pasted text, PDF/TXT
+# upload, or manual overrides. NEVER persists a referral — purely transient.
+
+from referral_extractor import extract_referral_from_text, extract_pdf_text
+
+
+_SIM_TEXT_MAX = 200_000  # ~200KB of text
+_SIM_FILE_MAX = 10 * 1024 * 1024  # 10MB
+
+
+@api_router.post("/placement-intelligence/simulate")
+async def simulate_match(
+    raw_text: Optional[str] = Form(None),
+    overrides_json: Optional[str] = Form(None),
+    file: Optional[UploadFile] = File(None),
+    user: dict = Depends(require_tier(3)),
+):
+    """Non-binding live placement match simulator.
+
+    Inputs (any combination):
+      - raw_text: pasted referral text / email body / phone notes
+      - file:     PDF or TXT upload of a referral
+      - overrides_json: JSON object with manual quick fields that override extraction
+    Returns: { extracted, evidence, analysis, source_meta }.
+
+    NEVER persists data. Audit-logged as a simulation event so usage is visible.
+    """
+    combined_text = ""
+    source_meta = {"used_file": False, "used_text": False, "used_overrides": False,
+                   "file_name": None, "file_kind": None, "extracted_chars": 0}
+
+    if raw_text:
+        if len(raw_text) > _SIM_TEXT_MAX:
+            raise HTTPException(400, "raw_text too long (max 200KB)")
+        combined_text += raw_text.strip() + "\n"
+        source_meta["used_text"] = True
+
+    if file is not None:
+        contents = await file.read()
+        if len(contents) > _SIM_FILE_MAX:
+            raise HTTPException(400, "file too large (max 10MB)")
+        fname = (file.filename or "").lower()
+        if fname.endswith(".pdf") or (file.content_type or "").lower() == "application/pdf":
+            extracted = extract_pdf_text(contents)
+            source_meta["file_kind"] = "pdf"
+        elif fname.endswith(".txt") or (file.content_type or "").startswith("text/"):
+            try:
+                extracted = contents.decode("utf-8", errors="ignore")
+            except Exception:
+                extracted = ""
+            source_meta["file_kind"] = "txt"
+        else:
+            raise HTTPException(400, "Unsupported file type — upload PDF or TXT")
+        combined_text += "\n" + extracted
+        source_meta["used_file"] = True
+        source_meta["file_name"] = file.filename
+        source_meta["extracted_chars"] = len(extracted)
+
+    overrides: dict = {}
+    if overrides_json:
+        try:
+            overrides = json.loads(overrides_json)
+            if not isinstance(overrides, dict):
+                raise ValueError("overrides must be a JSON object")
+            source_meta["used_overrides"] = True
+        except Exception as e:
+            raise HTTPException(400, f"Invalid overrides_json: {e}")
+
+    extraction = extract_referral_from_text(combined_text)
+    extracted_obj = extraction.get("extracted", {}) or {}
+
+    # Merge overrides on top — manager's manual entry wins
+    merged: dict = {**extracted_obj}
+    if overrides:
+        # Whitelist of allowed override keys to avoid surprises
+        ALLOWED = {
+            "yp_initials", "yp_full_name", "age", "gender", "local_authority",
+            "social_worker_name", "social_worker_contact",
+            "urgency_level", "legal_status",
+            "reason_for_referral", "current_placement_situation",
+            "needs", "known_associates",
+            "risk_to_self", "risk_to_others", "risk_from_others",
+            "absconding_risk", "exploitation_risk", "peer_influence_risk",
+            "bed_available",
+        }
+        for k, v in overrides.items():
+            if k in ALLOWED and v not in (None, "", []):
+                merged[k] = v
+
+    # Ensure required fields for the engine
+    merged.setdefault("yp_initials", "SIM")
+    merged["needs"] = [n for n in (merged.get("needs") or []) if n in NEED_OPTIONS]
+    merged["known_associates"] = merged.get("known_associates") or []
+
+    analysis = await build_match_analysis(db, merged)
+
+    await record_audit(
+        db, actor=user, action="placement_simulation_run",
+        object_type="simulation", object_id="-",
+        summary=f"Non-binding match simulation run "
+                f"({'+'.join(k for k, v in source_meta.items() if v is True) or 'manual'})",
+    )
+
+    return {
+        "is_simulation": True,
+        "non_binding_notice":
+            "NON-BINDING SIMULATION — management judgement required. "
+            "Nothing has been saved. Use this to inform discussion only.",
+        "extracted": merged,
+        "extraction_evidence": extraction.get("evidence", []),
+        "raw_text_length": extraction.get("raw_text_length", 0),
+        "source_meta": source_meta,
+        "analysis": analysis,
+    }
+
+
+@api_router.post("/placement-intelligence/simulate/save")
+async def save_simulation_as_referral(payload: ReferralIn, user: dict = Depends(require_tier(3))):
+    """Convert a simulator session into a formal referral — uses the standard create flow."""
+    return await create_referral(payload, user)
 
 
 app.include_router(api_router)
