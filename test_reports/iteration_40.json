@@ -1,0 +1,34 @@
+{
+  "summary": "Iteration 41e — Local Authority breakdown inside Placement Analytics. Backend: 10/11 tests pass in test_iteration41e.py; iter41/41b/41c/41d regression 57/57 GREEN. Frontend: Commissioning & referral trends card renders for Children's manager with 6 LAs (Camden, Hackney, ReadingTest, Barnet, Newham, Westminster), proportional volume bars, conversion/more-info/OOH stats, modal confidence + risk band badges and neutral insight lines. Adult Services Compliance correctly excludes Placement Analytics tab and the LA card.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/placement-intelligence/conversion-analytics", "issue": "test_la_conversion_math hard-codes simulations==3 for LA 'ReadingTest' but DB persists across runs, so on subsequent CI runs it sees 6 sims and 4 converted. The 66.7% conversion_rate is still correct — only the count assertion is stale. Use a unique per-run LA token (e.g., f'ReadingTest_{uuid}') to make the test idempotent."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration41e.py",
+    "/app/test_reports/pytest/iter41e_results.xml"
+  ],
+  "action_items": [
+    "Make test_la_conversion_math idempotent by using a unique LA name per run (uuid suffix) — current test data pollution causes the 1 failure; the product math itself is verified correct (4/6 == 66.7%)."
+  ],
+  "critical_code_review_comments": [
+    "test_iteration41e.py::test_la_conversion_math is non-idempotent — relies on a fixed LA string 'ReadingTest' against persistent Mongo state. Replace with uuid-suffixed LA name.",
+    "Privacy enforcement verified: forbidden keys (yp_initials, initials, raw_text, narrative, needs, known_associates, social_worker_name) absent from local_authorities[] rows; unique narrative token (ZZZ_LA_LEAK_TOKEN_OMICRON_41E) does not leak into analytics payload.",
+    "Insight tone test confirms no punitive language (bad/poor/failing/incompetent/blame/fault) — neutral commissioning-oriented copy.",
+    "Top-10 cap and sort-by-volume desc both enforced."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "91% (10/11 iter41e + 57/57 iter41/41b/41c/41d regression)", "frontend": "100%"},
+  "test_credentials": "manager@care.local / Manager@123 (Children's workspace) verified working",
+  "seed_data_creation": "Tests seeded simulations for LAs Camden, Barnet, Hackney, Westminster, Newham, ReadingTest plus LA1..LA12 for cap test; created and deleted 2 referrals as part of conversion math test.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Welcome flow: /welcome shows 2 'Enter workspace' buttons — first = Children's, second = Adult. Then /login → manager@care.local. Compliance hub /compliance — Placement Analytics is 6th tab (only Children's side). LA card data-testid='analytics-la-card', list 'analytics-la-list', per-row 'analytics-la-<kebab-name>'. Empty state testid='analytics-la-empty'. ReadingTest now has stale conversion data — use a fresh unique LA in future conversion-math tests."
+}

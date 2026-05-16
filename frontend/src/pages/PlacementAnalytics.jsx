@@ -9,7 +9,7 @@ import { useEffect, useState, useCallback, useMemo } from "react";
 import api from "@/lib/api";
 import {
   BarChart3, Loader2, Sparkles, Lock, ArrowUpRight, ArrowDownRight, Minus,
-  Moon, Activity, ShieldCheck, AlertTriangle, Calendar,
+  Moon, Activity, ShieldCheck, AlertTriangle, Calendar, Building2,
 } from "lucide-react";
 
 const PERIODS = [[7, "Last 7 days"], [30, "Last 30 days"], [90, "Last 90 days"]];
@@ -107,6 +107,9 @@ export default function PlacementAnalytics() {
         <ReferralPressureCard data={data} />
         <HomeReadinessTrendCard data={data} />
       </div>
+
+      {/* Commissioning & referral trends — per-LA breakdown */}
+      <CommissioningInsightsCard data={data} />
 
       {/* Privacy + Ofsted/RI value */}
       <div className="bg-stone-50 border divider-soft rounded-2xl p-4 flex items-start gap-3" data-testid="analytics-privacy-notice">
@@ -356,5 +359,103 @@ function HomeReadinessTrendCard({ data }) {
         </>
       )}
     </section>
+  );
+}
+
+
+/* ------------------------------------------------------------------ */
+/* Commissioning & referral trends — per-LA breakdown                  */
+/* Aggregate-only · neutral tone · NOT a league table                  */
+/* ------------------------------------------------------------------ */
+function CommissioningInsightsCard({ data }) {
+  const las = data.local_authorities || [];
+  const max = Math.max(1, ...las.map((l) => l.simulations));
+
+  return (
+    <section className="bg-white border divider-soft rounded-2xl p-5" data-testid="analytics-la-card">
+      <div className="flex items-start justify-between gap-2 flex-wrap mb-1">
+        <div>
+          <div className="flex items-center gap-2">
+            <Building2 size={14} className="text-[#0e3b4a]" />
+            <h3 className="font-semibold text-[#0F1115] text-[14px]">Commissioning &amp; referral trends</h3>
+          </div>
+          <p className="text-[11px] text-stone-500 mt-0.5">
+            Aggregate per local authority. Helps surface placement-fit patterns and referral quality signals —
+            never a league table. No child-level or narrative data appears here.
+          </p>
+        </div>
+        <span className="text-[10px] uppercase tracking-wider text-stone-500">{las.length} LA{las.length === 1 ? "" : "s"}</span>
+      </div>
+
+      {las.length === 0 ? (
+        <div className="mt-3 bg-stone-50 rounded-lg p-3 text-[12px] text-stone-600" data-testid="analytics-la-empty">
+          No local authority captured on simulations in this period yet. Once managers run simulations
+          where the LA is in the referral text (e.g. "Local Authority: Camden"), trends will appear here.
+        </div>
+      ) : (
+        <ul className="mt-3 divide-y divide-stone-200" data-testid="analytics-la-list">
+          {las.map((la) => {
+            const conf = CONF[la.modal_confidence] || CONF.manageable;
+            const risk = RISK[la.avg_risk_band] || RISK.low;
+            const volPct = (la.simulations / max) * 100;
+            return (
+              <li key={la.local_authority}
+                  data-testid={`analytics-la-${la.local_authority.toLowerCase().replace(/\s+/g, "-")}`}
+                  className="py-3">
+                <div className="flex items-start gap-3">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-semibold text-[#0F1115] text-[13px]">{la.local_authority}</span>
+                      <span className="text-[10px] uppercase tracking-wider font-bold px-1.5 py-0.5 rounded"
+                        style={{ background: conf.bg, color: conf.fg }}>{conf.label}</span>
+                      <span className="text-[10px] uppercase tracking-wider font-bold px-1.5 py-0.5 rounded"
+                        style={{ background: risk.bg, color: risk.fg }}>{risk.label} risk</span>
+                    </div>
+
+                    {/* Volume bar (proportional to busiest LA) */}
+                    <div className="mt-1.5 h-1.5 rounded-full bg-stone-100 overflow-hidden">
+                      <div className="h-full" style={{ width: `${volPct}%`, background: "#0e3b4a" }} />
+                    </div>
+
+                    {/* Stats row */}
+                    <div className="mt-1.5 grid grid-cols-2 sm:grid-cols-4 gap-1.5 text-[11px]">
+                      <Stat label="Simulations" value={la.simulations} />
+                      <Stat label="Conversion" value={`${la.conversion_rate_pct}%`}
+                        toneFg={la.conversion_rate_pct >= 50 ? "#2F6A3A" : la.conversion_rate_pct < 20 && la.simulations >= 3 ? "#A8273A" : null} />
+                      <Stat label="More info" value={`${la.more_info_rate_pct}%`} />
+                      <Stat label="OOH" value={`${la.out_of_hours}`} secondary={`${la.out_of_hours_pct}%`} />
+                    </div>
+
+                    {/* Reflective insight line */}
+                    <p className="text-[11px] text-stone-600 italic mt-1.5">{la.insight}</p>
+                  </div>
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+
+      <div className="mt-4 bg-stone-50 rounded-lg p-2.5 flex items-start gap-2">
+        <Lock size={12} className="text-stone-500 mt-0.5 shrink-0" />
+        <p className="text-[11px] text-stone-600 leading-relaxed">
+          <span className="font-semibold">Reflective &amp; aggregate only:</span> use to support placement
+          partnership conversations, commissioning strategy and safeguarding pressure analysis — never as a
+          punitive league table. Child-level data is never shown.
+        </p>
+      </div>
+    </section>
+  );
+}
+
+function Stat({ label, value, secondary, toneFg }) {
+  return (
+    <div className="bg-stone-50 rounded p-1.5">
+      <div className="text-[9px] font-bold uppercase tracking-wider text-stone-500">{label}</div>
+      <div className="flex items-baseline gap-1">
+        <span className="text-[13px] font-semibold" style={{ color: toneFg || "#0F1115" }}>{value}</span>
+        {secondary && <span className="text-[9px] text-stone-500">{secondary}</span>}
+      </div>
+    </div>
   );
 }

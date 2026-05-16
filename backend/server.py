@@ -9167,6 +9167,8 @@ async def simulate_match(
         # Home state snapshot at run-time (operational metadata, no PII)
         "home_readiness_at_run": (analysis.get("home_readiness") or {}).get("overall_readiness"),
         "home_score_at_run":    int((analysis.get("home_readiness") or {}).get("score") or 0),
+        # Organisational metadata only — borough/council name, never a person.
+        "local_authority": (merged.get("local_authority") or "").strip()[:80] or None,
         # NOTE: We deliberately do NOT store raw_text, file content, narrative,
         # needs list, known associates, reason or any sensitive referral content.
     }
@@ -9423,11 +9425,98 @@ async def conversion_analytics(
             "count": out_of_hours,
             "pct": _pct(out_of_hours, total),
         },
+        "local_authorities": _local_authority_breakdown(curr_rows),
         "privacy_notice": (
             "Aggregate analytics only. Derived purely from audit metadata — no referral narrative, "
-            "no initials, no PII. Useful for RI / Ofsted leadership oversight."
+            "no initials, no PII. Local authority names are organisational metadata only. "
+            "Useful for RI / Ofsted leadership oversight."
         ),
     }
+
+
+def _local_authority_breakdown(rows: list[dict], top_n: int = 10) -> list[dict]:
+    """Per-LA aggregates — purely organisational metadata.
+
+    Intelligence-led: surface placement-fit patterns, referral quality signals
+    and commissioning trends. NOT a league table — tone stays reflective.
+    Excludes simulations without an LA captured.
+    """
+    by_la: dict[str, list[dict]] = {}
+    for r in rows:
+        la = (r.get("local_authority") or "").strip()
+        if not la:
+            continue
+        by_la.setdefault(la, []).append(r)
+
+    out: list[dict] = []
+    for la, items in by_la.items():
+        n = len(items)
+        converted = sum(1 for r in items if r.get("status") == "converted")
+        more_info = sum(1 for r in items if r.get("status") == "more_info_requested")
+        not_prog = sum(1 for r in items if r.get("status") == "not_progressed")
+        ooh = sum(1 for r in items if _is_out_of_hours_iso(r.get("ran_at", "")))
+
+        # Average risk score → risk band
+        risk_sum = sum(int(r.get("score") or 0) for r in items)
+        avg_risk_score = round(risk_sum / n, 1)
+        avg_risk_band = (
+            "critical" if avg_risk_score >= 55
+            else "high" if avg_risk_score >= 35
+            else "medium" if avg_risk_score >= 15
+            else "low"
+        )
+
+        # Modal matching confidence
+        confs: dict[str, int] = {}
+        for r in items:
+            c = r.get("matching_confidence") or "manageable"
+            confs[c] = confs.get(c, 0) + 1
+        modal_conf = max(confs.items(), key=lambda kv: kv[1])[0]
+
+        # Reflective insight line (rule-based, neutral tone)
+        insight = _la_insight_line(n, converted, more_info, not_prog, ooh, avg_risk_band, modal_conf)
+
+        out.append({
+            "local_authority": la,
+            "simulations": n,
+            "converted": converted,
+            "more_info_requested": more_info,
+            "not_progressed": not_prog,
+            "under_review": n - converted - more_info - not_prog,
+            "conversion_rate_pct": _pct(converted, n),
+            "more_info_rate_pct": _pct(more_info, n),
+            "not_progressed_rate_pct": _pct(not_prog, n),
+            "out_of_hours": ooh,
+            "out_of_hours_pct": _pct(ooh, n),
+            "avg_risk_score": avg_risk_score,
+            "avg_risk_band": avg_risk_band,
+            "modal_confidence": modal_conf,
+            "insight": insight,
+        })
+
+    out.sort(key=lambda x: (-x["simulations"], x["local_authority"]))
+    return out[:top_n]
+
+
+def _la_insight_line(n, converted, more_info, not_prog, ooh, avg_risk_band, modal_conf) -> str:
+    """Neutral, intelligence-led one-liner — never punitive."""
+    parts: list[str] = []
+    if n >= 5 and converted / n >= 0.6:
+        parts.append("strong conversion pattern")
+    elif n >= 5 and converted / n <= 0.2 and converted < n:
+        parts.append("low conversion — review placement-fit patterns")
+    if n >= 5 and more_info / n >= 0.4:
+        parts.append("high more-info-requested rate")
+    if avg_risk_band in ("high", "critical"):
+        parts.append(f"average risk profile {avg_risk_band}")
+    if n >= 3 and ooh / n >= 0.5:
+        parts.append("predominantly out-of-hours referrals")
+    if modal_conf in ("elevated", "not_recommended"):
+        parts.append(f"typical confidence: {modal_conf.replace('_', ' ')}")
+    if not parts:
+        return "Stable referral pattern — no notable trend signals."
+    return "; ".join(parts).capitalize() + "."
+
 
 
 @api_router.post("/placement-intelligence/simulate/save")

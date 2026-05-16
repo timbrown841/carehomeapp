@@ -143,11 +143,11 @@ def _detect_initials(text: str) -> Optional[str]:
 
 def _detect_local_authority(text: str) -> Optional[str]:
     for pat in (
-        r"(?:local authority|LA)\s*[:\-]\s*([A-Z][A-Za-z\s&]{2,40})(?:\n|,|\.|;)",
-        r"\bLondon Borough of ([A-Z][A-Za-z\s&]{2,40})(?:\n|,|\.|;)",
+        r"(?:local authority|\bLA)\s*[:\-]\s*([A-Z][A-Za-z\s&]{2,40}?)(?:\n|,|\.|;|$)",
+        r"\bLondon Borough of ([A-Z][A-Za-z\s&]{2,40}?)(?:\n|,|\.|;|$)",
         r"\b([A-Z][A-Za-z]+ (?:County )?Council)\b",
     ):
-        m = re.search(pat, text)
+        m = re.search(pat, text, re.IGNORECASE)
         if m:
             return m.group(1).strip()
     return None
