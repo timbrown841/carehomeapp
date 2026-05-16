@@ -7,6 +7,7 @@ import Handover from "@/pages/Handover";
 import Supervisions from "@/pages/Supervisions";
 import SaferRecruitment from "@/pages/SaferRecruitment";
 import { TeamWellbeingAwarenessCard } from "@/pages/ReflectionSupervision";
+import BurnoutForecastPanel from "@/components/intelligence/BurnoutForecastPanel";
 
 export default function StaffOperationsHub() {
   const { tier } = useAuth();
@@ -46,6 +47,7 @@ export default function StaffOperationsHub() {
 function TeamWellbeingPanel() {
   return (
     <div className="space-y-4" data-testid="team-wellbeing-panel">
+      <BurnoutForecastPanel />
       <div className="bg-stone-50 border divider-soft rounded-2xl p-5">
         <p className="text-sm text-stone-700 leading-relaxed">
           A non-punitive, aggregate view of team wellbeing. Names appear only for staff who have

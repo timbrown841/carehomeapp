@@ -61,7 +61,7 @@ from pre_inspection_scan_pdf import build_pre_inspection_scan_pdf
 from cross_module_patterns import build_pattern_intelligence
 from strategy_meeting_pack_pdf import build_strategy_meeting_pack
 from staffing_service import build_staffing_overview, get_staffing_config, set_staffing_config
-from intelligence_engine import build_forecast, build_resident_stability
+from intelligence_engine import build_forecast, build_resident_stability, build_burnout_forecast
 import secrets as _secrets
 
 
@@ -8786,6 +8786,15 @@ async def intelligence_resident_stability_single(
     _: dict = Depends(get_current_user),
 ):
     return await build_resident_stability(db, mode=mode or "children", resident_id=resident_id)
+
+
+@api_router.get("/intelligence/burnout-forecast")
+async def intelligence_burnout_forecast(_: dict = Depends(require_tier(3))):
+    """Manager+ only — deterministic team burnout forecast.
+
+    Aggregate signals + metadata only. NEVER reads private reflection content.
+    """
+    return await build_burnout_forecast(db)
 
 
 app.include_router(api_router)

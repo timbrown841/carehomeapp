@@ -488,3 +488,501 @@ async def build_resident_stability(db, mode: str, resident_id: Optional[str] = N
     }
     return {"generated_at": datetime.now(timezone.utc).isoformat(),
             "mode": mode, "summary": summary, "residents": out}
+
+
+# ---------------------------------------------------------------------------
+# Burnout forecasting — Iteration 40b
+# DETERMINISTIC. AGGREGATE-METADATA-ONLY. NEVER reads private reflection text.
+#
+# Same data in → same risk out. Every flag links to evidence the manager can
+# verify. Tone: supportive, operational, non-punitive ("support recommended",
+# "pressure increasing"). Surface signals; offer 1:1 — never label someone.
+# ---------------------------------------------------------------------------
+
+# Tunables — overridable later via /api/staffing/config without code changes.
+BURNOUT_CONFIG = {
+    "overtime_minutes_14d_warn":     180,   # >3h overtime in 14d → factor
+    "overtime_minutes_14d_high":     360,   # >6h overtime in 14d → +weight
+    "weekly_planned_minutes_warn":   2880,  # 48h/wk planned
+    "weekly_planned_minutes_high":   3300,  # 55h/wk planned
+    "sickness_days_30d_warn":        2,
+    "sickness_days_30d_high":        4,
+    "sleep_ins_30d_warn":            4,
+    "sleep_ins_30d_high":            6,
+    "disturbance_minutes_30d_warn":  60,
+    "disturbance_minutes_30d_high":  150,
+    "swaps_initiated_30d_warn":      2,
+    "swaps_initiated_30d_high":      4,
+    "consecutive_days_warn":         6,
+    "consecutive_days_high":         8,
+    "late_clockins_14d_warn":        3,
+    "late_clockins_14d_high":        5,
+    "late_variance_minute_threshold": 10,
+    "stressed_moods_14d_warn":       3,
+    "stressed_moods_14d_high":       5,
+    # Mitigators (lower risk):
+    "checkins_14d_mitigator":        3,   # ≥3 self-care check-ins → -3 points
+    # Risk thresholds (sum of weights):
+    "high_threshold":                35,
+    "medium_threshold":              18,
+}
+
+
+_OVERTIME_THRESHOLD_MIN = 60 * 8  # any single shift over 8h counts toward fatigue
+
+STRESSED_MOODS = {"overwhelmed", "stressed"}
+
+
+def _safe_iso(dt: datetime) -> str:
+    return dt.isoformat()
+
+
+async def _staff_signals(db, staff: dict, now: datetime, cfg: dict) -> dict:
+    """Compute aggregate, metadata-only signals for a single staff member."""
+    sid = staff["id"]
+    last_14_dt = now - timedelta(days=14)
+    last_30_dt = now - timedelta(days=30)
+    last_60_dt = now - timedelta(days=60)
+    last_14 = _safe_iso(last_14_dt)
+    last_30 = _safe_iso(last_30_dt)
+    last_60 = _safe_iso(last_60_dt)
+
+    # --- Shifts in window
+    shifts_30 = await db.shifts.find(
+        {"staff_id": sid, "start_at": {"$gte": last_30}},
+        {"_id": 0},
+    ).to_list(500)
+
+    # Overtime (14d)
+    overtime_min_14 = 0
+    long_shift_count_14 = 0
+    for s in shifts_30:
+        if s.get("start_at", "") < last_14:
+            continue
+        overtime_min_14 += int(s.get("overtime_minutes") or 0)
+        if int(s.get("actual_minutes_worked") or 0) >= _OVERTIME_THRESHOLD_MIN:
+            long_shift_count_14 += 1
+
+    # Planned weekly minutes (last 7d rolling)
+    last_7_dt = now - timedelta(days=7)
+    last_7 = _safe_iso(last_7_dt)
+    weekly_planned_min = 0
+    weekly_actual_min = 0
+    for s in shifts_30:
+        if s.get("start_at", "") < last_7:
+            continue
+        if s.get("actual_minutes_worked"):
+            weekly_actual_min += int(s["actual_minutes_worked"])
+        try:
+            start_dt = datetime.fromisoformat(s["start_at"].replace("Z", "+00:00"))
+            end_dt = datetime.fromisoformat(s["end_at"].replace("Z", "+00:00"))
+            weekly_planned_min += int((end_dt - start_dt).total_seconds() / 60)
+        except Exception:
+            pass
+
+    # Sleep-ins (30d)
+    sleep_in_count_30 = sum(1 for s in shifts_30 if s.get("is_sleep_in"))
+    disturbance_min_30 = 0
+    for s in shifts_30:
+        for d in (s.get("sleep_in_disturbances") or []):
+            disturbance_min_30 += int(d.get("minutes") or 0)
+
+    # Late clock-ins (14d)
+    late_clockins_14 = 0
+    for s in shifts_30:
+        if s.get("start_at", "") < last_14:
+            continue
+        variance = s.get("clock_in_variance_minutes")
+        if variance is not None and int(variance) > cfg["late_variance_minute_threshold"]:
+            late_clockins_14 += 1
+
+    # Consecutive working days (14d window) — max run of consecutive calendar dates
+    work_dates: set[str] = set()
+    for s in shifts_30:
+        if s.get("start_at", "") < last_14:
+            continue
+        try:
+            d = datetime.fromisoformat(s["start_at"].replace("Z", "+00:00")).date()
+            work_dates.add(d.isoformat())
+        except Exception:
+            pass
+    consecutive_days = _longest_run(sorted(work_dates))
+
+    # --- Sickness (30d) — approved sickness leave overlapping window
+    sickness_days_30 = 0
+    sickness_episodes_30 = 0
+    leave_cursor = db.leave_requests.find(
+        {"staff_id": sid, "kind": "sickness",
+         "status": {"$in": ["approved", "pending"]}},
+        {"_id": 0},
+    )
+    async for lv in leave_cursor:
+        try:
+            ls = datetime.fromisoformat(lv["start_date"]).date()
+            le = datetime.fromisoformat(lv["end_date"]).date()
+        except Exception:
+            continue
+        cutoff = last_30_dt.date()
+        today = now.date()
+        if le < cutoff or ls > today:
+            continue
+        s_eff = max(ls, cutoff)
+        e_eff = min(le, today)
+        days = (e_eff - s_eff).days + 1
+        if days > 0:
+            sickness_days_30 += days
+            sickness_episodes_30 += 1
+
+    # --- Shift swaps initiated (30d)
+    swaps_initiated_30 = await db.shift_swap_requests.count_documents(
+        {"requested_by_id": sid, "created_at": {"$gte": last_30}}
+    )
+
+    # --- Wellbeing check-ins (14d) — METADATA ONLY (mood enum + count)
+    checkins_14 = 0
+    stressed_moods_14 = 0
+    try:
+        async for c in db.wellbeing_checkins.find(
+            {"user_id": sid, "created_at": {"$gte": last_14}},
+            {"_id": 0, "mood": 1},
+        ):
+            checkins_14 += 1
+            if c.get("mood") in STRESSED_MOODS:
+                stressed_moods_14 += 1
+    except Exception:
+        pass
+
+    # --- Did they work any shift in last 60d? If not, skip them entirely.
+    shifts_60 = await db.shifts.count_documents(
+        {"staff_id": sid, "start_at": {"$gte": last_60}}
+    )
+    active = shifts_60 > 0
+
+    return {
+        "overtime_min_14": overtime_min_14,
+        "long_shift_count_14": long_shift_count_14,
+        "weekly_planned_min": weekly_planned_min,
+        "weekly_actual_min": weekly_actual_min,
+        "sleep_in_count_30": sleep_in_count_30,
+        "disturbance_min_30": disturbance_min_30,
+        "late_clockins_14": late_clockins_14,
+        "consecutive_days": consecutive_days,
+        "sickness_days_30": sickness_days_30,
+        "sickness_episodes_30": sickness_episodes_30,
+        "swaps_initiated_30": swaps_initiated_30,
+        "checkins_14": checkins_14,
+        "stressed_moods_14": stressed_moods_14,
+        "shifts_in_window_60": shifts_60,
+        "active": active,
+    }
+
+
+def _longest_run(dates_iso_sorted: list[str]) -> int:
+    if not dates_iso_sorted:
+        return 0
+    best = run = 1
+    prev = datetime.fromisoformat(dates_iso_sorted[0]).date()
+    for d_iso in dates_iso_sorted[1:]:
+        d = datetime.fromisoformat(d_iso).date()
+        run = run + 1 if (d - prev).days == 1 else 1
+        best = max(best, run)
+        prev = d
+    return best
+
+
+def _burnout_factors(sig: dict, cfg: dict) -> tuple[int, list[dict]]:
+    """Return (total points, factor list). All deterministic."""
+    points = 0
+    factors: list[dict] = []
+
+    # 1. Overtime hours
+    if sig["overtime_min_14"] >= cfg["overtime_minutes_14d_high"]:
+        h = round(sig["overtime_min_14"] / 60, 1)
+        factors.append({
+            "label": f"{h}h overtime in last 14 days",
+            "weight": 12, "domain": "hours",
+            "evidence": f"{sig['overtime_min_14']} overtime minutes",
+            "threshold": f"≥{cfg['overtime_minutes_14d_high']//60}h triggers high weighting",
+        })
+        points += 12
+    elif sig["overtime_min_14"] >= cfg["overtime_minutes_14d_warn"]:
+        h = round(sig["overtime_min_14"] / 60, 1)
+        factors.append({
+            "label": f"{h}h overtime in last 14 days",
+            "weight": 7, "domain": "hours",
+            "evidence": f"{sig['overtime_min_14']} overtime minutes",
+            "threshold": f"≥{cfg['overtime_minutes_14d_warn']//60}h triggers watch weighting",
+        })
+        points += 7
+
+    # 2. Heavy weekly load
+    if sig["weekly_planned_min"] >= cfg["weekly_planned_minutes_high"]:
+        h = round(sig["weekly_planned_min"] / 60, 1)
+        factors.append({
+            "label": f"Heavy week — {h}h scheduled in last 7 days",
+            "weight": 9, "domain": "hours",
+            "evidence": f"{sig['weekly_planned_min']} planned minutes",
+            "threshold": f"≥{cfg['weekly_planned_minutes_high']//60}h/week",
+        })
+        points += 9
+    elif sig["weekly_planned_min"] >= cfg["weekly_planned_minutes_warn"]:
+        h = round(sig["weekly_planned_min"] / 60, 1)
+        factors.append({
+            "label": f"Long week — {h}h scheduled in last 7 days",
+            "weight": 5, "domain": "hours",
+            "evidence": f"{sig['weekly_planned_min']} planned minutes",
+            "threshold": f"≥{cfg['weekly_planned_minutes_warn']//60}h/week",
+        })
+        points += 5
+
+    # 3. Sleep-in load
+    if sig["sleep_in_count_30"] >= cfg["sleep_ins_30d_high"]:
+        factors.append({
+            "label": f"{sig['sleep_in_count_30']} sleep-ins in last 30 days",
+            "weight": 10, "domain": "rest",
+            "evidence": f"{sig['sleep_in_count_30']} sleep-in shifts",
+            "threshold": f"≥{cfg['sleep_ins_30d_high']} in 30d",
+        })
+        points += 10
+    elif sig["sleep_in_count_30"] >= cfg["sleep_ins_30d_warn"]:
+        factors.append({
+            "label": f"{sig['sleep_in_count_30']} sleep-ins in last 30 days",
+            "weight": 6, "domain": "rest",
+            "evidence": f"{sig['sleep_in_count_30']} sleep-in shifts",
+            "threshold": f"≥{cfg['sleep_ins_30d_warn']} in 30d",
+        })
+        points += 6
+
+    # 3b. Disturbance load (separate from count)
+    if sig["disturbance_min_30"] >= cfg["disturbance_minutes_30d_high"]:
+        m = sig["disturbance_min_30"]
+        factors.append({
+            "label": f"{m} min sleep-in disturbance (30d)",
+            "weight": 6, "domain": "rest",
+            "evidence": f"{m} disturbed minutes",
+            "threshold": f"≥{cfg['disturbance_minutes_30d_high']}min",
+        })
+        points += 6
+    elif sig["disturbance_min_30"] >= cfg["disturbance_minutes_30d_warn"]:
+        m = sig["disturbance_min_30"]
+        factors.append({
+            "label": f"{m} min sleep-in disturbance (30d)",
+            "weight": 3, "domain": "rest",
+            "evidence": f"{m} disturbed minutes",
+            "threshold": f"≥{cfg['disturbance_minutes_30d_warn']}min",
+        })
+        points += 3
+
+    # 4. Sickness signal
+    if sig["sickness_days_30"] >= cfg["sickness_days_30d_high"]:
+        factors.append({
+            "label": f"{sig['sickness_days_30']} sickness days in last 30 days",
+            "weight": 10, "domain": "absence",
+            "evidence": f"{sig['sickness_episodes_30']} episode(s), {sig['sickness_days_30']} days",
+            "threshold": f"≥{cfg['sickness_days_30d_high']} days",
+        })
+        points += 10
+    elif sig["sickness_days_30"] >= cfg["sickness_days_30d_warn"]:
+        factors.append({
+            "label": f"{sig['sickness_days_30']} sickness days in last 30 days",
+            "weight": 5, "domain": "absence",
+            "evidence": f"{sig['sickness_episodes_30']} episode(s), {sig['sickness_days_30']} days",
+            "threshold": f"≥{cfg['sickness_days_30d_warn']} days",
+        })
+        points += 5
+
+    # 5. Shift swaps initiated
+    if sig["swaps_initiated_30"] >= cfg["swaps_initiated_30d_high"]:
+        factors.append({
+            "label": f"{sig['swaps_initiated_30']} shift swaps initiated (30d)",
+            "weight": 7, "domain": "scheduling",
+            "evidence": f"{sig['swaps_initiated_30']} swap requests created",
+            "threshold": f"≥{cfg['swaps_initiated_30d_high']} in 30d",
+        })
+        points += 7
+    elif sig["swaps_initiated_30"] >= cfg["swaps_initiated_30d_warn"]:
+        factors.append({
+            "label": f"{sig['swaps_initiated_30']} shift swaps initiated (30d)",
+            "weight": 4, "domain": "scheduling",
+            "evidence": f"{sig['swaps_initiated_30']} swap requests created",
+            "threshold": f"≥{cfg['swaps_initiated_30d_warn']} in 30d",
+        })
+        points += 4
+
+    # 6. Consecutive days without rest
+    if sig["consecutive_days"] >= cfg["consecutive_days_high"]:
+        factors.append({
+            "label": f"{sig['consecutive_days']} consecutive working days",
+            "weight": 9, "domain": "rest",
+            "evidence": f"longest run = {sig['consecutive_days']} days in 14d window",
+            "threshold": f"≥{cfg['consecutive_days_high']} days",
+        })
+        points += 9
+    elif sig["consecutive_days"] >= cfg["consecutive_days_warn"]:
+        factors.append({
+            "label": f"{sig['consecutive_days']} consecutive working days",
+            "weight": 5, "domain": "rest",
+            "evidence": f"longest run = {sig['consecutive_days']} days in 14d window",
+            "threshold": f"≥{cfg['consecutive_days_warn']} days",
+        })
+        points += 5
+
+    # 7. Late clock-ins (proxy for fatigue / scheduling friction)
+    if sig["late_clockins_14"] >= cfg["late_clockins_14d_high"]:
+        factors.append({
+            "label": f"{sig['late_clockins_14']} late clock-ins in last 14 days",
+            "weight": 5, "domain": "scheduling",
+            "evidence": f"variance >{cfg['late_variance_minute_threshold']}min on {sig['late_clockins_14']} shifts",
+            "threshold": f"≥{cfg['late_clockins_14d_high']}",
+        })
+        points += 5
+    elif sig["late_clockins_14"] >= cfg["late_clockins_14d_warn"]:
+        factors.append({
+            "label": f"{sig['late_clockins_14']} late clock-ins in last 14 days",
+            "weight": 3, "domain": "scheduling",
+            "evidence": f"variance >{cfg['late_variance_minute_threshold']}min on {sig['late_clockins_14']} shifts",
+            "threshold": f"≥{cfg['late_clockins_14d_warn']}",
+        })
+        points += 3
+
+    # 8. Stressed-mood signal (METADATA-ONLY count of self-flagged moods)
+    if sig["stressed_moods_14"] >= cfg["stressed_moods_14d_high"]:
+        factors.append({
+            "label": f"Self-flagged 'overwhelmed/stressed' {sig['stressed_moods_14']}× in 14d",
+            "weight": 10, "domain": "wellbeing",
+            "evidence": f"{sig['stressed_moods_14']} stressed check-ins (mood metadata only)",
+            "threshold": f"≥{cfg['stressed_moods_14d_high']}",
+            "privacy_note": "Mood label only — no diary text is read.",
+        })
+        points += 10
+    elif sig["stressed_moods_14"] >= cfg["stressed_moods_14d_warn"]:
+        factors.append({
+            "label": f"Self-flagged 'overwhelmed/stressed' {sig['stressed_moods_14']}× in 14d",
+            "weight": 6, "domain": "wellbeing",
+            "evidence": f"{sig['stressed_moods_14']} stressed check-ins (mood metadata only)",
+            "threshold": f"≥{cfg['stressed_moods_14d_warn']}",
+            "privacy_note": "Mood label only — no diary text is read.",
+        })
+        points += 6
+
+    # 9. Self-care mitigator
+    if sig["checkins_14"] >= cfg["checkins_14d_mitigator"] and sig["stressed_moods_14"] < cfg["stressed_moods_14d_warn"]:
+        factors.append({
+            "label": f"Self-care: {sig['checkins_14']} wellbeing check-ins in 14d",
+            "weight": -3, "domain": "mitigator",
+            "evidence": f"{sig['checkins_14']} self-care check-ins (mood metadata only)",
+            "threshold": "Lowers risk because individual is actively self-monitoring.",
+            "privacy_note": "Mood label only — no diary text is read.",
+        })
+        points -= 3
+
+    return max(0, points), factors
+
+
+def _burnout_actions(risk: str, factors: list[dict]) -> list[str]:
+    """Supportive, non-punitive recommended actions."""
+    domains = {f.get("domain") for f in factors if f.get("weight", 0) > 0}
+    actions: list[str] = []
+
+    if risk == "high":
+        actions.append("Schedule a supportive 1:1 this week — wellbeing first, workload second.")
+    elif risk == "medium":
+        actions.append("Plan a short check-in within the next 2 weeks.")
+
+    if "hours" in domains:
+        actions.append("Review next rota: aim to reduce overtime and protect rest days.")
+    if "rest" in domains:
+        actions.append("Rebalance sleep-in share across the team; verify rest periods between shifts.")
+    if "absence" in domains:
+        actions.append("Welfare follow-up after recent sickness — confirm any adjustments needed on return.")
+    if "scheduling" in domains:
+        actions.append("Discuss commuting/childcare or other scheduling friction; offer rota flexibility.")
+    if "wellbeing" in domains:
+        actions.append("Acknowledge self-flagged stress with empathy; signpost EAP and reflective practice.")
+
+    if not actions:
+        actions.append("No action required — pattern is healthy. Acknowledge consistency at the next 1:1.")
+    return actions
+
+
+def _risk_from_points(points: int, cfg: dict) -> tuple[str, str]:
+    if points >= cfg["high_threshold"]:
+        return "high", "Support recommended"
+    if points >= cfg["medium_threshold"]:
+        return "medium", "Pressure increasing"
+    return "low", "Steady"
+
+
+async def build_burnout_forecast(db, cfg_override: Optional[dict] = None) -> dict:
+    """Org-wide burnout forecast — manager+ only.
+
+    Aggregate-metadata only. NEVER reads private reflection text or
+    wellbeing check-in notes.
+    """
+    cfg = {**BURNOUT_CONFIG, **(cfg_override or {})}
+    now = datetime.now(timezone.utc)
+
+    staff_rows: list[dict] = []
+    async for u in db.users.find(
+        {"$or": [{"is_active": True}, {"is_active": {"$exists": False}}]},
+        {"_id": 0, "id": 1, "name": 1, "role": 1, "email": 1},
+    ):
+        sig = await _staff_signals(db, u, now, cfg)
+        if not sig["active"]:
+            continue
+        points, factors = _burnout_factors(sig, cfg)
+        risk, label = _risk_from_points(points, cfg)
+        # Sort factors by absolute weight descending for "top factors"
+        factors_sorted = sorted(factors, key=lambda f: -abs(f["weight"]))
+        staff_rows.append({
+            "staff_id": u["id"],
+            "name": u.get("name") or u.get("email"),
+            "role": u.get("role"),
+            "risk": risk,
+            "label": label,
+            "score": points,
+            "top_factors": factors_sorted[:2],
+            "factors": factors_sorted,
+            "recommended_actions": _burnout_actions(risk, factors),
+            "signals_summary": {
+                "shifts_in_window_60": sig["shifts_in_window_60"],
+                "overtime_min_14": sig["overtime_min_14"],
+                "sleep_in_count_30": sig["sleep_in_count_30"],
+                "sickness_days_30": sig["sickness_days_30"],
+                "consecutive_days_14": sig["consecutive_days"],
+                "stressed_moods_14": sig["stressed_moods_14"],
+                "checkins_14": sig["checkins_14"],
+            },
+        })
+
+    # Sort: high first, then by score desc
+    rank = {"high": 0, "medium": 1, "low": 2}
+    staff_rows.sort(key=lambda r: (rank[r["risk"]], -r["score"]))
+
+    summary = {
+        "high":   sum(1 for r in staff_rows if r["risk"] == "high"),
+        "medium": sum(1 for r in staff_rows if r["risk"] == "medium"),
+        "low":    sum(1 for r in staff_rows if r["risk"] == "low"),
+        "total_staff": len(staff_rows),
+    }
+    if summary["high"] > 0:
+        overall = "high_pressure"
+    elif summary["medium"] >= 2:
+        overall = "support_recommended"
+    elif summary["medium"] >= 1:
+        overall = "watch"
+    else:
+        overall = "stable"
+
+    return {
+        "generated_at": now.isoformat(),
+        "overall_status": overall,
+        "summary": summary,
+        "config": cfg,
+        "staff": staff_rows,
+        "privacy_notice": (
+            "Burnout forecasting uses aggregate signals and metadata only "
+            "(shift counts, hours, sickness days, mood labels). "
+            "Private reflection content is never read."
+        ),
+    }

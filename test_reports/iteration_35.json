@@ -1,0 +1,48 @@
+{
+  "summary": "Iteration 40b — Burnout Forecasting fully verified. All 9 iter40b backend tests PASS + 23/23 regression on iter38 + iter40 PASS (32/32 total). Frontend manager flow verified end-to-end at /staff-operations?tab=wellbeing: BurnoutForecastPanel renders, privacy notice visible, 3 staff cards (all Steady), explanation modal opens with factor chain + recommended actions + close button. RBAC verified — staff (tier 1) and senior (tier 2) do NOT see Team Wellbeing tab nor BurnoutForecastPanel even via direct URL (?tab=wellbeing). Existing TeamWellbeingAwareness card still renders below burnout panel. No backend or frontend issues found.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration40b.py",
+    "/app/test_reports/pytest/iter40b_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "BurnoutForecastPanel.jsx is well-scoped (~320 lines) with three internal subcomponents (SummaryPill, StaffCard, BurnoutExplanationModal, FactorRow) — readable and focused. No split needed.",
+    "Privacy boundary is enforced at API level (verified by seeding token-laced reflection then asserting absence in /api/intelligence/burnout-forecast response).",
+    "Determinism verified: two consecutive GET calls return identical (staff_id, risk, score) tuples.",
+    "Score math verified: sum(factor.weight) clamped at 0 == staff.score for every staff row.",
+    "Tone test passes: labels strictly in {Steady, Pressure increasing, Support recommended} — no punitive language."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (9/9 iter40b + 23/23 regression on iter38+iter40)", "frontend": "100% on all covered flows"},
+  "test_credentials": "admin@care.local/Admin@123, manager@care.local/Manager@123, senior@care.local/Senior@123, staff@care.local/Staff@123",
+  "seed_data_creation": "Iter40b test seeds a private reflection with unique token 'ZZZ_SECRET_DIARY_TOKEN_BURNOUT_TEST_OMICRON' to verify privacy boundary (token must not appear in burnout-forecast payload). Test passes — token absent.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "verified_features": [
+    "GET /api/intelligence/burnout-forecast — 200 for manager (tier 3) and admin (tier 4), 403 for staff (tier 1) and senior (tier 2)",
+    "Payload shape: generated_at, overall_status in (stable|watch|support_recommended|high_pressure), summary{high,medium,low,total_staff}, config, staff[], privacy_notice (with 'aggregate' substring)",
+    "Staff card shape: staff_id, name, role, risk in (low|medium|high), label, score (non-negative int), top_factors (≤2), factors (each with label/weight/domain), recommended_actions (≥1), signals_summary (only numeric values)",
+    "Determinism — two consecutive calls return identical (staff_id, risk, score) tuples",
+    "Summary counts equal actual bucket counts in staff[]",
+    "Privacy boundary — payload never echoes private reflection body/title text (verified with unique seeded token)",
+    "Supportive tone — labels never contain 'burnt', 'failing', 'broken', 'incompetent'; only in {Steady, Pressure increasing, Support recommended}",
+    "Factor math — sum of factor weights (clamped ≥ 0) equals row score",
+    "Frontend /staff-operations?tab=wellbeing as manager: burnout-panel renders, burnout-privacy-notice visible, burnout-count-low pill shows '3 Steady', 3 burnout-staff-<id> cards render",
+    "Clicking staff card opens burnout-explanation-modal with burnout-factor-chain, burnout-recommended-actions, burnout-explanation-close (close working)",
+    "Existing TeamWellbeingAwareness card still renders below the burnout panel",
+    "Wellbeing tab hidden in HubTabs for staff (tier 1) and senior (tier 2) — direct URL /staff-operations?tab=wellbeing falls back; burnout-panel and team-wellbeing-panel both absent",
+    "Regression iter40 (8/8): forecast endpoints, resident stability list/single, sorts by severity, adult vs children engine separation",
+    "Regression iter38 (15/15): live staffing overview, ratios, RBAC, clock-in/out lifecycle, leave, shift swaps"
+  ],
+  "context_for_next_testing_agent": "Iter40b verified end-to-end. Burnout forecast is deterministic and aggregate-only — confirmed safe for production. Demo data currently produces 3 Steady staff (no Pressure/Support yet) — main agent may want to add a seeded high-pressure staff for visual demo of medium/high pills. Public URL: https://safeguard-dash-1.preview.emergentagent.com. IMPORTANT for next testing agent: pytest needs REACT_APP_BACKEND_URL exported in shell env (e.g. `export REACT_APP_BACKEND_URL=https://safeguard-dash-1.preview.emergentagent.com`) before running tests, otherwise all iter*.py tests error out with MissingSchema.",
+  "mocked_apis_noted": []
+}
