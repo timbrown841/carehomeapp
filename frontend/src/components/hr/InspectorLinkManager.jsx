@@ -57,6 +57,14 @@ export default function InspectorLinkManager({ filters, onClose }) {
 
   useEffect(() => { if (tab === "list") loadLinks(); }, [tab, loadLinks]);
 
+  // When the user switches to "list" while ShareCard is mounted, clear it
+  // so the LinkList becomes the primary visual.
+  useEffect(() => {
+    if (tab === "list" && created) {
+      setCreated(null);
+    }
+  }, [tab, created]);
+
   const create = async () => {
     if (!acknowledged) {
       toast.error("Please acknowledge the security notice");
