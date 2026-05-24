@@ -149,7 +149,7 @@ def compute_folder_status(folder_def: dict, files: list[dict]) -> dict:
     expired_count = 0
     expiring_count = 0
     earliest_expiry: Optional[datetime] = None
-    soonest_review: Optional[datetime] = None
+    latest_review_anchor: Optional[datetime] = None
 
     for f in files:
         if has_expiry_field:
@@ -164,10 +164,15 @@ def compute_folder_status(folder_def: dict, files: list[dict]) -> dict:
                     expiring_count += 1
         if review_days:
             rev = _parse_iso(f.get("review_date")) or _parse_iso(f.get("uploaded_at"))
-            if rev:
-                next_review = rev + timedelta(days=int(review_days))
-                if soonest_review is None or next_review < soonest_review:
-                    soonest_review = next_review
+            if rev and (latest_review_anchor is None or rev > latest_review_anchor):
+                latest_review_anchor = rev
+
+    # "Next review due" = latest review/upload + review_days. Periodic-review
+    # folders care about the MOST RECENT entry, not the oldest one.
+    soonest_review = (
+        latest_review_anchor + timedelta(days=int(review_days))
+        if review_days and latest_review_anchor else None
+    )
 
     # RAG ladder
     if expired_count > 0:
@@ -394,5 +399,236 @@ async def build_hr_dashboard(db, sector: str = "children") -> dict:
             "Deterministic personnel-file compliance. Each staff RAG is computed "
             "from required folders + document expiry + review windows. Same data in → "
             "same RAG out. Use as supportive intelligence for Reg 44/Ofsted/CQC readiness."
+        ),
+    }
+
+
+# =============================================================================
+# Single Central Record (SCR) — Phase F.2
+#
+# Inspection-ready one-row-per-staff compliance dashboard. The single most-
+# requested artefact by Ofsted inspectors and Responsible Individuals.
+# Deterministic. Same data in → same SCR row out.
+# =============================================================================
+
+
+def _latest_file(files: list[dict]) -> Optional[dict]:
+    """Most recently uploaded file from a folder's file list."""
+    if not files:
+        return None
+    return sorted(
+        files, key=lambda f: f.get("uploaded_at") or "", reverse=True,
+    )[0]
+
+
+def _scr_status(latest: Optional[dict], required: bool, warn_days: int = 60) -> tuple[str, str]:
+    """RAG + label for a single SCR cell.
+
+    Returns (status, display_text). status ∈ green/amber/red/grey.
+    """
+    if not latest:
+        return ("red" if required else "grey",
+                "Missing" if required else "—")
+    exp = _parse_iso(latest.get("expiry_date"))
+    if exp:
+        days = (exp - _now()).days
+        if days < 0:
+            return "red", f"Expired {_fmt_date(exp)}"
+        if days <= warn_days:
+            return "amber", f"Expires {_fmt_date(exp)}"
+        return "green", f"Valid to {_fmt_date(exp)}"
+    return "green", "On file"
+
+
+def _fmt_date(d: Optional[datetime]) -> str:
+    if not d:
+        return "—"
+    try:
+        return d.strftime("%d %b %Y")
+    except Exception:
+        return "—"
+
+
+def _date_str_or_dash(iso: Optional[str]) -> str:
+    d = _parse_iso(iso)
+    return _fmt_date(d) if d else "—"
+
+
+async def build_scr_row(db, user_id: str, sector: str = "children") -> Optional[dict]:
+    """Build one Single Central Record row for a staff member."""
+    view = await build_staff_profile_view(db, user_id, sector)
+    if not view:
+        return None
+
+    # Index folder files for quick lookup
+    files_by_folder: dict[str, list[dict]] = {}
+    for tab in view["tabs"]:
+        for folder in tab["folders"]:
+            files_by_folder[folder["id"]] = folder["files"]
+
+    # ---- DBS column (most-asked Ofsted detail) ----
+    dbs_latest = _latest_file(files_by_folder.get("dbs", []))
+    dbs_status, dbs_text = _scr_status(dbs_latest, required=True, warn_days=90)
+    dbs_certificate = (dbs_latest or {}).get("reference_no") if dbs_latest else None
+    dbs_issued = _date_str_or_dash((dbs_latest or {}).get("issued_date"))
+    dbs_expiry = _date_str_or_dash((dbs_latest or {}).get("expiry_date"))
+    # Barred list check — we mark TRUE for children's sector if DBS present
+    # AND a Safer Recruitment Checks document is on file (the seeded
+    # self-declaration / Disqualification by Association doc).
+    barred_files = files_by_folder.get("safer_recruitment_checks", [])
+    barred_status = "green" if (dbs_latest and barred_files) else ("red" if not dbs_latest else "amber")
+    barred_text = "Yes" if barred_status == "green" else ("Pending" if barred_status == "amber" else "No")
+
+    # ---- Right to Work ----
+    rtw_latest = _latest_file(files_by_folder.get("right_to_work", []))
+    rtw_status, rtw_text = _scr_status(rtw_latest, required=True, warn_days=60)
+
+    # ---- ID verified ----
+    id_latest = _latest_file(files_by_folder.get("id_documents", []))
+    id_status, id_text = _scr_status(id_latest, required=True, warn_days=60)
+
+    # ---- References complete (need 2+) ----
+    refs = files_by_folder.get("references", [])
+    if len(refs) >= 2:
+        refs_status, refs_text = "green", f"{len(refs)} on file"
+    elif len(refs) == 1:
+        refs_status, refs_text = "amber", "1 of 2 on file"
+    else:
+        refs_status, refs_text = "red", "Missing"
+
+    # ---- Qualifications ----
+    qual_latest = _latest_file(files_by_folder.get("qualifications", []))
+    qual_status, qual_text = _scr_status(qual_latest, required=True, warn_days=60)
+
+    # ---- Mandatory training ----
+    mt_latest = _latest_file(files_by_folder.get("mandatory_training", []))
+    mt_status, mt_text = _scr_status(mt_latest, required=True, warn_days=60)
+
+    # ---- Last supervision ----
+    sup_latest = _latest_file(files_by_folder.get("supervisions", []))
+    if sup_latest:
+        sup_at = _parse_iso(sup_latest.get("uploaded_at"))
+        days_since = (_now() - sup_at).days if sup_at else 999
+        sup_text = _fmt_date(sup_at)
+        if days_since > 42 * 2:  # 12 weeks = 2x the 6-week standard
+            sup_status = "red"
+        elif days_since > 42:
+            sup_status = "amber"
+        else:
+            sup_status = "green"
+    else:
+        sup_status, sup_text = "red", "Never"
+
+    # ---- Last appraisal ----
+    app_latest = _latest_file(files_by_folder.get("appraisals", []))
+    if app_latest:
+        app_at = _parse_iso(app_latest.get("uploaded_at"))
+        days_since = (_now() - app_at).days if app_at else 999
+        app_text = _fmt_date(app_at)
+        if days_since > 400:
+            app_status = "red"
+        elif days_since > 330:
+            app_status = "amber"
+        else:
+            app_status = "green"
+    else:
+        app_status, app_text = "amber", "Pending"  # appraisal optional within first year
+
+    # ---- Probation ----
+    probation_files = files_by_folder.get("probation", [])
+    probation_text = "Cleared" if not probation_files else "In progress"
+    if probation_files:
+        prob_latest = _latest_file(probation_files)
+        # If notes say "Cleared"/"Passed", mark green; otherwise amber
+        note = (prob_latest.get("notes") or "").lower()
+        if any(w in note for w in ("cleared", "passed", "complete")):
+            probation_status = "green"
+            probation_text = "Cleared"
+        else:
+            probation_status = "amber"
+    else:
+        probation_status = "green"  # No probation = post-probation employee
+
+    return {
+        "staff_id": view["staff"]["id"],
+        "name": view["staff"]["name"],
+        "role": view["staff"]["role"],
+        "role_label": view["profile"]["role_label"],
+        "employment_type": "Agency" if view["profile"]["is_agency"] else "Permanent",
+        "is_agency": view["profile"]["is_agency"],
+        "agency_name": view["profile"].get("agency_name"),
+        "start_date": _date_str_or_dash(view["profile"].get("start_date")),
+        "dbs": {"status": dbs_status, "text": dbs_text,
+                "certificate_no": dbs_certificate,
+                "issued_date": dbs_issued, "expiry_date": dbs_expiry},
+        "barred_list": {"status": barred_status, "text": barred_text},
+        "right_to_work": {"status": rtw_status, "text": rtw_text},
+        "id_verified": {"status": id_status, "text": id_text},
+        "references": {"status": refs_status, "text": refs_text, "count": len(refs)},
+        "qualifications": {"status": qual_status, "text": qual_text},
+        "mandatory_training": {"status": mt_status, "text": mt_text},
+        "last_supervision": {"status": sup_status, "text": sup_text},
+        "last_appraisal": {"status": app_status, "text": app_text},
+        "probation": {"status": probation_status, "text": probation_text},
+        "overall_status": view["overall_status"],
+        "missing_count": len(view["missing_required"]),
+    }
+
+
+async def build_scr(db, sector: str = "children") -> dict:
+    """Full Single Central Record — org-wide rows + KPI tiles.
+
+    Returns:
+        rows: per-staff SCR rows
+        kpis: leadership tiles (compliant, expiring_dbs_60d, overdue_supervisions,
+              missing_references, expired_training)
+        summary: aggregate RAG counts
+    """
+    users = await db.users.find(
+        {"role": {"$in": ["staff", "senior", "manager", "admin"]}},
+        {"_id": 0, "id": 1, "name": 1, "role": 1},
+    ).to_list(500)
+
+    rows: list[dict] = []
+    for u in users:
+        row = await build_scr_row(db, u["id"], sector)
+        if row:
+            rows.append(row)
+
+    # Sort: red overall first, then by missing_count desc, then by name
+    rank = {"red": 0, "amber": 1, "green": 2}
+    rows.sort(key=lambda r: (rank.get(r["overall_status"], 9),
+                              -r.get("missing_count", 0),
+                              r.get("name") or ""))
+
+    # KPIs
+    compliant = sum(1 for r in rows if r["overall_status"] == "green")
+    expiring_dbs_60d = sum(1 for r in rows if r["dbs"]["status"] == "amber")
+    overdue_supervisions = sum(1 for r in rows if r["last_supervision"]["status"] in ("red", "amber"))
+    missing_references = sum(1 for r in rows if r["references"]["status"] in ("red", "amber"))
+    expired_training = sum(1 for r in rows if r["mandatory_training"]["status"] == "red")
+
+    summary = {"red": 0, "amber": 0, "green": 0}
+    for r in rows:
+        summary[r["overall_status"]] = summary.get(r["overall_status"], 0) + 1
+
+    return {
+        "generated_at": _now().isoformat(),
+        "sector": sector,
+        "total_staff": len(rows),
+        "summary": summary,
+        "kpis": {
+            "compliant": compliant,
+            "expiring_dbs_60d": expiring_dbs_60d,
+            "overdue_supervisions": overdue_supervisions,
+            "missing_references": missing_references,
+            "expired_training": expired_training,
+        },
+        "rows": rows,
+        "explainable_note": (
+            "Deterministic Single Central Record. Each row is computed from the "
+            "live personnel file. RAG colouring uses the same factor engine as the "
+            "folder view — same data in → same SCR out. Designed for instant Ofsted, "
+            "Reg 44 and Responsible Individual evidence."
         ),
     }

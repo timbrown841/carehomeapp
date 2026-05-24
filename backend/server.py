@@ -234,6 +234,7 @@ async def _seed_hr_demo_if_empty():
         "manager": [
             ("initial_application", 800, None, "Application form on file"),
             ("references", 800, None, "Two satisfactory references"),
+            ("references", 800, None, "Second reference"),
             ("interview_notes", 800, None, "Panel interview record"),
             ("offer_letter", 800, None, "Offer accepted"),
             ("job_description", 800, None, "Signed JD"),
@@ -251,13 +252,16 @@ async def _seed_hr_demo_if_empty():
             ("staff_handbook", 60, None, "Handbook signed"),
             ("mandatory_training", 30, 365, "Safeguarding L3 in-date"),
             ("training_matrix", 30, None, "Up-to-date"),
-            ("supervision_agreement", 200, None, "Signed agreement"),
+            ("supervision_agreement", 60, None, "Signed agreement"),
             ("supervision_matrix", 30, None, "Frequency tracked"),
-            ("training_agreement", 800, None, "Signed agreement"),
+            ("supervisions", 14, None, "Routine supervision — strengths"),
+            ("supervisions", 56, None, "Earlier supervision"),
+            ("training_agreement", 60, None, "Signed agreement"),
             ("appraisals", 90, None, "Annual appraisal complete"),
         ],
         "senior": [
             ("initial_application", 1200, None, ""),
+            ("references", 1200, None, ""),
             ("references", 1200, None, ""),
             ("interview_notes", 1200, None, ""),
             ("offer_letter", 1200, None, ""),
@@ -278,6 +282,7 @@ async def _seed_hr_demo_if_empty():
             ("training_matrix", 200, None, ""),  # review overdue (review_days=90)
             ("supervision_agreement", 200, None, ""),
             ("supervision_matrix", 45, None, ""),
+            ("supervisions", 50, None, "Overdue — last supervision 7+ weeks"),
             ("training_agreement", 1200, None, ""),
             ("appraisals", 400, None, "Last appraisal overdue"),
         ],
@@ -301,6 +306,7 @@ async def _seed_hr_demo_if_empty():
             ("training_matrix", 30, None, ""),
             ("supervision_agreement", 60, None, ""),
             ("supervision_matrix", 30, None, ""),
+            ("supervisions", 14, None, "Routine supervision"),
             ("training_agreement", 60, None, ""),
             # Missing: references, document_original_checks  → Red on Recruitment
             # Missing: appraisals (optional) → grey
@@ -308,6 +314,7 @@ async def _seed_hr_demo_if_empty():
         ],
         "admin": [
             ("initial_application", 1500, None, ""),
+            ("references", 1500, None, ""),
             ("references", 1500, None, ""),
             ("interview_notes", 1500, None, ""),
             ("offer_letter", 1500, None, ""),
@@ -328,7 +335,8 @@ async def _seed_hr_demo_if_empty():
             ("training_matrix", 30, None, ""),
             ("supervision_agreement", 60, None, ""),
             ("supervision_matrix", 30, None, ""),
-            ("training_agreement", 1500, None, ""),
+            ("supervisions", 21, None, "Recent supervision"),
+            ("training_agreement", 60, None, ""),
             ("appraisals", 60, None, ""),
         ],
     }
@@ -9222,7 +9230,9 @@ from staff_personnel import (
     build_staff_profile_view,
     build_missing_items as hr_build_missing_items,
     build_hr_dashboard,
+    build_scr,
 )
+from scr_pdf import build_scr_pdf
 
 
 _SIM_TEXT_MAX = 200_000  # ~200KB of text
@@ -10037,6 +10047,105 @@ async def hr_staff_audit(
     ).sort("at", -1).limit(int(max(10, min(500, limit))))
     items = await cur.to_list(int(max(10, min(500, limit))))
     return {"staff_id": user_id, "items": items, "count": len(items)}
+
+
+# ---------- Single Central Record (Phase F.2) ----------
+
+
+def _scr_apply_filters(rows: list[dict], non_compliant_only: bool,
+                        role: Optional[str], employment_type: Optional[str],
+                        status: Optional[str]) -> list[dict]:
+    out = rows
+    if non_compliant_only:
+        out = [r for r in out if r["overall_status"] in ("red", "amber")]
+    if role:
+        r_low = role.lower().strip()
+        out = [r for r in out if (r.get("role") or "").lower() == r_low
+               or (r.get("role_label") or "").lower() == r_low]
+    if employment_type:
+        et_low = employment_type.lower().strip()
+        out = [r for r in out if (r.get("employment_type") or "").lower() == et_low]
+    if status:
+        out = [r for r in out if r["overall_status"] == status.lower().strip()]
+    return out
+
+
+@api_router.get("/hr/scr")
+async def hr_scr_json(
+    sector: str = "children",
+    non_compliant_only: bool = False,
+    role: Optional[str] = None,
+    employment_type: Optional[str] = None,
+    status: Optional[str] = None,
+    user: dict = Depends(require_tier(3)),
+):
+    """Single Central Record — JSON for the live dashboard view."""
+    s = _sector_from(sector, user)
+    full = await build_scr(db, sector=s)
+    filtered_rows = _scr_apply_filters(
+        full["rows"], non_compliant_only, role, employment_type, status,
+    )
+    return {
+        **full,
+        "filters": {
+            "non_compliant_only": non_compliant_only,
+            "role": role, "employment_type": employment_type, "status": status,
+        },
+        "rows": filtered_rows,
+        "filtered_count": len(filtered_rows),
+    }
+
+
+@api_router.get("/hr/scr.pdf")
+async def hr_scr_pdf(
+    sector: str = "children",
+    non_compliant_only: bool = False,
+    role: Optional[str] = None,
+    employment_type: Optional[str] = None,
+    status: Optional[str] = None,
+    home_name: Optional[str] = None,
+    user: dict = Depends(require_tier(3)),
+):
+    """Inspection-ready A4 landscape PDF — manager+ only.
+
+    The single most-requested artefact in Ofsted inspections and Reg 44 visits.
+    """
+    s = _sector_from(sector, user)
+    full = await build_scr(db, sector=s)
+    filtered_rows = _scr_apply_filters(
+        full["rows"], non_compliant_only, role, employment_type, status,
+    )
+    payload = {
+        **full,
+        "rows": filtered_rows,
+        "filters": {
+            "non_compliant_only": non_compliant_only,
+            "role": role, "employment_type": employment_type, "status": status,
+        },
+        "home_name": home_name or os.environ.get("HOME_NAME", "Safelyn Children's Home"),
+        "generated_by": user.get("name") or user.get("email"),
+    }
+    pdf_bytes = build_scr_pdf(payload)
+    await record_audit(
+        db, actor=user, action="hr_scr_export_pdf",
+        object_type="hr_scr", object_id="org",
+        metadata={
+            "sector": s,
+            "rows_exported": len(filtered_rows),
+            "non_compliant_only": non_compliant_only,
+        },
+        summary=f"Exported Single Central Record PDF ({len(filtered_rows)} staff)",
+    )
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="single-central-record-'
+                f'{datetime.now(timezone.utc).strftime("%Y%m%d-%H%M")}.pdf"'
+            )
+        },
+    )
 
 
 app.include_router(api_router)

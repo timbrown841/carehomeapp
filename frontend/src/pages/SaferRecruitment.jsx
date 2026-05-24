@@ -8,10 +8,12 @@ import api from "@/lib/api";
 import {
   Loader2, ShieldCheck, AlertTriangle, AlertCircle, CheckCircle2,
   FolderOpen, ChevronRight, RefreshCw, Search, Lock, Users,
-  TrendingUp, FileWarning,
+  TrendingUp, FileWarning, ScrollText,
 } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import StaffPersonnelFile from "@/components/hr/StaffPersonnelFile";
+import SCRDashboard from "@/components/hr/SCRDashboard";
 
 const TONE = {
   red:   { fg: "#7a1a28", bg: "#FBE3E7", line: "#A8273A" },
@@ -24,6 +26,7 @@ export default function SaferRecruitment() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [selected, setSelected] = useState(null);
+  const [scrOpen, setScrOpen] = useState(false);
   const [search, setSearch] = useState("");
 
   const load = useCallback(async () => {
@@ -38,6 +41,14 @@ export default function SaferRecruitment() {
     } finally { setLoading(false); }
   }, []);
   useEffect(() => { load(); }, [load]);
+
+  if (scrOpen) {
+    return (
+      <div className="space-y-3" data-testid="safer-recruitment-page">
+        <SCRDashboard onBack={() => setScrOpen(false)} />
+      </div>
+    );
+  }
 
   if (selected) {
     return (
@@ -94,6 +105,20 @@ export default function SaferRecruitment() {
             <HeroTile Icon={AlertTriangle} label="Action required" value={dash.summary.red}   tone="#FCA1A6" />
             <HeroTile Icon={AlertCircle}  label="Action soon"     value={dash.summary.amber} tone="#FDCC72" />
             <HeroTile Icon={FileWarning}  label="Docs expired"    value={dash.total_expired} tone="#FCA1A6" />
+          </div>
+
+          <div className="flex items-center gap-2 mt-4 flex-wrap">
+            <Button
+              onClick={() => setScrOpen(true)}
+              className="bg-[#B8772F] hover:bg-[#a3661f] text-white text-[13px] h-9"
+              data-testid="open-scr-btn"
+            >
+              <ScrollText size={14} className="mr-1.5" />
+              Open Single Central Record
+            </Button>
+            <span className="text-[11px] text-white/65">
+              The one-tap Ofsted/Reg 44 evidence export
+            </span>
           </div>
         </div>
       </header>
