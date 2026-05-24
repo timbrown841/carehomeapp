@@ -18,6 +18,7 @@ import ResidentDetail from "@/pages/ResidentDetail";
 import LogIncident from "@/pages/LogIncident";
 import IncidentDetail from "@/pages/IncidentDetail";
 import MissingShare from "@/pages/MissingShare";
+import InspectorPreview from "@/pages/InspectorPreview";
 
 // Locked sidebar areas
 import HomeOperations from "@/pages/HomeOperations";
@@ -100,6 +101,7 @@ function App() {
               <Route path="/login" element={<Login />} />
               <Route path="/welcome" element={<WelcomeSelector />} />
             <Route path="/missing/share/:token" element={<MissingShare />} />
+            <Route path="/inspector-preview/:token" element={<InspectorPreview />} />
             <Route
               element={
                 <Protected>

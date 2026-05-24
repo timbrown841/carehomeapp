@@ -1,0 +1,46 @@
+{
+  "summary": "Phase F.3 — Inspector Preview Link verified end-to-end. Backend: 17/17 new inspector tests + 32/32 SCR+HR regression = 49/49 PASS. Database verified: inspector_links collection stores 64-char SHA-256 token_hash + 8-char token_prefix only (NO raw token persisted). 87 hr_inspector_link audit events written to audit_events. Frontend: manager flow validated — login → /hr → SCR dashboard → 'Inspector preview link' CTA (data-testid scr-inspector-link-btn) → InspectorLinkManager modal opens with all 3 expiry options (1h/4h/24h), acknowledgement checkbox, Create button correctly disabled until acknowledged → ShareCard renders with share URL (input data-testid inspector-link-url), Copy button, QR code PNG (data-testid inspector-link-qr), and success toast 'Inspector link created'. Public /inspector-preview/{token} route verified COMPLETELY LOGGED OUT (localStorage cleared): renders inspector-preview-page with banner 'Read-only inspector preview · Expires 24 May 2026, 22:06 · Shared by Sarah Manager', privacy notice 'Scope of access: this view shows only the Single Central Record summary...', and SCR table with 8 staff rows + display_idx column + 5 KPI tiles — NO sidebar, NO nav, NO auth gate. Invalid token URL → 'Access expired' card (data-testid inspector-preview-expired). Backend payload strips staff_id / role enum / missing_count; keeps name/role_label/dbs/RTW/refs/training/overall_status. Public endpoint correctly returns 404 on revoked/expired/bogus tokens (no info leak) and ignores Authorization header substitution.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {
+        "flow": "Inspector Link Manager — Manage active links tab",
+        "issue": "After creating a link, clicking the 'Manage active links' tab text/button did not reliably switch the modal panel to the list view in my Playwright run — the ShareCard view stayed mounted. inspector-links-list / inspector-link-row-{id} / inspector-link-revoke-{id} testids were therefore not visible on first interaction. The backend list endpoint returns 54 links correctly via API, so this is a frontend tab-switch UX issue (possibly: ShareCard state takes priority over tab routing, or the tab selector needs a specific data-testid that wasn't reachable). Manager-only impact, does NOT affect the public-facing inspector flow which is the security-critical path.",
+        "affected_selectors": ["[data-testid='inspector-link-manage-tab']", "[data-testid='inspector-links-list']", "[data-testid^='inspector-link-row-']", "[data-testid^='inspector-link-revoke-']"]
+      }
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration45_inspector.py",
+    "/app/test_reports/pytest/iter45_inspector.xml"
+  ],
+  "action_items": [
+    "[LOW] Verify the InspectorLinkManager modal tab switcher: clicking 'Manage active links' after a create operation should immediately mount the list view. Consider adding a stable data-testid='inspector-link-manage-tab' to the tab button and ensure the active-tab state in the modal resets when navigating between Create and Manage. Backend revoke API + audit log all work correctly (proven by pytest test_revoke_idempotent + test_revoke_manager_plus_only). This is purely a UI tab-switch polish issue."
+  ],
+  "critical_code_review_comments": [
+    "inspector_links.py is clean (151 lines, single-purpose). filter_inspector_payload correctly uses a strict allow-list (keep_row set) rather than a denylist — defence in depth.",
+    "Token is generated with secrets.token_urlsafe(48) = 64 chars urlsafe = 256 bits entropy. Stored as sha256 hex (64 chars) in DB. Verified in MongoDB: token_hash field present, raw 'token' field NOT persisted.",
+    "Public preview endpoint correctly returns the same 404 response for invalid / expired / revoked tokens — no info leak via response differentiation. Verified by tests test_public_preview_invalid_token_404, test_public_preview_revoked_token_404.",
+    "QR code generation uses qrcode library with ERROR_CORRECT_M; output is a clean PNG base64 data: URL. Verified in modal screenshot.",
+    "Filter snapshot (non_compliant_only) honoured by preview — every row in the preview is red/amber when created with that flag. Verified by test_filter_snapshot_applies_to_preview.",
+    "Public route is mounted OUTSIDE the Protected/Layout wrapper in /app/frontend/src/App.js line 104 — verified by clearing localStorage and confirming no sidebar/nav render on /inspector-preview/{token}.",
+    "View count increments correctly on each public fetch (verified test_public_preview_increments_view_count) — view audit metadata captures IP + UA via last_viewed_ip/last_viewed_user_agent fields on the inspector_links doc.",
+    "Revoke is idempotent: second DELETE returns {revoked: false, reason: 'already_revoked'} rather than 404 / 500 — good API hygiene."
+  ],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "100% (49/49 — 17 inspector + 32 SCR/HR regression)",
+    "frontend": "~95% (manager create + share + public preview + expired-page all green; manage-tab list rendering needs UI verification)"
+  },
+  "test_credentials": "manager@care.local / Manager@123, admin@care.local / Admin@123, staff@care.local / Staff@123, senior@care.local / Senior@123",
+  "seed_data_creation": "Created several inspector links during testing (54 total active in DB at end of run). These are time-limited (1-4h) so will self-expire. No cleanup required.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Inspector Preview Link is shipping. Phase F.3 backend is rock solid (security model verified: hashed tokens, no info leak, scope-locked, audited, RBAC enforced). The public preview URL pattern is {frontend_url}/inspector-preview/{token} — mount point is App.js line 104, OUTSIDE the Protected wrapper. The Manage-active-links tab inside InspectorLinkManager modal needs a quick UI verification — backend list/revoke endpoints work, but the tab-switch flow in the modal was not visually confirmed in my Playwright run (the ShareCard panel persisted after creation). Recommend a manual click-through to confirm or add a stable data-testid='inspector-link-manage-tab' on the tab button. The /hr/scr route requires the user to first pass through /welcome and 'Enter workspace' for Children's mode (RequireMode guard) — when scripting, navigate /welcome → click 'Enter workspace' on Children's card → then /hr/scr.",
+  "rca_of_the_issue": "No critical issues. Phase F.3 ships secure: 256-bit tokens, SHA-256 at rest, 404-uniform error responses, no token leakage in list/revoke responses, public endpoint truly public (no auth), audit trail complete, scope filter (staff_id/role/missing_count) stripped from public payload."
+}

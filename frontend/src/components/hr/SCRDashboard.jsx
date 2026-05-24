@@ -11,11 +11,12 @@ import api, { API as API_BASE } from "@/lib/api";
 import {
   Loader2, ShieldCheck, AlertTriangle, AlertCircle, CheckCircle2,
   FileDown, ChevronLeft, Filter, Building2, Eye, Hash,
-  Users, FileWarning, CalendarClock, ContactRound, GraduationCap,
+  Users, FileWarning, CalendarClock, ContactRound, GraduationCap, Link2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
+import InspectorLinkManager from "@/components/hr/InspectorLinkManager";
 
 const TONE = {
   red:   { fg: "#7a1a28", bg: "#FBE3E7", line: "#A8273A", label: "Action" },
@@ -54,6 +55,7 @@ export default function SCRDashboard({ onBack }) {
   const [emp, setEmp] = useState("");
   const [status, setStatus] = useState("");
   const [downloading, setDownloading] = useState(false);
+  const [linkMgrOpen, setLinkMgrOpen] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true); setError(null);
@@ -160,6 +162,13 @@ export default function SCRDashboard({ onBack }) {
               {downloading ? <Loader2 size={14} className="animate-spin mr-1.5" /> : <FileDown size={14} className="mr-1.5" />}
               Export Inspection-Ready PDF
             </Button>
+            <Button onClick={() => setLinkMgrOpen(true)}
+              variant="outline"
+              className="text-[13px] h-9 bg-white/10 border-white/30 text-white hover:bg-white/20"
+              data-testid="scr-inspector-link-btn">
+              <Link2 size={14} className="mr-1.5" />
+              Inspector preview link
+            </Button>
             <span className="text-[11px] text-white/60 ml-2">
               Generated {new Date(data.generated_at).toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}
               {" "}· {data.filtered_count ?? data.rows.length} of {data.total_staff} staff shown
@@ -240,6 +249,16 @@ export default function SCRDashboard({ onBack }) {
         <Hash size={11} className="mt-0.5 shrink-0 text-stone-400" />
         {data.explainable_note}
       </p>
+
+      {linkMgrOpen && (
+        <InspectorLinkManager
+          filters={{
+            non_compliant_only: nonOnly,
+            role, employment_type: emp, status,
+          }}
+          onClose={() => setLinkMgrOpen(false)}
+        />
+      )}
     </div>
   );
 }

@@ -9233,6 +9233,11 @@ from staff_personnel import (
     build_scr,
 )
 from scr_pdf import build_scr_pdf
+from inspector_links import (
+    ALLOWED_EXPIRY_HOURS, DEFAULT_EXPIRY_HOURS,
+    generate_token, hash_token, public_link_view,
+    filter_inspector_payload, _link_lite, _is_active,
+)
 
 
 _SIM_TEXT_MAX = 200_000  # ~200KB of text
@@ -10146,6 +10151,202 @@ async def hr_scr_pdf(
             )
         },
     )
+
+
+# ---------- Inspector Preview Links (Phase F.3) ----------
+
+
+def _frontend_base_url(request: Request) -> str:
+    """Derive the public-facing base URL for share links.
+
+    Honours the X-Forwarded-* headers our ingress sets so the URL the manager
+    copies + shows in the QR code is the one an inspector can actually open.
+    """
+    base = os.environ.get("FRONTEND_BASE_URL")
+    if base:
+        return base.rstrip("/")
+    proto = request.headers.get("x-forwarded-proto") or request.url.scheme
+    host = request.headers.get("x-forwarded-host") or request.headers.get("host") or "localhost"
+    return f"{proto}://{host}"
+
+
+@api_router.post("/hr/scr/inspector-link")
+async def hr_create_inspector_link(
+    request: Request,
+    payload: dict = Body(default={}),
+    user: dict = Depends(require_tier(3)),
+):
+    """Create a time-limited, signed, read-only inspector preview link.
+
+    Manager+ only. Returns the raw token EXACTLY ONCE — at creation. The token
+    is stored hashed (sha-256) and is never returned again by any other endpoint.
+    """
+    raw_hours = (payload or {}).get("expires_in_hours")
+    hours = int(raw_hours) if raw_hours is not None else DEFAULT_EXPIRY_HOURS
+    if hours not in ALLOWED_EXPIRY_HOURS:
+        raise HTTPException(400, f"expires_in_hours must be one of {ALLOWED_EXPIRY_HOURS}")
+    sector = (payload or {}).get("sector") or "children"
+    if sector not in ("children", "adult"):
+        sector = "children"
+    # Snapshot the filters the manager has applied so the inspector sees the
+    # same view the manager saw at create time.
+    filters_snapshot = {
+        "non_compliant_only": bool((payload or {}).get("non_compliant_only", False)),
+        "role": (payload or {}).get("role") or None,
+        "employment_type": (payload or {}).get("employment_type") or None,
+        "status": (payload or {}).get("status") or None,
+    }
+
+    token = generate_token()
+    now = datetime.now(timezone.utc)
+    expires_at = now + timedelta(hours=hours)
+    doc = {
+        "id": str(uuid.uuid4()),
+        "token_hash": hash_token(token),
+        "token_prefix": token[:8],
+        "sector": sector,
+        "filters_snapshot": filters_snapshot,
+        "created_at": now.isoformat(),
+        "created_by_id": user.get("id"),
+        "created_by_name": user.get("name") or user.get("email"),
+        "expires_at": expires_at.isoformat(),
+        "expires_in_hours": hours,
+        "revoked_at": None,
+        "revoked_by_id": None,
+        "revoked_by_name": None,
+        "view_count": 0,
+        "last_viewed_at": None,
+        "last_viewed_ip": None,
+        "last_viewed_user_agent": None,
+    }
+    await db.inspector_links.insert_one(doc.copy())
+
+    await record_audit(
+        db, actor=user, action="hr_inspector_link_created",
+        object_type="inspector_link", object_id=doc["id"],
+        metadata={
+            "expires_in_hours": hours,
+            "sector": sector,
+            "filters_snapshot": filters_snapshot,
+            "token_prefix": doc["token_prefix"],
+        },
+        summary=f"Created inspector preview link · expires in {hours}h",
+    )
+
+    base = _frontend_base_url(request)
+    # Carry the raw token through to the view-builder via a transient key.
+    return public_link_view({**doc, "_raw_token": token,
+                              "share_url": f"{base}/inspector-preview/{token}"},
+                             base_url=base)
+
+
+@api_router.get("/hr/scr/inspector-links")
+async def hr_list_inspector_links(
+    include_inactive: bool = False,
+    _: dict = Depends(require_tier(3)),
+):
+    """List inspector preview links — never includes raw tokens."""
+    cur = db.inspector_links.find({}, {"_id": 0, "token_hash": 0}).sort("created_at", -1)
+    docs = await cur.to_list(200)
+    out = [_link_lite(d) for d in docs]
+    if not include_inactive:
+        out = [l for l in out if l["is_active"]]
+    return {"links": out, "count": len(out)}
+
+
+@api_router.delete("/hr/scr/inspector-link/{link_id}")
+async def hr_revoke_inspector_link(
+    link_id: str,
+    user: dict = Depends(require_tier(3)),
+):
+    """Immediately revoke an inspector preview link."""
+    existing = await db.inspector_links.find_one({"id": link_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(404, "Link not found")
+    if existing.get("revoked_at"):
+        return {"revoked": False, "reason": "already_revoked"}
+    now = datetime.now(timezone.utc).isoformat()
+    await db.inspector_links.update_one(
+        {"id": link_id},
+        {"$set": {
+            "revoked_at": now,
+            "revoked_by_id": user.get("id"),
+            "revoked_by_name": user.get("name") or user.get("email"),
+        }},
+    )
+    await record_audit(
+        db, actor=user, action="hr_inspector_link_revoked",
+        object_type="inspector_link", object_id=link_id,
+        metadata={"token_prefix": existing.get("token_prefix")},
+        summary="Revoked inspector preview link",
+    )
+    return {"revoked": True, "revoked_at": now}
+
+
+@api_router.get("/hr/scr/inspector-preview/{token}")
+async def hr_inspector_preview(
+    token: str,
+    request: Request,
+):
+    """PUBLIC token-gated read-only SCR preview.
+
+    NO AUTH. Tokens authenticate. Scope-locked to SCR only.
+    Records view metadata (IP + user agent + timestamp) for audit.
+    """
+    th = hash_token(token)
+    doc = await db.inspector_links.find_one({"token_hash": th}, {"_id": 0})
+    if not doc:
+        # Same response for "not found" and "expired" to avoid info leak
+        raise HTTPException(404, "Link not found, expired, or revoked")
+    if not _is_active(doc):
+        raise HTTPException(404, "Link not found, expired, or revoked")
+
+    # Record view
+    now = datetime.now(timezone.utc).isoformat()
+    ip = (request.headers.get("x-forwarded-for") or request.client.host if request.client else None) or "unknown"
+    ua = request.headers.get("user-agent", "")[:300]
+    await db.inspector_links.update_one(
+        {"id": doc["id"]},
+        {
+            "$inc": {"view_count": 1},
+            "$set": {
+                "last_viewed_at": now,
+                "last_viewed_ip": ip,
+                "last_viewed_user_agent": ua,
+            },
+        },
+    )
+    await record_audit(
+        db, actor={"id": "inspector_preview", "name": "Inspector (preview link)"},
+        action="hr_inspector_link_viewed",
+        object_type="inspector_link", object_id=doc["id"],
+        metadata={"ip": ip, "ua": ua, "token_prefix": doc.get("token_prefix")},
+        summary=f"Inspector preview viewed (link {doc.get('token_prefix')}…)",
+    )
+
+    # Build SCR with the snapshotted filters
+    snap = doc.get("filters_snapshot") or {}
+    full = await build_scr(db, sector=doc.get("sector") or "children")
+    filtered_rows = _scr_apply_filters(
+        full["rows"],
+        bool(snap.get("non_compliant_only")),
+        snap.get("role"),
+        snap.get("employment_type"),
+        snap.get("status"),
+    )
+    scr_for_inspector = filter_inspector_payload({**full, "rows": filtered_rows})
+
+    return {
+        "preview": scr_for_inspector,
+        "expires_at": doc.get("expires_at"),
+        "created_by_name": doc.get("created_by_name"),
+        "filters_snapshot": snap,
+        "home_name": os.environ.get("HOME_NAME", "Children's Services Home"),
+        "banner_text": (
+            "Read-only inspector preview · This is a time-limited view of the Single Central "
+            "Record. No personnel files, narratives or HR records are accessible from this view."
+        ),
+    }
 
 
 app.include_router(api_router)
