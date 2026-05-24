@@ -14,7 +14,7 @@ import jwt
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional, Literal, Dict
 
-from fastapi import FastAPI, APIRouter, Depends, HTTPException, Request, UploadFile, File, Form
+from fastapi import FastAPI, APIRouter, Depends, HTTPException, Request, UploadFile, File, Form, Body
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -201,10 +201,180 @@ async def lifespan(_app: FastAPI):
 
     await _seed_demo_data_if_empty()
     await seed_adult_demo_if_empty(db)
+    await _seed_hr_demo_if_empty()
 
     yield
     # ---- shutdown ----
     client.close()
+
+
+async def _seed_hr_demo_if_empty():
+    """Idempotent demo seed for Safer Recruitment & HR.
+
+    Populates realistic personnel-file mix per staff so the RAG palette is
+    immediately visible in the UI. Metadata-only — no real binary files on disk.
+    """
+    if await db.staff_files.count_documents({}) > 0:
+        return
+    await db.staff_files.create_index([("staff_user_id", 1), ("folder_id", 1)])
+    await db.staff_profiles.create_index("user_id", unique=True)
+
+    now = datetime.now(timezone.utc)
+    users = await db.users.find({}, {"_id": 0}).to_list(50)
+
+    role_labels = {
+        "admin": "Responsible Individual",
+        "manager": "Registered Manager",
+        "senior": "Senior Support Worker",
+        "staff": "Support Worker",
+    }
+
+    # Per-user file plan: (folder_id, days_ago_uploaded, expiry_in_days_or_none, notes)
+    plans = {
+        "manager": [
+            ("initial_application", 800, None, "Application form on file"),
+            ("references", 800, None, "Two satisfactory references"),
+            ("interview_notes", 800, None, "Panel interview record"),
+            ("offer_letter", 800, None, "Offer accepted"),
+            ("job_description", 800, None, "Signed JD"),
+            ("recruitment_decision", 800, None, "Recruitment rationale"),
+            ("safer_recruitment_checks", 800, None, "Self-declaration"),
+            ("document_original_checks", 800, None, "Manager declaration"),
+            ("right_to_work", 800, 365 * 5, "British citizen — passport on file"),
+            ("dbs", 200, 730, "Enhanced + barred list"),
+            ("id_documents", 800, 365 * 3, "Passport"),
+            ("photo", 800, None, "ID photo"),
+            ("qualifications", 800, None, "Level 5 Diploma"),
+            ("contract", 800, None, "Permanent contract"),
+            ("induction", 800, None, "Induction signed off"),
+            ("policies_signed", 60, None, "All policies acknowledged"),
+            ("staff_handbook", 60, None, "Handbook signed"),
+            ("mandatory_training", 30, 365, "Safeguarding L3 in-date"),
+            ("training_matrix", 30, None, "Up-to-date"),
+            ("supervision_agreement", 200, None, "Signed agreement"),
+            ("supervision_matrix", 30, None, "Frequency tracked"),
+            ("training_agreement", 800, None, "Signed agreement"),
+            ("appraisals", 90, None, "Annual appraisal complete"),
+        ],
+        "senior": [
+            ("initial_application", 1200, None, ""),
+            ("references", 1200, None, ""),
+            ("interview_notes", 1200, None, ""),
+            ("offer_letter", 1200, None, ""),
+            ("job_description", 1200, None, ""),
+            ("recruitment_decision", 1200, None, ""),
+            ("safer_recruitment_checks", 1200, None, ""),
+            ("document_original_checks", 1200, None, ""),
+            ("right_to_work", 1200, 365 * 8, ""),
+            ("dbs", 1100, 30, "DBS expiring — needs renewal"),     # Amber
+            ("id_documents", 1200, 90, ""),
+            ("photo", 1200, None, ""),
+            ("qualifications", 1200, None, "Level 3 Diploma"),
+            ("contract", 1200, None, ""),
+            ("induction", 1200, None, ""),
+            ("policies_signed", 90, None, ""),
+            ("staff_handbook", 90, None, ""),
+            ("mandatory_training", 380, -5, "Safeguarding lapsed — overdue"),  # Red
+            ("training_matrix", 200, None, ""),  # review overdue (review_days=90)
+            ("supervision_agreement", 200, None, ""),
+            ("supervision_matrix", 45, None, ""),
+            ("training_agreement", 1200, None, ""),
+            ("appraisals", 400, None, "Last appraisal overdue"),
+        ],
+        "staff": [
+            ("initial_application", 60, None, ""),
+            ("interview_notes", 60, None, ""),
+            ("offer_letter", 60, None, ""),
+            ("job_description", 60, None, ""),
+            ("recruitment_decision", 60, None, ""),
+            ("safer_recruitment_checks", 60, None, ""),
+            ("right_to_work", 60, 365 * 3, ""),
+            ("dbs", 40, 365 * 3, ""),
+            ("id_documents", 60, 365 * 2, ""),
+            ("photo", 60, None, ""),
+            ("qualifications", 60, None, "Level 2 — Level 3 in progress"),
+            ("contract", 60, None, ""),
+            ("induction", 60, None, "Completed"),
+            ("policies_signed", 60, None, ""),
+            ("staff_handbook", 60, None, ""),
+            ("mandatory_training", 60, 300, "Safeguarding within 1y"),
+            ("training_matrix", 30, None, ""),
+            ("supervision_agreement", 60, None, ""),
+            ("supervision_matrix", 30, None, ""),
+            ("training_agreement", 60, None, ""),
+            # Missing: references, document_original_checks  → Red on Recruitment
+            # Missing: appraisals (optional) → grey
+            ("probation", 50, None, "Probation review in 4 weeks"),
+        ],
+        "admin": [
+            ("initial_application", 1500, None, ""),
+            ("references", 1500, None, ""),
+            ("interview_notes", 1500, None, ""),
+            ("offer_letter", 1500, None, ""),
+            ("job_description", 1500, None, ""),
+            ("recruitment_decision", 1500, None, ""),
+            ("safer_recruitment_checks", 1500, None, ""),
+            ("document_original_checks", 1500, None, ""),
+            ("right_to_work", 1500, 365 * 6, ""),
+            ("dbs", 100, 365 * 2, ""),
+            ("id_documents", 1500, 365 * 4, ""),
+            ("photo", 1500, None, ""),
+            ("qualifications", 1500, None, "Level 5 + Strategic Leadership"),
+            ("contract", 1500, None, ""),
+            ("induction", 1500, None, ""),
+            ("policies_signed", 60, None, ""),
+            ("staff_handbook", 60, None, ""),
+            ("mandatory_training", 30, 365, ""),
+            ("training_matrix", 30, None, ""),
+            ("supervision_agreement", 60, None, ""),
+            ("supervision_matrix", 30, None, ""),
+            ("training_agreement", 1500, None, ""),
+            ("appraisals", 60, None, ""),
+        ],
+    }
+
+    for u in users:
+        role = u.get("role", "staff")
+        plan = plans.get(role) or plans["staff"]
+        is_agency = (u.get("name", "").lower() == "james patel")  # demo: one agency staff
+        await db.staff_profiles.update_one(
+            {"user_id": u["id"]},
+            {"$set": {
+                "user_id": u["id"],
+                "role_label": role_labels.get(role, role.title()),
+                "is_agency": is_agency,
+                "agency_name": "Bright Futures Agency" if is_agency else None,
+                "start_date": (now - timedelta(days=600 if role == "manager" else 300)).date().isoformat(),
+                "last_reviewed_at": (now - timedelta(days=14)).isoformat(),
+                "last_reviewed_by": "Sarah Manager",
+            }},
+            upsert=True,
+        )
+        for folder_id, days_ago, exp_days, note in plan:
+            uploaded = now - timedelta(days=int(days_ago))
+            expiry = (
+                (uploaded + timedelta(days=int(exp_days))).isoformat()
+                if exp_days is not None else None
+            )
+            await db.staff_files.insert_one({
+                "id": str(uuid.uuid4()),
+                "staff_user_id": u["id"],
+                "folder_id": folder_id,
+                "storage_id": f"demo-{folder_id}-{u['id'][:6]}",
+                "original_filename": f"{folder_id.replace('_', '-')}.pdf",
+                "mime_type": "application/pdf",
+                "size_bytes": 124000,
+                "uploaded_at": uploaded.isoformat(),
+                "uploaded_by_id": u["id"],
+                "uploaded_by_name": "System (demo seed)",
+                "expiry_date": expiry,
+                "review_date": None,
+                "notes": note,
+                "version": 1,
+                "is_demo": True,
+            })
+
+    logger.info(f"Seeded HR personnel files for {len(users)} staff members")
 
 
 async def _seed_demo_data_if_empty():
@@ -9044,6 +9214,15 @@ from placement_stability import (
     build_emerging_placement_concerns,
     build_resident_placement_trajectory,
 )
+from staff_personnel import (
+    FOLDERS as HR_FOLDERS,
+    FOLDER_BY_ID as HR_FOLDER_BY_ID,
+    TABS_ORDER as HR_TABS_ORDER,
+    applicable_folders as hr_applicable_folders,
+    build_staff_profile_view,
+    build_missing_items as hr_build_missing_items,
+    build_hr_dashboard,
+)
 
 
 _SIM_TEXT_MAX = 200_000  # ~200KB of text
@@ -9594,6 +9773,270 @@ async def get_resident_placement_trajectory(
     if snap.get("error") == "resident_not_found":
         raise HTTPException(404, "Resident not found")
     return snap
+
+
+# =============================================================================
+# Safer Recruitment & HR — Phase F · Operational Personnel Files
+# =============================================================================
+# Folder-based digital personnel file engine. Sector-aware (children/adult).
+# Manager+ only. Every file change writes an audit_event.
+
+
+def _sector_from(req_sector: Optional[str], user: dict) -> str:
+    """Resolve effective sector. Defaults to 'children' (Ofsted-driven)."""
+    s = (req_sector or "").lower().strip()
+    if s in ("children", "adult"):
+        return s
+    return "children"
+
+
+def _can_see_disciplinary(user: dict) -> bool:
+    """Disciplinary folder restricted to manager+ (admin can also see)."""
+    return user.get("role") in ("manager", "admin")
+
+
+@api_router.get("/hr/folders")
+async def hr_get_folder_registry(
+    sector: str = "children",
+    is_agency: bool = False,
+    _: dict = Depends(require_tier(3)),
+):
+    """Returns the folder registry that applies for a given sector + agency flag."""
+    s = sector if sector in ("children", "adult") else "children"
+    return {
+        "sector": s,
+        "is_agency": is_agency,
+        "tabs_order": HR_TABS_ORDER,
+        "folders": hr_applicable_folders(s, is_agency),
+    }
+
+
+@api_router.get("/hr/staff")
+async def hr_list_staff(
+    sector: str = "children",
+    user: dict = Depends(require_tier(3)),
+):
+    """Manager+ HR dashboard rows — RAG status per staff."""
+    s = _sector_from(sector, user)
+    return await build_hr_dashboard(db, sector=s)
+
+
+@api_router.get("/hr/staff/{user_id}")
+async def hr_get_staff_view(
+    user_id: str,
+    sector: str = "children",
+    user: dict = Depends(require_tier(3)),
+):
+    """Full personnel-file view for one staff member."""
+    s = _sector_from(sector, user)
+    view = await build_staff_profile_view(db, user_id, sector=s)
+    if not view:
+        raise HTTPException(404, "Staff member not found")
+    # Hide disciplinary folder content for non-managers (defence in depth —
+    # currently only manager+ can hit this endpoint, but RBAC may relax later).
+    if not _can_see_disciplinary(user):
+        for tab in view["tabs"]:
+            tab["folders"] = [f for f in tab["folders"] if f["id"] != "disciplinary"]
+    return view
+
+
+@api_router.patch("/hr/staff/{user_id}/profile")
+async def hr_patch_staff_profile(
+    user_id: str,
+    payload: dict = Body(...),
+    user: dict = Depends(require_tier(3)),
+):
+    """Update HR-side profile (agency flag, role label, start date).
+    Does NOT touch the user's auth record."""
+    existing = await db.users.find_one({"id": user_id}, {"_id": 0, "id": 1})
+    if not existing:
+        raise HTTPException(404, "Staff member not found")
+    allowed = {"is_agency", "agency_name", "role_label", "start_date", "notes"}
+    update = {k: v for k, v in (payload or {}).items() if k in allowed}
+    if not update:
+        raise HTTPException(400, "No allowed fields supplied")
+    update["last_reviewed_at"] = datetime.now(timezone.utc).isoformat()
+    update["last_reviewed_by"] = user.get("name")
+    await db.staff_profiles.update_one(
+        {"user_id": user_id},
+        {"$set": {**update, "user_id": user_id}},
+        upsert=True,
+    )
+    await record_audit(
+        db, actor=user, action="hr_profile_update",
+        object_type="staff_profile", object_id=user_id,
+        metadata={"changes": update},
+        summary=f"Updated HR profile fields: {', '.join(update.keys())}",
+    )
+    return {"ok": True}
+
+
+@api_router.post("/hr/staff/{user_id}/files")
+async def hr_upload_file(
+    user_id: str,
+    folder_id: str = Form(...),
+    expiry_date: Optional[str] = Form(None),
+    review_date: Optional[str] = Form(None),
+    issued_date: Optional[str] = Form(None),
+    reference_no: Optional[str] = Form(None),
+    notes: Optional[str] = Form(None),
+    replaces_file_id: Optional[str] = Form(None),
+    file: UploadFile = File(...),
+    user: dict = Depends(require_tier(3)),
+):
+    """Upload a document into a personnel folder. Reuses /api/uploads infra."""
+    if folder_id not in HR_FOLDER_BY_ID:
+        raise HTTPException(400, f"Unknown folder_id: {folder_id}")
+    target = await db.users.find_one({"id": user_id}, {"_id": 0, "id": 1, "name": 1})
+    if not target:
+        raise HTTPException(404, "Staff member not found")
+
+    stored = await save_upload(file, kind="document", uploaded_by=user, db=db)
+
+    # Determine version
+    version = 1
+    if replaces_file_id:
+        prior = await db.staff_files.find_one({"id": replaces_file_id}, {"_id": 0})
+        if prior and prior.get("version"):
+            version = int(prior["version"]) + 1
+
+    record = {
+        "id": str(uuid.uuid4()),
+        "staff_user_id": user_id,
+        "folder_id": folder_id,
+        "storage_id": stored["id"],
+        "original_filename": stored.get("original_name"),
+        "mime_type": stored.get("mime"),
+        "size_bytes": stored.get("size"),
+        "uploaded_at": datetime.now(timezone.utc).isoformat(),
+        "uploaded_by_id": user.get("id"),
+        "uploaded_by_name": user.get("name"),
+        "expiry_date": expiry_date or None,
+        "review_date": review_date or None,
+        "issued_date": issued_date or None,
+        "reference_no": reference_no or None,
+        "notes": notes or None,
+        "version": version,
+        "replaces_file_id": replaces_file_id or None,
+    }
+    await db.staff_files.insert_one(record.copy())
+    await record_audit(
+        db, actor=user, action="hr_file_upload",
+        object_type="staff_file", object_id=record["id"],
+        metadata={
+            "staff_user_id": user_id,
+            "folder_id": folder_id,
+            "filename": record["original_filename"],
+            "expiry_date": expiry_date,
+            "replaces_file_id": replaces_file_id,
+        },
+        summary=f"Uploaded {HR_FOLDER_BY_ID[folder_id]['label']} → {target.get('name')}",
+    )
+    record.pop("_id", None)
+    return record
+
+
+@api_router.patch("/hr/staff/{user_id}/files/{file_id}")
+async def hr_patch_file(
+    user_id: str,
+    file_id: str,
+    payload: dict = Body(...),
+    user: dict = Depends(require_tier(3)),
+):
+    """Update file metadata (expiry, review_date, notes, reference_no, signed_off)."""
+    existing = await db.staff_files.find_one({"id": file_id, "staff_user_id": user_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(404, "File not found")
+    allowed = {"expiry_date", "review_date", "issued_date", "reference_no", "notes",
+               "signed_off_by", "signed_off_at"}
+    update = {k: v for k, v in (payload or {}).items() if k in allowed}
+    if not update:
+        raise HTTPException(400, "No allowed fields supplied")
+    if "signed_off_by" in update and not update.get("signed_off_at"):
+        update["signed_off_at"] = datetime.now(timezone.utc).isoformat()
+    await db.staff_files.update_one({"id": file_id}, {"$set": update})
+    await record_audit(
+        db, actor=user, action="hr_file_update",
+        object_type="staff_file", object_id=file_id,
+        metadata={"staff_user_id": user_id, "changes": update},
+        before={k: existing.get(k) for k in update},
+        after=update,
+        summary=f"Updated personnel file metadata ({', '.join(update.keys())})",
+    )
+    return {"ok": True, "updated": list(update.keys())}
+
+
+@api_router.delete("/hr/staff/{user_id}/files/{file_id}")
+async def hr_delete_file(
+    user_id: str,
+    file_id: str,
+    user: dict = Depends(require_tier(3)),
+):
+    """Delete a personnel file — admin or manager."""
+    existing = await db.staff_files.find_one({"id": file_id, "staff_user_id": user_id}, {"_id": 0})
+    if not existing:
+        return {"deleted": 0}
+    # Also try to delete the underlying file (best-effort)
+    sid = existing.get("storage_id")
+    if sid:
+        meta = await db.files.find_one({"id": sid}, {"_id": 0})
+        if meta:
+            p = disk_path(meta)
+            if p:
+                try:
+                    p.unlink()
+                except Exception:
+                    pass
+            await db.files.delete_one({"id": sid})
+    res = await db.staff_files.delete_one({"id": file_id})
+    await record_audit(
+        db, actor=user, action="hr_file_delete",
+        object_type="staff_file", object_id=file_id,
+        metadata={
+            "staff_user_id": user_id,
+            "folder_id": existing.get("folder_id"),
+            "filename": existing.get("original_filename"),
+        },
+        summary=f"Deleted personnel file: {existing.get('original_filename')}",
+    )
+    return {"deleted": res.deleted_count}
+
+
+@api_router.get("/hr/staff/{user_id}/missing-items")
+async def hr_missing_items(
+    user_id: str,
+    sector: str = "children",
+    user: dict = Depends(require_tier(3)),
+):
+    """Quick 'what's missing/expiring' for the staff member."""
+    s = _sector_from(sector, user)
+    out = await hr_build_missing_items(db, user_id, sector=s)
+    if not out.get("staff_name"):
+        # No view returned — confirm staff exists
+        chk = await db.users.find_one({"id": user_id}, {"_id": 0, "id": 1})
+        if not chk:
+            raise HTTPException(404, "Staff member not found")
+    return out
+
+
+@api_router.get("/hr/staff/{user_id}/audit")
+async def hr_staff_audit(
+    user_id: str,
+    limit: int = 100,
+    user: dict = Depends(require_tier(3)),
+):
+    """Audit trail filtered to this staff member."""
+    cur = db.audit_events.find(
+        {
+            "$or": [
+                {"object_type": "staff_profile", "object_id": user_id},
+                {"object_type": "staff_file", "metadata.staff_user_id": user_id},
+            ],
+        },
+        {"_id": 0},
+    ).sort("at", -1).limit(int(max(10, min(500, limit))))
+    items = await cur.to_list(int(max(10, min(500, limit))))
+    return {"staff_id": user_id, "items": items, "count": len(items)}
 
 
 app.include_router(api_router)
