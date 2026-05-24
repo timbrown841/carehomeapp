@@ -500,11 +500,17 @@ async def build_resident_placement_stability(db, resident_id: str,
     }
 
 
-async def build_emerging_placement_concerns(db, cfg_override: Optional[dict] = None) -> dict:
+async def build_emerging_placement_concerns(db, cfg_override: Optional[dict] = None,
+                                              with_trajectory: bool = True,
+                                              trajectory_weeks: int = 8) -> dict:
     """Org-wide aggregation — Manager+ only.
 
     Surfaces residents whose placement stability is shifting (in either direction)
     so leadership can act early. Tone is supportive, not punitive.
+
+    When ``with_trajectory`` is True (default), each row is enriched with a
+    compact trajectory layer (label + score series for a mini sparkline) so the
+    UI can render a glanceable longitudinal view in the panel itself.
     """
     cfg = {**PLACEMENT_STABILITY_CONFIG, **(cfg_override or {})}
     now = datetime.now(timezone.utc)
@@ -525,6 +531,12 @@ async def build_emerging_placement_concerns(db, cfg_override: Optional[dict] = N
         snap = await build_resident_placement_stability(db, r["id"], cfg)
         if "error" in snap:
             continue
+        if with_trajectory:
+            traj = await build_resident_placement_trajectory(
+                db, r["id"], weeks_back=trajectory_weeks, cfg_override=cfg,
+            )
+            # Attach a compact, sparkline-ready trajectory layer
+            snap["trajectory"] = _compact_trajectory(traj)
         rows.append(snap)
 
     # Buckets
@@ -574,7 +586,7 @@ async def build_emerging_placement_concerns(db, cfg_override: Optional[dict] = N
 
 def _lite(snap: dict) -> dict:
     """Compact row for the org panel — full detail loaded on demand."""
-    return {
+    out = {
         "resident_id": snap["resident_id"],
         "name": snap.get("name"),
         "status": snap["status"],
@@ -586,6 +598,44 @@ def _lite(snap: dict) -> dict:
         "protective_score": snap["protective_score"],
         "top_risk":       snap["risk_factors"][0]["label"] if snap["risk_factors"] else None,
         "top_protective": snap["protective_factors"][0]["label"] if snap["protective_factors"] else None,
+    }
+    if snap.get("trajectory"):
+        out["trajectory"] = snap["trajectory"]
+    return out
+
+
+def _compact_trajectory(traj: dict) -> dict:
+    """Shrink a full trajectory payload to the minimum the panel needs to
+    render a mini sparkline + label. No PII; no narrative; no event lists."""
+    if not traj or traj.get("error"):
+        return {
+            "trajectory_label": "insufficient_data",
+            "trajectory_label_text": TRAJECTORY_LABELS["insufficient_data"],
+            "sparkline": [],
+            "weeks_returned": 0,
+            "score_min": 0,
+            "score_max": 0,
+            "score_current": 0,
+            "score_earliest": 0,
+        }
+    return {
+        "trajectory_label":      traj.get("trajectory_label", "insufficient_data"),
+        "trajectory_label_text": traj.get("trajectory_label_text", TRAJECTORY_LABELS["insufficient_data"]),
+        "trajectory_summary":    traj.get("trajectory_summary"),
+        "weeks_returned":        traj.get("weeks_returned", 0),
+        "score_min":             traj.get("score_min", 0),
+        "score_max":             traj.get("score_max", 0),
+        "score_current":         traj.get("score_current", 0),
+        "score_earliest":        traj.get("score_earliest", 0),
+        "sparkline": [
+            {
+                "week_ending_at": p["week_ending_at"],
+                "score": p["score"],
+                "status": p["status"],
+                "status_label": p["status_label"],
+            }
+            for p in (traj.get("points") or [])
+        ],
     }
 
 

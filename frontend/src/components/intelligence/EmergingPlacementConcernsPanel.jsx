@@ -11,9 +11,11 @@ import { useEffect, useState, useCallback } from "react";
 import api from "@/lib/api";
 import {
   Sparkles, Heart, AlertTriangle, ChevronRight, Loader2, ShieldCheck,
-  ArrowUpRight, ArrowDownRight, Minus, Info, X,
+  ArrowUpRight, ArrowDownRight, Minus, Info, X, TrendingDown, TrendingUp,
+  Activity, Waves, Clock,
 } from "lucide-react";
 import PlacementStabilityCard from "@/components/intelligence/PlacementStabilityCard";
+import StabilitySparkline from "@/components/intelligence/StabilitySparkline";
 
 const STATUS_META = {
   critical:      { label: "Immediate review", fg: "#5A0E1C", bg: "#5A0E1C18", rank: 0 },
@@ -22,6 +24,16 @@ const STATUS_META = {
   stabilising:   { label: "Stabilising",          fg: "#2F6A3A", bg: "#2F6A3A18", rank: 3 },
   steady:        { label: "Steady",               fg: "#5D6068", bg: "#5D606818", rank: 4 },
   new_placement: { label: "Recently admitted",    fg: "#5D6068", bg: "#5D606818", rank: 5 },
+};
+
+const TRAJ_META = {
+  stabilising:       { fg: "#2F6A3A", bg: "#2F6A3A14", Icon: TrendingDown, short: "Stabilising" },
+  improving:         { fg: "#2F6A3A", bg: "#2F6A3A12", Icon: TrendingDown, short: "Improving" },
+  steady:            { fg: "#5D6068", bg: "#5D606814", Icon: Activity,     short: "Steady" },
+  fluctuating:       { fg: "#B8772F", bg: "#B8772F16", Icon: Waves,        short: "Fluctuating" },
+  deteriorating:     { fg: "#A8273A", bg: "#A8273A14", Icon: TrendingUp,   short: "Support recommended" },
+  insufficient_data: { fg: "#5D6068", bg: "#5D606810", Icon: Clock,        short: "Building" },
+  no_admission:      { fg: "#5D6068", bg: "#5D606810", Icon: Clock,        short: "No admission date" },
 };
 
 function TrendIcon({ direction }) {
@@ -90,8 +102,10 @@ export default function EmergingPlacementConcernsPanel() {
             {data.overall_label}
           </h2>
           <p className="text-[12px] text-white/70 mt-1 max-w-2xl">
-            Deterministic placement stability intelligence across all current children.
-            We surface support needs early — and quietly celebrate positive trajectory.
+            Deterministic placement stability intelligence across all current children —
+            now with longitudinal 8-week trajectories. We surface support needs early
+            and quietly celebrate positive trajectory. Tap any child to drill into the
+            full evidence chain.
           </p>
 
           {/* Summary tiles */}
@@ -177,13 +191,18 @@ export default function EmergingPlacementConcernsPanel() {
 
 function ResidentRow({ row, onOpen }) {
   const s = STATUS_META[row.status] || STATUS_META.steady;
+  const traj = row.trajectory || null;
+  const tm = (traj && TRAJ_META[traj.trajectory_label]) || null;
+  const TrajIcon = tm?.Icon;
+  const hasSpark = traj && Array.isArray(traj.sparkline) && traj.sparkline.length >= 2;
+
   return (
     <li>
       <button
         type="button"
         onClick={onOpen}
         data-testid={`resident-row-${row.resident_id}`}
-        className="w-full text-left py-2.5 px-3 rounded-lg bg-stone-50 hover:bg-stone-100 transition-colors flex items-start gap-3"
+        className="w-full text-left py-3 px-3 rounded-lg bg-stone-50 hover:bg-stone-100 transition-colors flex items-start gap-3"
       >
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5 flex-wrap">
@@ -194,9 +213,19 @@ function ResidentRow({ row, onOpen }) {
             <span className="text-[10px] uppercase tracking-wider text-stone-500">
               score {row.score} · {row.days_in_placement}d
             </span>
+            {tm && (
+              <span
+                className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded flex items-center gap-1 ml-auto sm:ml-0"
+                style={{ background: tm.bg, color: tm.fg }}
+                data-testid={`resident-row-traj-${row.resident_id}`}
+                title={traj.trajectory_label_text}
+              >
+                {TrajIcon && <TrajIcon size={9} />} {tm.short}
+              </span>
+            )}
           </div>
           {row.top_risk && (
-            <p className="text-[11px] text-[#A8273A] mt-0.5 flex items-center gap-1">
+            <p className="text-[11px] text-[#A8273A] mt-1 flex items-center gap-1">
               <AlertTriangle size={10} /> {row.top_risk}
             </p>
           )}
@@ -205,8 +234,33 @@ function ResidentRow({ row, onOpen }) {
               <Heart size={10} /> {row.top_protective}
             </p>
           )}
+          {traj && (
+            <p className="text-[10px] text-stone-500 mt-1.5 truncate">
+              {traj.trajectory_summary || "Building longitudinal trajectory…"}
+            </p>
+          )}
         </div>
-        <ChevronRight size={14} className="text-stone-400 mt-1" />
+
+        <div className="shrink-0 flex flex-col items-end gap-1 pt-0.5">
+          {hasSpark ? (
+            <StabilitySparkline
+              points={traj.sparkline}
+              trajectoryLabel={traj.trajectory_label}
+              width={110}
+              height={32}
+              showAxis={false}
+              testid={`row-sparkline-${row.resident_id}`}
+            />
+          ) : traj ? (
+            <div
+              className="text-[9px] text-stone-400 italic"
+              data-testid={`row-sparkline-empty-${row.resident_id}`}
+            >
+              Building trajectory
+            </div>
+          ) : null}
+          <ChevronRight size={14} className="text-stone-400" />
+        </div>
       </button>
     </li>
   );
