@@ -216,6 +216,39 @@ A simple and fast care management app for children's homes and supported living.
 - **Other change**: `nc_manual_notification` now targets the calling user only (instead of broadcasting to all managers) — improves manager testing & per-user behaviour predictability.
 - **Tested**: 31/31 backend pytest (9 new quiet-hours + 22 G.1 regression). Frontend Playwright: 100% data-testid coverage + tone verified. No regressions. Report: `/app/test_reports/iteration_48.json`. **No retest needed.**
 
+## Implemented (2026-05-29 · iter-49 · Phase H — Induction & Policy Management Hub)
+- **Major P0 module** delivering Ofsted / Reg 44 / CQC-grade evidence for staff policy compliance. Designed deliberately as an operational compliance system, not a document library.
+- **Backend architecture** (extracted from the monolith — router pattern):
+  - `policy_management.py` — seed catalogue (21 children's + 16 adult categories), default 4-week induction packs (children's + adult), deterministic RAG calc, assignment status machine, MCQ auto-grader.
+  - `policy_routes.py` — APIRouter mounted post-`include_router(api_router)` with explicit `init()`/`build_routes()` dependency-injection (keeps server.py untouched).
+  - Idempotent startup seed via lifespan; pre-existing seed rows back-filled with `id` field.
+- **Collections** introduced: `policies`, `policy_versions`, `policy_categories`, `policy_questions`, `policy_assignments`, `policy_assessment_responses`, `induction_packs`, `induction_enrollments`.
+- **Endpoints** (≈20 in total):
+  - Categories: `GET /api/policy-categories` (filter by sector).
+  - Library: `GET /api/policies`, `GET /api/policies/folders` (RAG aggregation per category), `GET /api/policies/{id}`, `POST/PATCH/archive`, version CRUD with auto-archive of superseded versions, `POST /api/policies/{id}/questions` (MCQ + reflection).
+  - Lifecycle: `POST /api/policy-assignments`, `GET /api/policy-assignments[?staff_id&status&policy_id]`, `GET /api/policy-assignments/mine`, `GET /api/policy-assignments/{id}` (correct_index hidden from staff), `POST /open`, `POST /assessment` (auto-graded with 80% threshold), `POST /staff-sign` + `POST /manager-sign` with declarations.
+  - Induction: `GET/POST/PATCH /api/induction-packs`, `POST /api/induction-enrollments` (auto-creates assignments for matching categories; weeks with no active policy show `status=not_assigned`).
+  - Dashboard: `GET /api/policy-compliance/dashboard` returns total/complete/completion_pct/overdue/awaiting_manager_sign_off/failed_assessments/in_induction/avg_completion_days + deterministic RAG.
+  - Evidence: `GET /api/policy-compliance/evidence.pdf?staff_id=` produces an inspection-ready PDF (reportlab) with summary table + per-assignment audit rows + audit-log signpost.
+- **RBAC enforcement** (verified):
+  - Manager+ (tier ≥3) — create/edit/archive policies, set questions, assign, manager-sign, view dashboard, download evidence.
+  - Staff (tier ≥1) — read their own assignments, open, submit assessment, staff-sign. Cannot view correct answers, cannot open someone else's assignment, cannot manager-sign.
+  - Admin tier ≥4 — delete assignment (audit-retained).
+- **Audit events** emitted: policy_created, policy_updated, policy_archived, policy_version_added, policy_questions_set, policy_assigned, policy_opened, policy_assessment_submitted, policy_staff_signed, policy_manager_signed, induction_pack_created, induction_pack_updated, induction_enrolled, policy_evidence_exported, policy_assignment_deleted.
+- **Frontend** (4 new pages + 1 modified hub):
+  - `InductionPolicyHub` (manager+) `/policies` — 3 tabs: Library (folder grid with RAG status per category), Compliance Dashboard (6 tiles + Evidence Pack downloader + recent assignments), Induction (pack cards + enrol modal + active enrollments with progress bars).
+  - `PolicyDetail` `/policies/:id` — version history, upload-version modal (file + change summary + effective date + optional text), assessment editor modal (add MCQ/reflection inline), assign-to-staff modal.
+  - `PolicyAssignment` `/policy-assignments/:id` — 4-step stepper Read → Assess → Staff sig → Manager sig. Auto-routes user to current stage. Hides correct answers from staff. Final "Complete" panel shows both signatures + score.
+  - `MyPolicies` `/my-policies` — staff inbox with proper `<Link>` rows for keyboard/right-click navigation.
+  - Added "Induction & Policy" tab to `StaffOperationsHub` (renders manager hub or staff inbox by tier).
+- **Default content seeded**:
+  - 21 children's policy categories incl. Statement of Purpose, Safeguarding, Missing From Care, CSE/CCE, Prevent, Physical Intervention, Allegations Against Staff, GDPR.
+  - 16 adult categories incl. MCA, DoLS, Adult Safeguarding, Infection Control, Positive Behaviour Support, Professional Boundaries.
+  - Children's 4-week induction (Foundations → Care Practice → Trauma & Contextual → Restrictive & Reflective Practice).
+  - Adult 4-week induction (Foundations → Daily Care Practice → Professional Standards → Behaviour & Boundaries).
+- **Tested**: 16/16 backend pytest (11 in `test_iteration49_policies.py` + 5 supplementary RBAC/audit tests in `test_iteration49b_policies_extra.py`). Frontend Playwright: hub + 3 tabs + folder grid + dashboard tiles + evidence pack download + induction pack enrol + active enrollments + staff inbox — all verified. 33/33 G.1/G.1b regression remains green. Report: `/app/test_reports/iteration_49.json`. **No retest needed.**
+
+
 
 
 ## Backlog (next-up)

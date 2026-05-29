@@ -1,6 +1,6 @@
 /* Phase H — Staff inbox of assigned policies. */
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import api from "@/lib/api";
 import { ClipboardList, Loader2, ChevronRight } from "lucide-react";
 import { StatusPill } from "@/pages/InductionPolicyHub";
@@ -8,7 +8,6 @@ import { StatusPill } from "@/pages/InductionPolicyHub";
 export default function MyPolicies() {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
-  const nav = useNavigate();
 
   useEffect(() => {
     (async () => {
@@ -55,19 +54,22 @@ export default function MyPolicies() {
             {items.map((a) => (
               <li
                 key={a.id}
-                onClick={() => nav(`/policy-assignments/${a.id}`)}
                 data-testid={`my-policy-${a.id}`}
-                className="py-3 px-2 flex items-start gap-3 cursor-pointer hover:bg-stone-50 rounded-lg"
               >
-                <StatusPill status={a.status} />
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm font-semibold text-stone-900">{a.policy_title}</div>
-                  <div className="text-[11px] text-stone-500 mt-0.5">
-                    {a.policy_category} · due {(a.due_date || "").slice(0, 10)}
-                    {a.assessment_score !== null && a.assessment_score !== undefined && <> · score {a.assessment_score}%</>}
+                <Link
+                  to={`/policy-assignments/${a.id}`}
+                  className="py-3 px-2 flex items-start gap-3 hover:bg-stone-50 rounded-lg"
+                >
+                  <StatusPill status={a.status} />
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-semibold text-stone-900">{a.policy_title}</div>
+                    <div className="text-[11px] text-stone-500 mt-0.5">
+                      {a.policy_category} · due {(a.due_date || "").slice(0, 10)}
+                      {a.assessment_score !== null && a.assessment_score !== undefined && <> · score {a.assessment_score}%</>}
+                    </div>
                   </div>
-                </div>
-                <ChevronRight size={14} className="text-stone-300 mt-1 shrink-0" />
+                  <ChevronRight size={14} className="text-stone-300 mt-1 shrink-0" />
+                </Link>
               </li>
             ))}
           </ul>
