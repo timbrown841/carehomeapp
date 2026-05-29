@@ -11,8 +11,9 @@ import { Button } from "@/components/ui/button";
 import {
   Inbox, CheckCheck, X, Settings2, ShieldAlert, MapPin, ClipboardCheck,
   Users, Sparkles, FileWarning, Mail, Smartphone, BellRing, ChevronRight,
-  Loader2, RefreshCw,
+  Loader2, RefreshCw, Moon,
 } from "lucide-react";
+import QuietHoursPanel from "@/components/notifications/QuietHoursPanel";
 
 const CATEGORY_ICON = {
   safeguarding:           ShieldAlert,
@@ -156,6 +157,15 @@ export default function NotificationCentre() {
               Safelyn surfaces only what's operationally meaningful — no noise.
               Critical events page you immediately; everything else waits in here or in your digest.
             </p>
+            {counts.bundled_for_digest > 0 && (
+              <div
+                data-testid="bundled-for-digest-banner"
+                className="mt-2 inline-flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-1 rounded-full bg-[#FCEFD4] text-[#7a4d12]"
+              >
+                <Moon size={11} />
+                {counts.bundled_for_digest} held for your morning digest
+              </div>
+            )}
           </div>
           <div className="flex items-center gap-2 flex-wrap">
             <Button
@@ -234,10 +244,12 @@ export default function NotificationCentre() {
 
       {/* Preferences panel */}
       {showPrefs && (
-        <section
-          data-testid="notif-prefs-panel"
-          className="bg-white border divider-soft rounded-2xl p-5"
-        >
+        <>
+          <QuietHoursPanel />
+          <section
+            data-testid="notif-prefs-panel"
+            className="bg-white border divider-soft rounded-2xl p-5"
+          >
           <h3 className="font-display font-semibold text-lg text-[#0F1115] mb-1">
             Channel preferences
           </h3>
@@ -289,6 +301,7 @@ export default function NotificationCentre() {
             arrive in the next phase. Your preferences are saved either way.
           </p>
         </section>
+        </>
       )}
 
       {/* List */}
@@ -342,7 +355,15 @@ export default function NotificationCentre() {
                         </span>
                         {n.is_critical && (
                           <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-[#7a1a28] text-white">
-                            CRITICAL
+                            {n.quiet_hours_breakthrough ? "CRITICAL · BROKE THROUGH" : "CRITICAL"}
+                          </span>
+                        )}
+                        {n.bundled_into_digest && !n.is_critical && (
+                          <span
+                            data-testid={`notif-bundled-${n.id}`}
+                            className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-[#FCEFD4] text-[#7a4d12] inline-flex items-center gap-0.5"
+                          >
+                            <Moon size={9} /> Held for digest
                           </span>
                         )}
                         {!n.read_at && <span className="w-1.5 h-1.5 rounded-full bg-[#A8273A]" />}

@@ -1,0 +1,25 @@
+{
+  "summary": "Phase G.1b Quiet Hours — full backend (pytest) + frontend (Playwright) verification. 31/31 backend pytest pass (9 quiet-hours + 13 notif-centre G.1 regression + 9 notif-extra). Frontend QuietHoursPanel + bundled-for-digest banner + held-for-digest chips + active-now pill + active banner all render correctly with required data-testids and supportive copy. No regressions detected.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iteration47c_quiet_hours.py",
+    "/app/backend/tests/test_iteration47_notif_centre.py",
+    "/app/backend/tests/test_iteration47b_notif_extra.py",
+    "/app/test_reports/pytest/iteration_48.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "/app/backend/server.py is very large (verified via grep ~10560 lines for QH section). Future iterations should split routers into modular files (notif_centre_router.py, quiet_hours_router.py) — not blocking for this iteration but file size is past the 700-line guideline.",
+    "agent_to_agent_context_note flagged: nc_manual_notification now targets only caller — confirmed by tests (managers no longer fan-out). Watch for downstream features (e.g. broadcast announcements) that may have relied on the old fan-out semantics.",
+    "All quiet-hours endpoints validated, time/days input validated (400 on malformed), audit events written, midnight-crossing math handles previous-day weekday correctly (verified by helper unit test)."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (31/31)", "frontend": "100% (all required testids + copy verified)"},
+  "test_credentials": "manager@care.local / Manager@123 (and staff@care.local / Staff@123 used for staff-blocked checks within existing G.1 suite)",
+  "seed_data_creation": "None — used existing seeded manager. Test-created notifications use 'qh_bundle_test_*' / 'qh_break_test_*' / 'qh_ui_bundle_*' event_types so easily identifiable. Tests reset quiet_hours.enabled=false in teardown.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Quiet Hours feature is solid end-to-end. The UI exposes data-testids: quiet-hours-panel, quiet-hours-toggle, quiet-hours-start, quiet-hours-end, quiet-hours-day-{0..6}, quiet-hours-apply_to_{in_app,email,sms}, quiet-hours-active-now, quiet-hours-active-banner, quiet-hours-preview, quiet-hours-critical-{key}, bundled-for-digest-banner, notif-bundled-{id}. Manual notifications now scope to caller only — keep in mind for any later broadcast-style features. Email/SMS dispatch remain MOCKED (Resend/Twilio); in-app + audit + bundling logic are REAL.",
+  "rca_of_the_issue": "N/A — no issues found. All 9 new quiet-hours tests + 22 regression notif-centre tests pass. Frontend Playwright run confirmed headline copy exactly matches spec ('Protect your downtime while keeping critical safeguarding alerts active.'), no 'disable alerts' phrasing anywhere, active-now pill + amber banner appear when QH window covers now(), bundled-for-digest banner shows correct count, and 7+ critical breakthrough items render."
+}

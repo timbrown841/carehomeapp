@@ -9288,6 +9288,9 @@ from notifications_centre import (
     CATEGORIES as NOTIF_CATEGORIES,
     CATEGORY_LABELS as NOTIF_CATEGORY_LABELS,
     DEFAULT_CHANNELS as NOTIF_DEFAULT_CHANNELS,
+    QUIET_HOURS_DEFAULT as NOTIF_QUIET_HOURS_DEFAULT,
+    is_in_quiet_hours as nc_is_in_quiet_hours,
+    get_quiet_hours as nc_get_quiet_hours,
     create_notification,
     notify_safeguarding_incident,
     notify_missing_episode,
@@ -10485,14 +10488,37 @@ async def nc_list_notifications(
 
 @api_router.get("/notif-centre/counts")
 async def nc_notification_counts(user: dict = Depends(get_current_user)):
-    """Unread + category breakdown for the bell icon."""
-    q = {"user_id": user.get("id"), "dismissed_at": None, "read_at": None}
+    """Unread + category breakdown for the bell icon.
+
+    Notifications that were bundled into the morning digest during quiet hours
+    are excluded from the bell badge — they're still visible in the centre
+    when the user explicitly opens it.
+    """
+    q = {
+        "user_id": user.get("id"),
+        "dismissed_at": None,
+        "read_at": None,
+        "$or": [{"bundled_into_digest": {"$ne": True}}, {"is_critical": True}],
+    }
     unread = await db.notifications.count_documents(q)
     by_cat = {}
     for c in NOTIF_CATEGORIES:
         by_cat[c] = await db.notifications.count_documents({**q, "category": c})
     critical = await db.notifications.count_documents({**q, "is_critical": True})
-    return {"unread": unread, "by_category": by_cat, "critical": critical}
+    # Bundled (quiet-hours) — separate count for the "Held for digest" indicator
+    bundled = await db.notifications.count_documents({
+        "user_id": user.get("id"),
+        "dismissed_at": None,
+        "read_at": None,
+        "bundled_into_digest": True,
+        "is_critical": {"$ne": True},
+    })
+    return {
+        "unread": unread,
+        "by_category": by_cat,
+        "critical": critical,
+        "bundled_for_digest": bundled,
+    }
 
 
 @api_router.get("/notif-centre/since-last-login")
@@ -10602,14 +10628,114 @@ async def nc_set_preferences(
     return {"ok": True, "category": cat, "channels": channels}
 
 
+# ---------- Quiet Hours ----------
+# Categories of events that ALWAYS break through quiet hours, even when set
+# to "non-critical" severity. These reflect the user's safeguarding priorities.
+QUIET_HOURS_CRITICAL_EVENTS = [
+    {"key": "child_reported_missing",       "label": "Child reported missing"},
+    {"key": "high_risk_incident",           "label": "Serious / high-risk incident"},
+    {"key": "new_safeguarding_referral",    "label": "Safeguarding concern raised"},
+    {"key": "police_involvement",           "label": "Police involvement"},
+    {"key": "reg40_trigger",                "label": "Reg 40 trigger"},
+    {"key": "staffing_ratio_breach",        "label": "Serious staffing ratio breach"},
+    {"key": "medication_safety_urgent",     "label": "Urgent medication safety issue"},
+    {"key": "placement_stability_critical", "label": "Placement stability critical"},
+]
+QUIET_HOURS_BUNDLED_EXAMPLES = [
+    "Training expiry reminders",
+    "Routine supervision reminders",
+    "Low-priority compliance updates",
+    "Non-urgent HR reminders",
+    "Routine placement analytics updates",
+    "Routine document expiry reminders",
+]
+
+
+@api_router.get("/notif-centre/quiet-hours")
+async def nc_get_quiet_hours_endpoint(user: dict = Depends(get_current_user)):
+    """Return the user's quiet-hours setting + breakthrough/bundled examples."""
+    qh = await nc_get_quiet_hours(db, user.get("id"))
+    # Recompute "is_now_in_quiet_hours" for UI feedback
+    in_quiet = nc_is_in_quiet_hours(qh)
+    return {
+        "quiet_hours": {k: v for k, v in qh.items() if k != "_id"},
+        "is_in_quiet_hours": in_quiet,
+        "critical_breakthrough_events": QUIET_HOURS_CRITICAL_EVENTS,
+        "bundled_examples": QUIET_HOURS_BUNDLED_EXAMPLES,
+    }
+
+
+@api_router.patch("/notif-centre/quiet-hours")
+async def nc_set_quiet_hours(
+    payload: dict = Body(...),
+    user: dict = Depends(get_current_user),
+):
+    """Persist the user's quiet-hours setting.
+
+    payload: {
+      enabled: bool,
+      start: "HH:MM",
+      end: "HH:MM",
+      days: [int 0..6],
+      apply_to_email: bool,
+      apply_to_sms: bool,
+      apply_to_in_app: bool,
+    }
+    """
+    allowed_keys = set(NOTIF_QUIET_HOURS_DEFAULT.keys())
+    update = {k: v for k, v in (payload or {}).items() if k in allowed_keys}
+    # Validate time strings
+    for k in ("start", "end"):
+        if k in update:
+            try:
+                h, m = str(update[k]).split(":")
+                if not (0 <= int(h) <= 23 and 0 <= int(m) <= 59):
+                    raise ValueError("range")
+            except (ValueError, AttributeError):
+                raise HTTPException(400, f"Invalid {k} time; expected HH:MM")
+    # Validate days
+    if "days" in update:
+        try:
+            days = [int(d) for d in update["days"] or []]
+        except (TypeError, ValueError):
+            raise HTTPException(400, "Invalid days; expected list of integers")
+        if any(d < 0 or d > 6 for d in days):
+            raise HTTPException(400, "Days must be 0 (Mon) .. 6 (Sun)")
+        update["days"] = sorted(set(days))
+    # Coerce booleans
+    for k in ("enabled", "apply_to_email", "apply_to_sms", "apply_to_in_app"):
+        if k in update:
+            update[k] = bool(update[k])
+    update["updated_at"] = datetime.now(timezone.utc).isoformat()
+    await db.notification_quiet_hours.update_one(
+        {"user_id": user.get("id")},
+        {"$set": {"user_id": user.get("id"), **update}},
+        upsert=True,
+    )
+    fresh = await nc_get_quiet_hours(db, user.get("id"))
+    await record_audit(
+        db, actor=user, action="quiet_hours_updated",
+        object_type="notification_quiet_hours", object_id=user.get("id"),
+        metadata={k: fresh.get(k) for k in NOTIF_QUIET_HOURS_DEFAULT.keys()},
+        summary=(
+            f"Quiet hours {'enabled' if fresh.get('enabled') else 'disabled'} "
+            f"({fresh.get('start')}–{fresh.get('end')})"
+        ),
+    )
+    return {"ok": True, "quiet_hours": {k: v for k, v in fresh.items() if k != "_id"}}
+
+
 # Manual notification trigger — for testing + manager-initiated notifications
 @api_router.post("/notif-centre/manual")
 async def nc_manual_notification(
     payload: dict = Body(...),
     user: dict = Depends(require_tier(3)),
 ):
+    # Send only to the calling user (manual tests / personal alerts).
+    # Broadcasts to all managers happen via the auto-hooks in incident/missing flows.
     n = await create_notification(
         db,
+        user_id=user.get("id"),
         category=(payload or {}).get("category", "compliance"),
         event_type=(payload or {}).get("event_type", "manual_test"),
         severity=(payload or {}).get("severity", "medium"),

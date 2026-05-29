@@ -67,6 +67,66 @@ DEFAULT_CHANNELS = {
 }
 
 
+# ---- Quiet Hours ---------------------------------------------------------
+
+QUIET_HOURS_DEFAULT = {
+    "enabled": False,
+    "start": "22:00",
+    "end": "06:00",
+    "days": [0, 1, 2, 3, 4, 5, 6],   # 0=Mon..6=Sun
+    "apply_to_email": True,
+    "apply_to_sms": True,
+    "apply_to_in_app": True,
+}
+
+
+def _parse_hhmm(s: str) -> int:
+    """Return minutes-since-midnight from a 'HH:MM' string. Returns -1 on parse failure."""
+    try:
+        h, m = s.split(":")
+        return int(h) * 60 + int(m)
+    except (ValueError, AttributeError):
+        return -1
+
+
+def is_in_quiet_hours(quiet: Optional[dict], now: Optional[datetime] = None) -> bool:
+    """Deterministic check — is `now` inside the user's quiet-hours window?
+
+    Handles windows that cross midnight (e.g. 22:00 → 06:00). When the window
+    crosses midnight, the morning-side (00:00 → end) belongs to the PREVIOUS
+    day in the user's `days` list — so a Monday-night quiet period flows into
+    Tuesday morning naturally.
+    """
+    if not quiet or not quiet.get("enabled"):
+        return False
+    now = now or _now()
+    start_min = _parse_hhmm(quiet.get("start", "22:00"))
+    end_min = _parse_hhmm(quiet.get("end", "06:00"))
+    if start_min < 0 or end_min < 0 or start_min == end_min:
+        return False
+    days = quiet.get("days") or [0, 1, 2, 3, 4, 5, 6]
+    cur_min = now.hour * 60 + now.minute
+    weekday = now.weekday()
+    if start_min < end_min:
+        # Same-day window
+        return (start_min <= cur_min < end_min) and (weekday in days)
+    # Window crosses midnight
+    if cur_min >= start_min:
+        return weekday in days
+    if cur_min < end_min:
+        prev_day = (weekday - 1) % 7
+        return prev_day in days
+    return False
+
+
+async def get_quiet_hours(db, user_id: str) -> dict:
+    doc = await db.notification_quiet_hours.find_one({"user_id": user_id}, {"_id": 0})
+    if not doc:
+        return {"user_id": user_id, **QUIET_HOURS_DEFAULT}
+    # Fill in any missing keys from default (defensive)
+    return {**QUIET_HOURS_DEFAULT, **doc}
+
+
 def _now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -126,6 +186,9 @@ async def create_notification(
 
     is_critical = event_type in CRITICAL_EVENTS or severity == "critical"
 
+    breakthroughs: list[dict] = []  # per-user audit context for critical breakthrough
+    bundled_users: list[str] = []   # per-user audit context for non-critical bundling
+
     inserted: Optional[dict] = None
     for uid in audience:
         # Dedupe: skip if a notification with the same dedupe key already exists for this user today
@@ -153,6 +216,32 @@ async def create_notification(
             delivered = ["in_app"] if "in_app" in channels else []
             pending = [c for c in channels if c in ("email", "sms")]
 
+        # Quiet hours evaluation
+        quiet = await get_quiet_hours(db, uid)
+        in_quiet = is_in_quiet_hours(quiet, now)
+        bundled_into_digest = False
+        quiet_breakthrough = False
+
+        if in_quiet and is_critical:
+            # Critical events break through, but we tag for audit
+            quiet_breakthrough = True
+            breakthroughs.append({"user_id": uid})
+        elif in_quiet and not is_critical:
+            # Non-critical → bundle into next digest
+            bundled_into_digest = True
+            if quiet.get("apply_to_email", True):
+                pending = [c for c in pending if c != "email"]
+            if quiet.get("apply_to_sms", True):
+                pending = [c for c in pending if c != "sms"]
+            if quiet.get("apply_to_in_app", True):
+                # Move in_app out of "delivered" so the bell doesn't pulse;
+                # the notification doc still exists and is visible when user opens
+                # the centre.
+                delivered = [d for d in delivered if d != "in_app"]
+                if "digest" not in delivered:
+                    delivered.append("digest")
+            bundled_users.append({"user_id": uid})
+
         doc = {
             "id": _new_id(),
             "user_id": uid,
@@ -173,10 +262,41 @@ async def create_notification(
             "dismissed_at": None,
             "delivered_channels": delivered,
             "pending_channels": pending,  # for future email/sms integration
+            "bundled_into_digest": bundled_into_digest,
+            "quiet_hours_breakthrough": quiet_breakthrough,
         }
         await db.notifications.insert_one(doc.copy())
         if not inserted:
             inserted = {k: v for k, v in doc.items() if k != "_id"}
+
+    # Audit-log quiet-hours interactions (best-effort; non-blocking)
+    if breakthroughs or bundled_users:
+        try:
+            from server import record_audit  # local import to avoid circular
+            audit_actor = actor or {"id": "system", "name": "Safelyn"}
+            for entry in breakthroughs:
+                await record_audit(
+                    db, actor=audit_actor, action="quiet_hours_breakthrough",
+                    object_type="notification", object_id=inserted.get("id") if inserted else None,
+                    metadata={
+                        "category": category, "event_type": event_type,
+                        "severity": severity, "recipient_id": entry["user_id"],
+                    },
+                    summary=f"Critical {category} alert delivered during quiet hours",
+                )
+            for entry in bundled_users:
+                await record_audit(
+                    db, actor=audit_actor, action="quiet_hours_bundled",
+                    object_type="notification", object_id=inserted.get("id") if inserted else None,
+                    metadata={
+                        "category": category, "event_type": event_type,
+                        "recipient_id": entry["user_id"],
+                    },
+                    summary=f"Non-critical {category} notification bundled into morning digest",
+                )
+        except Exception:
+            # Audit failure must never break notification creation
+            pass
 
     return inserted
 
@@ -219,8 +339,8 @@ async def notify_missing_episode(db, episode: dict, actor: Optional[dict] = None
         category="missing",
         event_type="child_reported_missing",
         severity="critical",
-        title=f"Child reported missing",
-        body=f"A child has been reported missing from care.",
+        title="Child reported missing",
+        body="A child has been reported missing from care.",
         link=f"/residents/{rid}?tab=timeline" if rid else "/missing",
         object_type="missing_episode",
         object_id=episode.get("id"),
