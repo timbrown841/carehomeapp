@@ -9238,6 +9238,8 @@ from inspector_links import (
     generate_token, hash_token, public_link_view,
     filter_inspector_payload, _link_lite, _is_active,
 )
+from handover_digest import build_handover_digest, PERIOD_DEFS as HANDOVER_PERIODS
+from handover_pdf import build_handover_pdf
 
 
 _SIM_TEXT_MAX = 200_000  # ~200KB of text
@@ -10347,6 +10349,59 @@ async def hr_inspector_preview(
             "Record. No personnel files, narratives or HR records are accessible from this view."
         ),
     }
+
+
+# ---------- Manager Handover Digest (Phase F.4) ----------
+
+
+@api_router.get("/handover/digest")
+async def handover_digest_json(
+    period: str = "shift",
+    sector: str = "children",
+    user: dict = Depends(require_tier(3)),
+):
+    """Manager Handover Digest — executive summary for managers returning to the home.
+    period ∈ shift / week / month. Manager+ only."""
+    if period not in HANDOVER_PERIODS:
+        raise HTTPException(400, f"period must be one of {list(HANDOVER_PERIODS.keys())}")
+    s = _sector_from(sector, user)
+    digest = await build_handover_digest(db, period=period, sector=s, user=user)
+    return digest
+
+
+@api_router.get("/handover/digest.pdf")
+async def handover_digest_pdf(
+    period: str = "shift",
+    sector: str = "children",
+    user: dict = Depends(require_tier(3)),
+):
+    """Manager Handover Digest PDF — A4 portrait single-page executive summary.
+    Every generation is audit-logged as Ofsted-evidence of leadership oversight."""
+    if period not in HANDOVER_PERIODS:
+        raise HTTPException(400, f"period must be one of {list(HANDOVER_PERIODS.keys())}")
+    s = _sector_from(sector, user)
+    payload = await build_handover_digest(db, period=period, sector=s, user=user)
+    pdf_bytes = build_handover_pdf(payload)
+    await record_audit(
+        db, actor=user, action="handover_digest_exported",
+        object_type="handover_digest", object_id=period,
+        metadata={
+            "period": period, "sector": s,
+            "period_start": payload["period_start"],
+            "period_end": payload["period_end"],
+        },
+        summary=f"Generated Manager Handover Digest ({HANDOVER_PERIODS[period]['label']})",
+    )
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="manager-handover-digest-{period}-'
+                f'{datetime.now(timezone.utc).strftime("%Y%m%d-%H%M")}.pdf"'
+            )
+        },
+    )
 
 
 app.include_router(api_router)

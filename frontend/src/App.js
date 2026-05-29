@@ -38,6 +38,7 @@ import Staff, { TrainingPage } from "@/pages/Staff";
 import Handover from "@/pages/Handover";
 import Supervisions from "@/pages/Supervisions";
 import SaferRecruitment from "@/pages/SaferRecruitment";
+import HandoverDigest from "@/pages/HandoverDigest";
 import OfstedReadiness from "@/pages/OfstedReadiness";
 import CQCReadiness from "@/pages/CQCReadiness";
 import AuditLog from "@/pages/AuditLog";
@@ -150,6 +151,7 @@ function App() {
               <Route path="/training" element={<TrainingPage />} />
               <Route path="/supervisions" element={<Supervisions />} />
               <Route path="/hr" element={<ManagerOnly><SaferRecruitment /></ManagerOnly>} />
+              <Route path="/handover-digest" element={<ManagerOnly><HandoverDigest /></ManagerOnly>} />
               <Route path="/ofsted" element={<RequireMode mode="children"><OfstedReadiness /></RequireMode>} />
               <Route path="/cqc-readiness" element={<RequireMode mode="adult"><SeniorOrAbove><CQCReadiness /></SeniorOrAbove></RequireMode>} />
               <Route path="/audit" element={<SeniorOrAbove><AuditLog /></SeniorOrAbove>} />
