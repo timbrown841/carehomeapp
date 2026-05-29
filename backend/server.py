@@ -202,9 +202,15 @@ async def lifespan(_app: FastAPI):
     await _seed_demo_data_if_empty()
     await seed_adult_demo_if_empty(db)
     await _seed_hr_demo_if_empty()
+    await init_digest_schedules(db)
+    digest_task = await start_digest_scheduler(db, interval_seconds=60)
 
     yield
     # ---- shutdown ----
+    try:
+        digest_task.cancel()
+    except Exception:
+        pass
     client.close()
 
 
@@ -9240,6 +9246,21 @@ from inspector_links import (
 )
 from handover_digest import build_handover_digest, PERIOD_DEFS as HANDOVER_PERIODS
 from handover_pdf import build_handover_pdf
+from notifications_centre import (
+    CATEGORIES as NOTIF_CATEGORIES,
+    CATEGORY_LABELS as NOTIF_CATEGORY_LABELS,
+    DEFAULT_CHANNELS as NOTIF_DEFAULT_CHANNELS,
+    create_notification,
+    notify_safeguarding_incident,
+    notify_missing_episode,
+)
+from digest_scheduler import (
+    DEFAULT_SCHEDULES as DIGEST_DEFAULTS,
+    initialise_schedules as init_digest_schedules,
+    trigger_digest_delivery,
+    start_scheduler as start_digest_scheduler,
+    compute_next_run,
+)
 
 
 _SIM_TEXT_MAX = 200_000  # ~200KB of text
@@ -10402,6 +10423,212 @@ async def handover_digest_pdf(
             )
         },
     )
+
+
+# ---------- Intelligence & Notification Centre (Phase G) ----------
+
+
+@api_router.get("/notifications")
+async def list_notifications(
+    unread_only: bool = False,
+    category: Optional[str] = None,
+    limit: int = 100,
+    user: dict = Depends(get_current_user),
+):
+    """Per-user in-app notifications feed."""
+    q: dict = {"user_id": user.get("id"), "dismissed_at": None}
+    if unread_only:
+        q["read_at"] = None
+    if category:
+        q["category"] = category
+    items = await db.notifications.find(q, {"_id": 0}).sort("created_at", -1).limit(int(max(1, min(500, limit)))).to_list(500)
+    return {"items": items, "count": len(items)}
+
+
+@api_router.get("/notifications/counts")
+async def notification_counts(user: dict = Depends(get_current_user)):
+    """Unread + category breakdown for the bell icon."""
+    q = {"user_id": user.get("id"), "dismissed_at": None, "read_at": None}
+    unread = await db.notifications.count_documents(q)
+    by_cat = {}
+    for c in NOTIF_CATEGORIES:
+        by_cat[c] = await db.notifications.count_documents({**q, "category": c})
+    critical = await db.notifications.count_documents({**q, "is_critical": True})
+    return {"unread": unread, "by_category": by_cat, "critical": critical}
+
+
+@api_router.get("/notifications/since-last-login")
+async def notifications_since_last_login(user: dict = Depends(get_current_user)):
+    """'Since your last login' widget — counts of key changes since previous login."""
+    prev = user.get("previous_login_at") or user.get("last_login_at")
+    if not prev:
+        # No prior login known — fallback to 7 days back
+        prev = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+    base = {"created_at": {"$gte": prev}}
+    incidents = await db.incidents.count_documents(base)
+    safeguarding = await db.incidents.count_documents({
+        **base,
+        "$or": [{"safeguarding": True}, {"category": "safeguarding"},
+                {"incident_type": "safeguarding"}],
+    })
+    missing = await db.missing_episodes.count_documents({
+        "$or": [{"reported_at": {"$gte": prev}}, {"created_at": {"$gte": prev}}],
+    })
+    notif_new = await db.notifications.count_documents({
+        "user_id": user.get("id"),
+        "created_at": {"$gte": prev},
+        "dismissed_at": None,
+    })
+    return {
+        "since": prev,
+        "incidents": incidents,
+        "safeguarding": safeguarding,
+        "missing_episodes": missing,
+        "notifications": notif_new,
+    }
+
+
+@api_router.patch("/notifications/{nid}/read")
+async def mark_notification_read(nid: str, user: dict = Depends(get_current_user)):
+    res = await db.notifications.update_one(
+        {"id": nid, "user_id": user.get("id")},
+        {"$set": {"read_at": datetime.now(timezone.utc).isoformat()}},
+    )
+    return {"updated": res.modified_count}
+
+
+@api_router.delete("/notifications/{nid}")
+async def dismiss_notification(nid: str, user: dict = Depends(get_current_user)):
+    res = await db.notifications.update_one(
+        {"id": nid, "user_id": user.get("id")},
+        {"$set": {"dismissed_at": datetime.now(timezone.utc).isoformat()}},
+    )
+    return {"dismissed": res.modified_count}
+
+
+@api_router.post("/notifications/mark-all-read")
+async def mark_all_read(user: dict = Depends(get_current_user)):
+    res = await db.notifications.update_many(
+        {"user_id": user.get("id"), "read_at": None, "dismissed_at": None},
+        {"$set": {"read_at": datetime.now(timezone.utc).isoformat()}},
+    )
+    return {"updated": res.modified_count}
+
+
+@api_router.get("/notifications/preferences")
+async def get_notification_preferences(user: dict = Depends(get_current_user)):
+    items: list[dict] = []
+    for cat in NOTIF_CATEGORIES:
+        pref = await db.notification_preferences.find_one(
+            {"user_id": user.get("id"), "category": cat}, {"_id": 0},
+        )
+        items.append({
+            "category": cat,
+            "label": NOTIF_CATEGORY_LABELS[cat],
+            "channels": (pref or {}).get("channels") or NOTIF_DEFAULT_CHANNELS[cat],
+        })
+    return {"preferences": items, "available_channels": ["in_app", "email", "sms", "digest_only"]}
+
+
+@api_router.patch("/notifications/preferences")
+async def set_notification_preferences(
+    payload: dict = Body(...),
+    user: dict = Depends(get_current_user),
+):
+    """payload: { category: str, channels: [in_app|email|sms|digest_only] }"""
+    cat = (payload or {}).get("category")
+    channels = (payload or {}).get("channels") or []
+    if cat not in NOTIF_CATEGORIES:
+        raise HTTPException(400, "Unknown category")
+    allowed = {"in_app", "email", "sms", "digest_only"}
+    channels = [c for c in channels if c in allowed]
+    await db.notification_preferences.update_one(
+        {"user_id": user.get("id"), "category": cat},
+        {"$set": {"user_id": user.get("id"), "category": cat, "channels": channels,
+                  "updated_at": datetime.now(timezone.utc).isoformat()}},
+        upsert=True,
+    )
+    return {"ok": True, "category": cat, "channels": channels}
+
+
+# Manual notification trigger — for testing + manager-initiated notifications
+@api_router.post("/notifications/manual")
+async def manual_notification(
+    payload: dict = Body(...),
+    user: dict = Depends(require_tier(3)),
+):
+    n = await create_notification(
+        db,
+        category=(payload or {}).get("category", "compliance"),
+        event_type=(payload or {}).get("event_type", "manual_test"),
+        severity=(payload or {}).get("severity", "medium"),
+        title=(payload or {}).get("title", "Test notification"),
+        body=(payload or {}).get("body"),
+        link=(payload or {}).get("link"),
+        metadata={"manual": True},
+        actor=user,
+    )
+    return {"created": bool(n), "notification": n}
+
+
+# ---------- Digest schedules ----------
+
+
+@api_router.get("/handover/digest-schedules")
+async def list_digest_schedules(_: dict = Depends(require_tier(3))):
+    docs = await db.digest_schedules.find({}, {"_id": 0}).sort("hour", 1).to_list(50)
+    return {"schedules": docs, "count": len(docs)}
+
+
+@api_router.patch("/handover/digest-schedules/{sid}")
+async def update_digest_schedule(
+    sid: str,
+    payload: dict = Body(...),
+    user: dict = Depends(require_tier(3)),
+):
+    existing = await db.digest_schedules.find_one({"id": sid}, {"_id": 0})
+    if not existing:
+        raise HTTPException(404, "Schedule not found")
+    allowed = {"enabled", "recipients", "hour", "minute"}
+    update = {k: v for k, v in (payload or {}).items() if k in allowed}
+    update["updated_at"] = datetime.now(timezone.utc).isoformat()
+    # Recompute next_run_at if timing changed or enabled toggled
+    sched_for_calc = {**existing, **update}
+    update["next_run_at"] = compute_next_run(sched_for_calc).isoformat()
+    await db.digest_schedules.update_one({"id": sid}, {"$set": update})
+    await record_audit(
+        db, actor=user, action="digest_schedule_updated",
+        object_type="digest_schedule", object_id=sid,
+        metadata={"changes": update},
+        summary=f"Updated digest schedule {existing.get('label')}",
+    )
+    return {"ok": True, "updated": list(update.keys())}
+
+
+@api_router.post("/handover/digest-schedules/{sid}/send-now")
+async def send_digest_now(sid: str, user: dict = Depends(require_tier(3))):
+    sched = await db.digest_schedules.find_one({"id": sid}, {"_id": 0})
+    if not sched:
+        raise HTTPException(404, "Schedule not found")
+    delivery = await trigger_digest_delivery(db, sched, manual=True)
+    await record_audit(
+        db, actor=user, action="digest_sent_manual",
+        object_type="digest_delivery", object_id=delivery["id"],
+        metadata={"schedule_id": sid, "period": sched["period"]},
+        summary=f"Manually sent {sched.get('label')}",
+    )
+    return delivery
+
+
+@api_router.get("/handover/digest-deliveries")
+async def list_digest_deliveries(
+    limit: int = 30,
+    _: dict = Depends(require_tier(3)),
+):
+    docs = await db.digest_deliveries.find({}, {"_id": 0}).sort(
+        "delivered_at", -1,
+    ).limit(int(max(1, min(100, limit)))).to_list(100)
+    return {"deliveries": docs, "count": len(docs)}
 
 
 app.include_router(api_router)
