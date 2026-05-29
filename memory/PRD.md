@@ -248,6 +248,38 @@ A simple and fast care management app for children's homes and supported living.
   - Adult 4-week induction (Foundations → Daily Care Practice → Professional Standards → Behaviour & Boundaries).
 - **Tested**: 16/16 backend pytest (11 in `test_iteration49_policies.py` + 5 supplementary RBAC/audit tests in `test_iteration49b_policies_extra.py`). Frontend Playwright: hub + 3 tabs + folder grid + dashboard tiles + evidence pack download + induction pack enrol + active enrollments + staff inbox — all verified. 33/33 G.1/G.1b regression remains green. Report: `/app/test_reports/iteration_49.json`. **No retest needed.**
 
+## Implemented (2026-05-29 · iter-50 · Phase H.3 — Statement of Purpose & Governance Hub)
+- **SoP elevated from document upload to first-class governance workflow.** Manager / RM / RI / HR only (tier ≥3 + backend 403).
+- **Backend additions** (`policy_routes.py`):
+  - `SopUploadIn` Pydantic model (module-level so FastAPI can resolve the forward ref via `Body(...)`).
+  - `GET /api/governance/sop?sector=…` — returns existing SoP policy + versions + questions, or `{exists:false}` cleanly.
+  - `POST /api/governance/sop/upload-version` — the core workflow:
+     1. Auto-creates the canonical SoP policy on first upload (with `sop_policy_initialised` audit).
+     2. Archives the previous version (`archived_at`).
+     3. Supersedes every incomplete prior-version assignment with `status:"superseded"`, `superseded_at`, `superseded_by_version_id`.
+     4. Inserts the new version with author + change_summary + effective_date.
+     5. Replaces assessment questions if supplied; **seeds 4 default SoP questions** (3 MCQs + 1 reflection) on first upload when none supplied.
+     6. Auto-creates a fresh `policy_assignment` for every eligible staff member (role in staff/senior/manager) with a 14-day due date and `is_sop_assignment:true` flag.
+     7. Emits a single `sop_version_uploaded` audit with full counts of assignments_created + assignments_superseded.
+  - `GET /api/governance/sop/compliance?sector=…` — per-staff buckets (not_started / in_progress / complete / failed / superseded) + `compliance_pct` for the current version.
+  - `GET /api/governance/sop/dashboard?sector=…` — single-call dashboard: policy, current_version, versions, version_count, compliance_pct, counts, review_date, days_to_review, review_rag, overall rag_status.
+  - `GET /api/governance/sop/evidence.pdf?sector=…` — inspection-ready PDF (reportlab): current SoP block + version history table + per-staff compliance table + last 50 SoP audit events. Returns 404 when no SoP exists.
+- **Audit events**: `sop_policy_initialised`, `sop_version_uploaded`, `sop_evidence_exported`.
+- **Frontend** — new `/governance` page (`GovernanceHub.jsx`):
+  - Hero header with current version, effective/review dates, compliance %.
+  - 5 governance tiles: Overall status · Compliance · Review due · Outstanding · Versions (each RAG-coloured).
+  - 4 compliance buckets (Not started · In progress · Complete · Failed) with first 8 staff listed + deep-link to assignment + overdue pill.
+  - Full version history list with Current/Archived pills, author, change summary.
+  - Empty-state CTA when no SoP yet ("Start the governance trail").
+  - **Upload modal** — captures version, author, effective/review dates, change summary, in-app text, optional file. "Publish & auto-assign" surfaces `assignments_created` count in toast.
+  - **Inline questions editor** modal — managers can override the default 4 questions before publishing.
+  - **Evidence pack** button downloads the PDF.
+  - Added "Governance" tab to `StaffOperationsHub` (manager+ only).
+  - Route is `/governance` — in-component tier check renders `data-testid=governance-hub-blocked` banner for staff (rather than redirect-to-dashboard), per spec.
+- **Sector-aware** — picks sector from `OrgContext` (`children` / `adult`). The same hub works for both Adult Services and Children's Services with separate SoP records.
+- **Tested**: 12/12 new backend pytest (`test_iteration50_sop_governance.py`) + 28/28 combined Phase H regression (16 iter49 + 12 iter50). Frontend Playwright: all tiles, buckets, version history, upload modal, questions modal, evidence PDF download verified — 95% success rate (only minor stylistic note about native date inputs vs shadcn Calendar). No retest needed. Report: `/app/test_reports/iteration_50.json`.
+
+
 
 
 
