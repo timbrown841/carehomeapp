@@ -1752,6 +1752,8 @@ class UserOut(BaseModel):
     name: str
     role: str
     created_at: str
+    last_login_at: Optional[str] = None
+    previous_login_at: Optional[str] = None
 
 
 class AuthOut(BaseModel):
@@ -2036,6 +2038,19 @@ async def login(payload: LoginIn, request: Request):
 
     # Success — clear fails
     await db.login_attempts.delete_many({"email": email})
+
+    # Track previous_login_at / last_login_at for "Since your last login" widget
+    prev_login_at = user.get("last_login_at")
+    await db.users.update_one(
+        {"id": user["id"]},
+        {"$set": {
+            "previous_login_at": prev_login_at,
+            "last_login_at": now.isoformat(),
+        }},
+    )
+    user["previous_login_at"] = prev_login_at
+    user["last_login_at"] = now.isoformat()
+
     token = create_access_token(user["id"], email, user["role"])
     user.pop("password_hash", None)
     user.pop("_id", None)
@@ -3197,6 +3212,14 @@ async def open_missing_episode(
         "missing_episode_id": doc["id"],
     })
     doc.pop("_id", None)
+
+    # Phase G.1: Notification Centre hook — missing-from-care is always critical
+    try:
+        enriched = {**doc, "resident_name": resident.get("name")}
+        await notify_missing_episode(db, enriched, actor=user)
+    except Exception as e:
+        logger.warning(f"Notification hook (missing) failed: {e}")
+
     return doc
 
 
@@ -3556,6 +3579,21 @@ async def create_incident(payload: IncidentIn, user: dict = Depends(get_current_
             "witness_count": len(doc.get("witnesses") or []),
         },
     )
+
+    # Phase G.1: Notification Centre hook — fire for safeguarding / high-severity / restraint / police events
+    try:
+        is_safeguarding = bool(doc.get("safeguarding"))
+        sev = (doc.get("severity") or "").lower()
+        itype = (doc.get("incident_type") or doc.get("category") or "").lower()
+        if is_safeguarding or sev in ("high", "critical") or itype in (
+            "safeguarding", "self_harm", "self-harm", "restraint", "police", "missing"
+        ):
+            r = await db.residents.find_one({"id": doc.get("resident_id")}, {"_id": 0, "name": 1}) if doc.get("resident_id") else None
+            enriched = {**doc, "resident_name": (r or {}).get("name")}
+            await notify_safeguarding_incident(db, enriched, actor=user)
+    except Exception as e:
+        logger.warning(f"Notification hook (incident) failed: {e}")
+
     return doc
 
 
@@ -5966,7 +6004,7 @@ async def update_independence(rid: str, payload: IndependenceUpdate, user: dict 
 
 # ---------- Notifications ----------
 @api_router.post("/notifications", response_model=Notification)
-async def create_notification(
+async def legacy_create_dsl_notification(
     payload: NotificationIn, user: dict = Depends(get_current_user)
 ):
     incident = await db.incidents.find_one({"id": payload.incident_id}, {"_id": 0})
@@ -10428,14 +10466,14 @@ async def handover_digest_pdf(
 # ---------- Intelligence & Notification Centre (Phase G) ----------
 
 
-@api_router.get("/notifications")
-async def list_notifications(
+@api_router.get("/notif-centre")
+async def nc_list_notifications(
     unread_only: bool = False,
     category: Optional[str] = None,
     limit: int = 100,
     user: dict = Depends(get_current_user),
 ):
-    """Per-user in-app notifications feed."""
+    """Per-user in-app notifications feed (Phase G Notification Centre)."""
     q: dict = {"user_id": user.get("id"), "dismissed_at": None}
     if unread_only:
         q["read_at"] = None
@@ -10445,8 +10483,8 @@ async def list_notifications(
     return {"items": items, "count": len(items)}
 
 
-@api_router.get("/notifications/counts")
-async def notification_counts(user: dict = Depends(get_current_user)):
+@api_router.get("/notif-centre/counts")
+async def nc_notification_counts(user: dict = Depends(get_current_user)):
     """Unread + category breakdown for the bell icon."""
     q = {"user_id": user.get("id"), "dismissed_at": None, "read_at": None}
     unread = await db.notifications.count_documents(q)
@@ -10457,8 +10495,8 @@ async def notification_counts(user: dict = Depends(get_current_user)):
     return {"unread": unread, "by_category": by_cat, "critical": critical}
 
 
-@api_router.get("/notifications/since-last-login")
-async def notifications_since_last_login(user: dict = Depends(get_current_user)):
+@api_router.get("/notif-centre/since-last-login")
+async def nc_since_last_login(user: dict = Depends(get_current_user)):
     """'Since your last login' widget — counts of key changes since previous login."""
     prev = user.get("previous_login_at") or user.get("last_login_at")
     if not prev:
@@ -10479,17 +10517,24 @@ async def notifications_since_last_login(user: dict = Depends(get_current_user))
         "created_at": {"$gte": prev},
         "dismissed_at": None,
     })
+    critical_new = await db.notifications.count_documents({
+        "user_id": user.get("id"),
+        "created_at": {"$gte": prev},
+        "is_critical": True,
+        "dismissed_at": None,
+    })
     return {
         "since": prev,
         "incidents": incidents,
         "safeguarding": safeguarding,
         "missing_episodes": missing,
         "notifications": notif_new,
+        "critical_notifications": critical_new,
     }
 
 
-@api_router.patch("/notifications/{nid}/read")
-async def mark_notification_read(nid: str, user: dict = Depends(get_current_user)):
+@api_router.patch("/notif-centre/{nid}/read")
+async def nc_mark_read(nid: str, user: dict = Depends(get_current_user)):
     res = await db.notifications.update_one(
         {"id": nid, "user_id": user.get("id")},
         {"$set": {"read_at": datetime.now(timezone.utc).isoformat()}},
@@ -10497,8 +10542,8 @@ async def mark_notification_read(nid: str, user: dict = Depends(get_current_user
     return {"updated": res.modified_count}
 
 
-@api_router.delete("/notifications/{nid}")
-async def dismiss_notification(nid: str, user: dict = Depends(get_current_user)):
+@api_router.delete("/notif-centre/{nid}")
+async def nc_dismiss(nid: str, user: dict = Depends(get_current_user)):
     res = await db.notifications.update_one(
         {"id": nid, "user_id": user.get("id")},
         {"$set": {"dismissed_at": datetime.now(timezone.utc).isoformat()}},
@@ -10506,8 +10551,8 @@ async def dismiss_notification(nid: str, user: dict = Depends(get_current_user))
     return {"dismissed": res.modified_count}
 
 
-@api_router.post("/notifications/mark-all-read")
-async def mark_all_read(user: dict = Depends(get_current_user)):
+@api_router.post("/notif-centre/mark-all-read")
+async def nc_mark_all_read(user: dict = Depends(get_current_user)):
     res = await db.notifications.update_many(
         {"user_id": user.get("id"), "read_at": None, "dismissed_at": None},
         {"$set": {"read_at": datetime.now(timezone.utc).isoformat()}},
@@ -10515,8 +10560,8 @@ async def mark_all_read(user: dict = Depends(get_current_user)):
     return {"updated": res.modified_count}
 
 
-@api_router.get("/notifications/preferences")
-async def get_notification_preferences(user: dict = Depends(get_current_user)):
+@api_router.get("/notif-centre/preferences")
+async def nc_get_preferences(user: dict = Depends(get_current_user)):
     items: list[dict] = []
     for cat in NOTIF_CATEGORIES:
         pref = await db.notification_preferences.find_one(
@@ -10530,8 +10575,8 @@ async def get_notification_preferences(user: dict = Depends(get_current_user)):
     return {"preferences": items, "available_channels": ["in_app", "email", "sms", "digest_only"]}
 
 
-@api_router.patch("/notifications/preferences")
-async def set_notification_preferences(
+@api_router.patch("/notif-centre/preferences")
+async def nc_set_preferences(
     payload: dict = Body(...),
     user: dict = Depends(get_current_user),
 ):
@@ -10548,12 +10593,18 @@ async def set_notification_preferences(
                   "updated_at": datetime.now(timezone.utc).isoformat()}},
         upsert=True,
     )
+    await record_audit(
+        db, actor=user, action="notif_preferences_updated",
+        object_type="notification_preference", object_id=cat,
+        metadata={"channels": channels},
+        summary=f"Notification preferences updated for {NOTIF_CATEGORY_LABELS.get(cat, cat)}",
+    )
     return {"ok": True, "category": cat, "channels": channels}
 
 
 # Manual notification trigger — for testing + manager-initiated notifications
-@api_router.post("/notifications/manual")
-async def manual_notification(
+@api_router.post("/notif-centre/manual")
+async def nc_manual_notification(
     payload: dict = Body(...),
     user: dict = Depends(require_tier(3)),
 ):
@@ -10568,7 +10619,25 @@ async def manual_notification(
         metadata={"manual": True},
         actor=user,
     )
+    if n:
+        await record_audit(
+            db, actor=user, action="notif_manual_created",
+            object_type="notification", object_id=n.get("id"),
+            metadata={"category": n.get("category"), "event_type": n.get("event_type")},
+            summary=f"Manual notification sent: {n.get('title')}",
+        )
     return {"created": bool(n), "notification": n}
+
+
+@api_router.get("/notif-centre/categories")
+async def nc_categories(_: dict = Depends(get_current_user)):
+    """Available categories for filter UI."""
+    return {
+        "categories": [
+            {"id": c, "label": NOTIF_CATEGORY_LABELS.get(c, c)}
+            for c in NOTIF_CATEGORIES
+        ]
+    }
 
 
 # ---------- Digest schedules ----------

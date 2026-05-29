@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import Logo from "@/components/Logo";
 import NotificationBell from "@/components/NotificationBell";
+import NotificationCentreBell from "@/components/NotificationCentreBell";
 
 // Locked operational areas. The sidebar adapts to the org's service modes:
 //   - children-only orgs hide Adult Services
@@ -102,6 +103,7 @@ export default function Layout() {
       <header className="lg:hidden sticky top-0 z-30 bg-white border-b divider-soft px-4 py-3 flex items-center justify-between">
         <Logo />
         <div className="flex items-center gap-2">
+          <NotificationCentreBell />
           <NotificationBell />
           <button
             type="button"
@@ -124,7 +126,10 @@ export default function Layout() {
         >
           <div className="px-5 py-5 border-b divider-soft hidden lg:flex items-center justify-between">
             <Logo />
-            <NotificationBell />
+            <div className="flex items-center gap-1.5">
+              <NotificationCentreBell />
+              <NotificationBell />
+            </div>
           </div>
           {effectiveMode && (
             <div

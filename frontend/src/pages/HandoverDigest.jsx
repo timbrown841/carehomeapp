@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
+import DigestSchedulesPanel from "@/components/handover/DigestSchedulesPanel";
 
 const PERIODS = [
   { v: "shift", label: "Morning handover", sub: "Since last shift" },
@@ -39,6 +40,7 @@ function fmt(iso) {
 }
 
 export default function HandoverDigest() {
+  const [tab, setTab] = useState("digest");
   const [period, setPeriod] = useState("shift");
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -46,6 +48,7 @@ export default function HandoverDigest() {
   const [downloading, setDownloading] = useState(false);
 
   const load = useCallback(async () => {
+    if (tab !== "digest") return;
     setLoading(true); setError(null);
     try {
       const r = await api.get(`/handover/digest?period=${period}`);
@@ -55,7 +58,7 @@ export default function HandoverDigest() {
         ? "Manager+ only — Handover Digest is restricted."
         : "Could not load digest.");
     } finally { setLoading(false); }
-  }, [period]);
+  }, [period, tab]);
   useEffect(() => { load(); }, [load]);
 
   const downloadPdf = async () => {
@@ -92,24 +95,63 @@ export default function HandoverDigest() {
     window.location.href = `mailto:?subject=${subject}&body=${body}`;
   };
 
+  const TabBar = (
+    <div className="flex items-center gap-1 p-1 bg-stone-100 rounded-xl w-fit print:hidden">
+      <button
+        type="button"
+        onClick={() => setTab("digest")}
+        data-testid="handover-tab-digest"
+        className={`px-4 py-1.5 rounded-lg text-[12px] font-semibold transition-colors ${
+          tab === "digest" ? "bg-white text-[#0F2A47] shadow-sm" : "text-stone-600 hover:bg-white/50"
+        }`}
+      >
+        Digest
+      </button>
+      <button
+        type="button"
+        onClick={() => setTab("schedules")}
+        data-testid="handover-tab-schedules"
+        className={`px-4 py-1.5 rounded-lg text-[12px] font-semibold transition-colors ${
+          tab === "schedules" ? "bg-white text-[#0F2A47] shadow-sm" : "text-stone-600 hover:bg-white/50"
+        }`}
+      >
+        Schedules
+      </button>
+    </div>
+  );
+
+  if (tab === "schedules") {
+    return (
+      <div className="space-y-4 max-w-7xl mx-auto" data-testid="handover-digest-page">
+        {TabBar}
+        <DigestSchedulesPanel />
+      </div>
+    );
+  }
+
   if (loading && !data) {
     return (
-      <div className="bg-white border divider-soft rounded-2xl p-6 flex items-center gap-2 text-stone-600 text-sm"
-        data-testid="handover-digest-page">
-        <Loader2 size={14} className="animate-spin" /> Compiling handover digest…
+      <div className="space-y-4 max-w-7xl mx-auto" data-testid="handover-digest-page">
+        {TabBar}
+        <div className="bg-white border divider-soft rounded-2xl p-6 flex items-center gap-2 text-stone-600 text-sm">
+          <Loader2 size={14} className="animate-spin" /> Compiling handover digest…
+        </div>
       </div>
     );
   }
   if (error) {
     return (
-      <div className="bg-white border divider-soft rounded-2xl p-6 text-sm text-stone-700"
-        data-testid="handover-digest-page">{error}</div>
+      <div className="space-y-4 max-w-7xl mx-auto" data-testid="handover-digest-page">
+        {TabBar}
+        <div className="bg-white border divider-soft rounded-2xl p-6 text-sm text-stone-700">{error}</div>
+      </div>
     );
   }
   if (!data) return null;
 
   return (
     <div className="space-y-4 max-w-7xl mx-auto print:max-w-none" data-testid="handover-digest-page">
+      {TabBar}
       {/* Hero */}
       <header
         className="rounded-2xl p-5 sm:p-6 relative overflow-hidden print:bg-white print:text-black print:p-3"

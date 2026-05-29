@@ -1,0 +1,38 @@
+{
+  "summary": "Phase G.1 Notification Centre & Digest Delivery — full end-to-end pass. Backend: 22/22 tests passing (13 from main suite + 9 new supplementary covering missing-episode hook, legacy /api/notifications GET/POST/mark-read non-regression, audit-log entries for notif_preferences_updated/notif_manual_created/digest_schedule_updated/digest_sent_manual, unread_only+limit filters, limit clamp, staff own-inbox). Frontend: Logged in as manager, verified (a) BOTH bells co-exist in topbar — notif-centre-bell with badge=3 AND legacy notification-bell, (b) Notif Centre Bell panel opens showing category filter chips, mark-all and per-item dismiss controls, (c) /notifications-centre page renders 51 testids including all 8 filter chips (notif-page-filter-all/safeguarding/missing/compliance/staffing/placement_intelligence/hr/inspection_readiness), notif-unread-only checkbox, notif-prefs-btn, multiple notif-page-item-* rows, (d) Dashboard SinceLastLogin widget (data-testid=since-last-login) with 4 tiles (safeguarding/missing/critical/notifications), (e) Handover Digest page has Digest+Schedules tab switcher; Schedules tab shows 3 cards (schedule-card-morning/weekly/monthly) each with toggle, recipients picker, send-now button, plus digest-deliveries-list with 5+ delivery records, (f) Staff RBAC correctly hides SinceLastLogin widget (Staff dashboard does not render it). Email/SMS dispatch is MOCKED — clearly labelled in UI ('Email mocked'). All audit events firing as expected.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "Welcome -> workspace selection", "issue": "Pre-existing race: clicking 'Enter workspace' on /welcome before sector state is fully persisted bounces to /login. Workaround: set localStorage.cc_session_mode='children' then re-login. Reported in iter46 also — does not block real users (manual UI works), but Playwright headless flows must compensate.", "affected_selectors": ["text=Enter workspace"]}
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration47_notif_centre.py",
+    "/app/backend/tests/test_iteration47b_notif_extra.py",
+    "/app/test_reports/pytest/iter47_notif_centre.xml",
+    "/app/test_reports/pytest/iter47b_notif_extra.xml"
+  ],
+  "action_items": [
+    "(Optional) Persist sector selection synchronously before navigation away from /welcome so headless tests don't need the localStorage workaround.",
+    "(Minor) HTML page title is still 'Emergent | Fullstack App' — consider branding to 'Safelyn Systems' for production polish."
+  ],
+  "critical_code_review_comments": [
+    "Namespacing /api/notif-centre/* cleanly isolates new endpoints from legacy /api/notifications — confirmed both coexist with no regression.",
+    "Audit events fire for all four required actions (notif_preferences_updated, notif_manual_created, digest_schedule_updated, digest_sent_manual) — verified via /api/audit search.",
+    "Manual-trigger dedupe within same day works (second POST returns created=False or notification=None).",
+    "Missing-episode and safeguarding incident hooks both auto-create critical notifications with correct category and deep-link to resident timeline.",
+    "previous_login_at/last_login_at correctly tracked on POST /api/auth/login and surfaced via /api/auth/me.",
+    "Email/SMS dispatch clearly labelled as MOCKED in UI; database logging, in-app notifications, audit events and digest delivery records are all real.",
+    "Schedules tab presents 3 cards (morning/weekly/monthly) with next_run_at recomputation working after PATCH (verified through send-now flow)."
+  ],
+  "updated_files": ["/app/backend/tests/test_iteration47b_notif_extra.py"],
+  "success_rate": {"backend": "100% (22/22)", "frontend": "100% — all G.1 UI elements rendered and interactive"},
+  "test_credentials": "manager@care.local/Manager@123 (used), staff@care.local/Staff@123 (used for RBAC check), admin@care.local/Admin@123, senior@care.local/Senior@123",
+  "seed_data_creation": "Pytest run created several TEST_/audit_check_* compliance notifications + 1 safeguarding incident notification + 1 missing episode notification + multiple digest deliveries; all clean, no production data touched.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Phase G.1 backend + frontend both confirmed working end-to-end on 29 May. To repro UI flow: visit /login as manager@care.local; if bounced to /login after clicking 'Enter workspace', set localStorage.cc_session_mode='children' and re-login. Both bells coexist in topbar. Direct URL /notifications-centre and /handover-digest both reachable. Pytest suites: tests/test_iteration47_notif_centre.py (13) and tests/test_iteration47b_notif_extra.py (9). iter46 regression tests have a BASE_URL fixture issue unrelated to G.1.",
+  "rca of the issue": "N/A — no issues found."
+}

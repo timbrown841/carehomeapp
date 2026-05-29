@@ -9,6 +9,7 @@ import EmergingRisksPanel from "@/components/intelligence/EmergingRisksPanel";
 import LogIncidentFAB from "@/components/LogIncidentFAB";
 import AttentionNow from "@/components/AttentionNow";
 import { QuickActions, UrgencyWidgets } from "@/components/dashboard/QuickWidgets";
+import SinceLastLogin from "@/components/dashboard/SinceLastLogin";
 import { OfstedReadinessDashboardTile } from "@/pages/OfstedReadiness";
 import {
   Users,
@@ -299,6 +300,9 @@ export default function Dashboard() {
       </header>
 
       <InspectionSnapshotCard />
+
+      {/* Since-your-last-login (manager+ only) */}
+      <SinceLastLogin />
 
       {/* Operational Intelligence — emerging risks */}
       <EmergingRisksPanel />
