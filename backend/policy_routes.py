@@ -99,6 +99,18 @@ class EnrollmentIn(BaseModel):
     start_date: Optional[str] = None
 
 
+class SopUploadIn(BaseModel):
+    sector: str = Field(..., pattern="^(children|adult)$")
+    version: str = Field(..., max_length=20)
+    file_id: Optional[str] = None
+    content_text: Optional[str] = Field(None, max_length=200_000)
+    change_summary: Optional[str] = Field(None, max_length=2000)
+    effective_date: Optional[str] = None
+    review_date: Optional[str] = None
+    questions: Optional[list[dict]] = None
+    author_name: Optional[str] = Field(None, max_length=200)
+
+
 # ---- Helpers -------------------------------------------------------------
 
 
@@ -920,3 +932,624 @@ def build_routes():
             buf, media_type="application/pdf",
             headers={"Content-Disposition": f"attachment; filename={filename}"},
         )
+
+    # ---- Phase H.3: Statement of Purpose Governance ----
+
+    SOP_CATEGORY = "Statement of Purpose"
+
+    async def _ensure_sop_policy(sector: str, user: dict) -> dict:
+        """Find or create the canonical SoP policy for a sector."""
+        existing = await _db.policies.find_one({
+            "sector": sector, "category": SOP_CATEGORY, "status": "active",
+        }, {"_id": 0})
+        if existing:
+            return existing
+        # Auto-create on first upload
+        now = pm.now_iso()
+        sector_label = "Children's" if sector == "children" else "Adult"
+        doc = {
+            "id": str(uuid.uuid4()),
+            "title": f"Statement of Purpose · {sector_label} Services",
+            "category": SOP_CATEGORY,
+            "sector": sector,
+            "summary": "Statement of Purpose — the governing document for the service.",
+            "review_date": None,
+            "expiry_date": None,
+            "status": "active",
+            "current_version_id": None,
+            "created_at": now,
+            "updated_at": now,
+            "created_by_id": user.get("id"),
+            "created_by_name": user.get("name"),
+        }
+        await _db.policies.insert_one(doc.copy())
+        await _record_audit(
+            _db, actor=user, action="sop_policy_initialised",
+            object_type="policy", object_id=doc["id"],
+            metadata={"sector": sector},
+            summary=f"SoP governance initialised for {sector} services",
+        )
+        return _serialise(doc)
+
+    async def _eligible_sop_staff(sector: str) -> list[dict]:
+        """All staff who must read the SoP — every active user with a care-facing role.
+
+        Sector is informational — SoP is whole-service so we include every active
+        user. Admins are skipped because they typically don't deliver care.
+        """
+        users = await _db.users.find(
+            {"role": {"$in": ["staff", "senior", "manager"]}}, {"_id": 0},
+        ).to_list(1000)
+        return users
+
+    @router.get("/governance/sop")
+    async def sop_get_state(
+        sector: str = Query(..., pattern="^(children|adult)$"),
+        user: dict = Depends(_require_tier(3)),
+    ):
+        policy = await _db.policies.find_one({
+            "sector": sector, "category": SOP_CATEGORY, "status": "active",
+        }, {"_id": 0})
+        if not policy:
+            return {"policy": None, "exists": False, "sector": sector}
+        out = await _hydrate_policy(policy)
+        out["versions"] = await _db.policy_versions.find(
+            {"policy_id": policy["id"]}, {"_id": 0},
+        ).sort("created_at", -1).to_list(50)
+        out["questions"] = await _db.policy_questions.find(
+            {"policy_id": policy["id"]}, {"_id": 0},
+        ).sort("order", 1).to_list(50)
+        out["exists"] = True
+        out["sector"] = sector
+        return out
+
+    @router.post("/governance/sop/upload-version")
+    async def sop_upload_version(payload: SopUploadIn = Body(...), user: dict = Depends(_require_tier(3))):
+        """Upload a new SoP version AND auto-assign read-and-sign to every staff member.
+
+        Behaviour:
+          1. Ensure SoP policy exists for the sector (auto-create if needed).
+          2. Archive the previous current_version (handled by existing logic).
+          3. Insert the new version.
+          4. Replace assessment questions if supplied; else seed defaults.
+          5. Auto-create policy_assignments for every eligible staff member,
+             linked to this new version. If an incomplete assignment already
+             exists for the previous version, mark it as superseded.
+          6. Emit audit events for sop_version_uploaded + each policy_assigned.
+        """
+        sector = payload.sector
+        policy = await _ensure_sop_policy(sector, user)
+        pid = policy["id"]
+        prev_version_id = policy.get("current_version_id")
+
+        # Archive previous version
+        if prev_version_id:
+            await _db.policy_versions.update_one(
+                {"id": prev_version_id},
+                {"$set": {"archived_at": pm.now_iso()}},
+            )
+
+        # Insert new version
+        now = pm.now_iso()
+        version_doc = {
+            "id": str(uuid.uuid4()),
+            "policy_id": pid,
+            "version": payload.version,
+            "file_id": payload.file_id,
+            "content_text": payload.content_text,
+            "change_summary": payload.change_summary,
+            "effective_date": payload.effective_date or now,
+            "created_at": now,
+            "uploaded_by_id": user.get("id"),
+            "uploaded_by_name": user.get("name"),
+            "author_name": payload.author_name or user.get("name"),
+            "archived_at": None,
+        }
+        await _db.policy_versions.insert_one(version_doc.copy())
+
+        # Update policy pointer + review date
+        policy_update = {
+            "current_version_id": version_doc["id"],
+            "updated_at": now,
+        }
+        if payload.review_date:
+            policy_update["review_date"] = payload.review_date
+        await _db.policies.update_one({"id": pid}, {"$set": policy_update})
+
+        # Replace assessment questions if supplied; otherwise seed defaults
+        questions_payload = payload.questions
+        if questions_payload is None:
+            existing_q = await _db.policy_questions.count_documents({"policy_id": pid})
+            if existing_q == 0:
+                questions_payload = _default_sop_questions(sector)
+        if questions_payload is not None:
+            await _db.policy_questions.delete_many({"policy_id": pid})
+            q_docs = []
+            for i, q in enumerate(questions_payload):
+                qm = PolicyQuestionIn(**q)
+                q_docs.append({
+                    "id": str(uuid.uuid4()),
+                    "policy_id": pid,
+                    "type": qm.type,
+                    "question": qm.question,
+                    "options": qm.options if qm.type == "mcq" else None,
+                    "correct_index": qm.correct_index if qm.type == "mcq" else None,
+                    "order": qm.order if qm.order is not None else i,
+                    "created_at": now,
+                })
+            if q_docs:
+                await _db.policy_questions.insert_many(q_docs)
+
+        # Supersede any non-complete assignments tied to the previous version
+        superseded = 0
+        if prev_version_id:
+            res = await _db.policy_assignments.update_many(
+                {
+                    "policy_id": pid,
+                    "version_id_at_assignment": prev_version_id,
+                    "status": {"$ne": "complete"},
+                    "manager_sig_at": None,
+                },
+                {"$set": {
+                    "status": "superseded",
+                    "superseded_at": now,
+                    "superseded_by_version_id": version_doc["id"],
+                }},
+            )
+            superseded = res.modified_count
+
+        # Auto-assign to every eligible staff
+        eligible = await _eligible_sop_staff(sector)
+        assignments_created: list[dict] = []
+        due = (datetime.now(timezone.utc) + timedelta(days=14)).isoformat()
+        for staff in eligible:
+            doc = {
+                "id": str(uuid.uuid4()),
+                "policy_id": pid,
+                "policy_title": policy["title"],
+                "policy_category": SOP_CATEGORY,
+                "policy_sector": sector,
+                "version_id_at_assignment": version_doc["id"],
+                "staff_id": staff["id"],
+                "staff_name": staff.get("name"),
+                "staff_email": staff.get("email"),
+                "assigned_by_id": user.get("id"),
+                "assigned_by_name": user.get("name"),
+                "assigned_at": now,
+                "due_date": due,
+                "status": "assigned",
+                "opened_at": None,
+                "assessment_score": None,
+                "assessment_passed_at": None,
+                "staff_sig_at": None,
+                "manager_sig_at": None,
+                "completed_at": None,
+                "is_sop_assignment": True,
+                "sop_version": payload.version,
+            }
+            await _db.policy_assignments.insert_one(doc.copy())
+            assignments_created.append({"id": doc["id"], "staff_id": staff["id"]})
+
+        await _record_audit(
+            _db, actor=user, action="sop_version_uploaded",
+            object_type="policy", object_id=pid,
+            metadata={
+                "sector": sector,
+                "version": payload.version,
+                "previous_version_id": prev_version_id,
+                "assignments_created": len(assignments_created),
+                "assignments_superseded": superseded,
+                "author": payload.author_name or user.get("name"),
+            },
+            summary=(
+                f"Statement of Purpose v{payload.version} published for {sector} services "
+                f"— auto-assigned to {len(assignments_created)} staff"
+            ),
+        )
+        return {
+            "ok": True,
+            "policy_id": pid,
+            "version": _serialise(version_doc),
+            "assignments_created": len(assignments_created),
+            "assignments_superseded": superseded,
+        }
+
+    @router.get("/governance/sop/compliance")
+    async def sop_compliance(
+        sector: str = Query(..., pattern="^(children|adult)$"),
+        user: dict = Depends(_require_tier(3)),
+    ):
+        """Per-staff compliance breakdown for the current SoP version."""
+        policy = await _db.policies.find_one({
+            "sector": sector, "category": SOP_CATEGORY, "status": "active",
+        }, {"_id": 0})
+        if not policy or not policy.get("current_version_id"):
+            return {
+                "sector": sector,
+                "compliance_pct": 0.0,
+                "buckets": {
+                    "not_started": [], "in_progress": [],
+                    "complete": [], "failed": [], "superseded": [],
+                },
+                "counts": {
+                    "total": 0, "not_started": 0, "in_progress": 0,
+                    "complete": 0, "failed": 0, "superseded": 0,
+                },
+            }
+        version_id = policy["current_version_id"]
+        assignments = await _db.policy_assignments.find({
+            "policy_id": policy["id"],
+            "version_id_at_assignment": version_id,
+        }, {"_id": 0}).sort("staff_name", 1).to_list(1000)
+
+        buckets = {
+            "not_started": [], "in_progress": [],
+            "complete": [], "failed": [], "superseded": [],
+        }
+        for a in assignments:
+            status = pm.compute_assignment_status(a)
+            entry = {
+                "assignment_id": a["id"],
+                "staff_id": a.get("staff_id"),
+                "staff_name": a.get("staff_name"),
+                "staff_email": a.get("staff_email"),
+                "assigned_at": a.get("assigned_at"),
+                "due_date": a.get("due_date"),
+                "assessment_score": a.get("assessment_score"),
+                "staff_sig_at": a.get("staff_sig_at"),
+                "manager_sig_at": a.get("manager_sig_at"),
+                "is_overdue": pm.is_overdue(a),
+                "status": status,
+            }
+            if a.get("status") == "superseded":
+                buckets["superseded"].append(entry)
+                continue
+            if status == "complete":
+                buckets["complete"].append(entry)
+            elif (a.get("assessment_score") is not None
+                  and a.get("assessment_score") < 80
+                  and not a.get("assessment_passed_at")):
+                buckets["failed"].append(entry)
+            elif status == "assigned" and not a.get("opened_at"):
+                buckets["not_started"].append(entry)
+            else:
+                buckets["in_progress"].append(entry)
+
+        active_total = (
+            len(buckets["not_started"]) + len(buckets["in_progress"])
+            + len(buckets["complete"]) + len(buckets["failed"])
+        )
+        comp_pct = (
+            round(len(buckets["complete"]) / active_total * 100.0, 1)
+            if active_total else 0.0
+        )
+        return {
+            "sector": sector,
+            "policy_id": policy["id"],
+            "version_id": version_id,
+            "compliance_pct": comp_pct,
+            "buckets": buckets,
+            "counts": {
+                "total": active_total,
+                "not_started": len(buckets["not_started"]),
+                "in_progress": len(buckets["in_progress"]),
+                "complete": len(buckets["complete"]),
+                "failed": len(buckets["failed"]),
+                "superseded": len(buckets["superseded"]),
+            },
+        }
+
+    @router.get("/governance/sop/dashboard")
+    async def sop_dashboard(
+        sector: str = Query(..., pattern="^(children|adult)$"),
+        user: dict = Depends(_require_tier(3)),
+    ):
+        """One-call governance dashboard for the SoP."""
+        policy = await _db.policies.find_one({
+            "sector": sector, "category": SOP_CATEGORY, "status": "active",
+        }, {"_id": 0})
+        if not policy:
+            return {
+                "sector": sector,
+                "policy": None,
+                "exists": False,
+                "rag_status": "grey",
+                "compliance_pct": 0.0,
+                "counts": {},
+            }
+        hydrated = await _hydrate_policy(policy)
+        versions = await _db.policy_versions.find(
+            {"policy_id": policy["id"]}, {"_id": 0},
+        ).sort("created_at", -1).to_list(20)
+        # Reuse the compliance computation
+        compliance = await sop_compliance.__wrapped__(sector=sector, user=user) \
+            if hasattr(sop_compliance, "__wrapped__") else None
+        # Fallback inline (simpler & avoids attribute gymnastics)
+        if compliance is None:
+            assignments = await _db.policy_assignments.find({
+                "policy_id": policy["id"],
+                "version_id_at_assignment": policy.get("current_version_id"),
+            }, {"_id": 0}).to_list(1000)
+            total = len([a for a in assignments if a.get("status") != "superseded"])
+            done = len([a for a in assignments if pm.compute_assignment_status(a) == "complete"])
+            comp_pct = round(done / total * 100.0, 1) if total else 0.0
+            counts = {"total": total, "complete": done}
+        else:
+            comp_pct = compliance["compliance_pct"]
+            counts = compliance["counts"]
+
+        # Review-due RAG
+        now = datetime.now(timezone.utc)
+        days_to_review = None
+        review_rag = "green"
+        if policy.get("review_date"):
+            try:
+                rd = datetime.fromisoformat(policy["review_date"].replace("Z", "+00:00"))
+                days_to_review = (rd - now).days
+                if days_to_review < 0:
+                    review_rag = "red"
+                elif days_to_review <= 30:
+                    review_rag = "amber"
+            except (ValueError, AttributeError):
+                review_rag = "amber"
+        else:
+            review_rag = "amber"
+
+        # Overall governance RAG: red if no SoP or review overdue; amber if review
+        # within 30 days OR compliance < 80; else green
+        if not policy.get("current_version_id"):
+            overall = "red"
+        elif review_rag == "red" or comp_pct < 50:
+            overall = "red"
+        elif review_rag == "amber" or comp_pct < 80:
+            overall = "amber"
+        else:
+            overall = "green"
+
+        return {
+            "sector": sector,
+            "exists": True,
+            "policy": hydrated,
+            "current_version": hydrated.get("current_version"),
+            "versions": versions,
+            "version_count": len(versions),
+            "compliance_pct": comp_pct,
+            "counts": counts,
+            "review_date": policy.get("review_date"),
+            "days_to_review": days_to_review,
+            "review_rag": review_rag,
+            "rag_status": overall,
+        }
+
+    @router.get("/governance/sop/evidence.pdf")
+    async def sop_evidence_pdf(
+        sector: str = Query(..., pattern="^(children|adult)$"),
+        user: dict = Depends(_require_tier(3)),
+    ):
+        """Inspection-ready evidence pack — current SoP + previous versions +
+        per-staff compliance + signatures + audit trail."""
+        policy = await _db.policies.find_one({
+            "sector": sector, "category": SOP_CATEGORY, "status": "active",
+        }, {"_id": 0})
+        if not policy:
+            raise HTTPException(404, "No Statement of Purpose has been uploaded for this sector yet")
+
+        versions = await _db.policy_versions.find(
+            {"policy_id": policy["id"]}, {"_id": 0},
+        ).sort("created_at", -1).to_list(50)
+        current_version = next((v for v in versions if v["id"] == policy.get("current_version_id")), None)
+        assignments = await _db.policy_assignments.find({
+            "policy_id": policy["id"],
+            "version_id_at_assignment": policy.get("current_version_id"),
+        }, {"_id": 0}).sort("staff_name", 1).to_list(1000)
+        # Audit trail — last 100 SoP-related events
+        audit_filter = {
+            "object_id": policy["id"],
+        }
+        audit_events = await _db.audit_events.find(audit_filter, {"_id": 0}) \
+            .sort("created_at", -1).to_list(100) if hasattr(_db, "audit_events") else []
+        # Fall back to other audit collection name
+        if not audit_events:
+            try:
+                audit_events = await _db.audit_log.find(audit_filter, {"_id": 0}) \
+                    .sort("created_at", -1).to_list(100)
+            except Exception:
+                audit_events = []
+
+        try:
+            from reportlab.lib.pagesizes import A4
+            from reportlab.lib import colors
+            from reportlab.platypus import (
+                SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak,
+            )
+            from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+            from reportlab.lib.units import mm
+        except ImportError:
+            raise HTTPException(500, "PDF generation library missing")
+
+        buf = io.BytesIO()
+        doc = SimpleDocTemplate(buf, pagesize=A4,
+                                leftMargin=14*mm, rightMargin=14*mm,
+                                topMargin=14*mm, bottomMargin=14*mm)
+        styles = getSampleStyleSheet()
+        h1 = ParagraphStyle("h1", parent=styles["Heading1"],
+                            textColor=colors.HexColor("#0E3B4A"),
+                            fontSize=18, spaceAfter=8)
+        h2 = ParagraphStyle("h2", parent=styles["Heading2"],
+                            textColor=colors.HexColor("#0E3B4A"),
+                            fontSize=12, spaceAfter=4)
+        small = ParagraphStyle("small", parent=styles["Normal"], fontSize=8,
+                               textColor=colors.HexColor("#5d6068"))
+        body = styles["BodyText"]
+        story = []
+        sector_label = "Children's" if sector == "children" else "Adult"
+        story.append(Paragraph(f"Statement of Purpose · {sector_label} Services", h1))
+        story.append(Paragraph(
+            f"Inspection-ready evidence pack &nbsp;·&nbsp; "
+            f"Generated {datetime.now(timezone.utc).strftime('%d %b %Y %H:%M UTC')} by "
+            f"{user.get('name')}", small))
+        story.append(Spacer(1, 8))
+
+        # Current SoP
+        story.append(Paragraph("Current Statement of Purpose", h2))
+        rows1 = [
+            ["Title",          policy.get("title", "—")],
+            ["Version",        current_version.get("version") if current_version else "—"],
+            ["Author",         (current_version or {}).get("author_name") or (current_version or {}).get("uploaded_by_name") or "—"],
+            ["Effective date", (current_version or {}).get("effective_date", "—")],
+            ["Review date",    policy.get("review_date") or "—"],
+            ["Change summary", (current_version or {}).get("change_summary") or "—"],
+        ]
+        t1 = Table(rows1, colWidths=[40*mm, 130*mm])
+        t1.setStyle(TableStyle([
+            ("BACKGROUND", (0,0), (0,-1), colors.HexColor("#F1EFEC")),
+            ("FONTNAME",   (0,0), (0,-1), "Helvetica-Bold"),
+            ("FONTSIZE",   (0,0), (-1,-1), 9),
+            ("GRID",       (0,0), (-1,-1), 0.4, colors.HexColor("#d4d2cc")),
+            ("VALIGN",     (0,0), (-1,-1), "TOP"),
+        ]))
+        story.append(t1)
+        story.append(Spacer(1, 10))
+
+        # Version history
+        story.append(Paragraph("Version history", h2))
+        vrows = [["Version", "Effective", "Author", "Uploaded", "Archived"]]
+        for v in versions:
+            vrows.append([
+                v.get("version", "—"),
+                (v.get("effective_date") or "—")[:10],
+                v.get("author_name") or v.get("uploaded_by_name", "—"),
+                (v.get("created_at") or "—")[:16].replace("T", " "),
+                (v.get("archived_at") or "—")[:10] if v.get("archived_at") else "Current",
+            ])
+        tv = Table(vrows, colWidths=[20*mm, 28*mm, 50*mm, 40*mm, 32*mm])
+        tv.setStyle(TableStyle([
+            ("BACKGROUND", (0,0), (-1,0), colors.HexColor("#0E3B4A")),
+            ("TEXTCOLOR",  (0,0), (-1,0), colors.white),
+            ("FONTNAME",   (0,0), (-1,0), "Helvetica-Bold"),
+            ("FONTSIZE",   (0,0), (-1,-1), 8),
+            ("GRID",       (0,0), (-1,-1), 0.4, colors.HexColor("#d4d2cc")),
+            ("VALIGN",     (0,0), (-1,-1), "MIDDLE"),
+        ]))
+        story.append(tv)
+        story.append(Spacer(1, 10))
+
+        # Compliance table
+        story.append(Paragraph("Staff compliance — current version", h2))
+        crows = [["Staff", "Status", "Assess %", "Staff signed", "Manager signed"]]
+        for a in assignments:
+            if a.get("status") == "superseded":
+                continue
+            status_now = pm.compute_assignment_status(a)
+            crows.append([
+                a.get("staff_name", "—"),
+                status_now.replace("_", " ").upper(),
+                (str(a.get("assessment_score")) + "%") if a.get("assessment_score") is not None else "—",
+                (a.get("staff_sig_at") or "—")[:16].replace("T", " ") if a.get("staff_sig_at") else "—",
+                (a.get("manager_sig_at") or "—")[:16].replace("T", " ") if a.get("manager_sig_at") else "—",
+            ])
+        tc = Table(crows, colWidths=[50*mm, 32*mm, 18*mm, 35*mm, 35*mm])
+        tc.setStyle(TableStyle([
+            ("BACKGROUND", (0,0), (-1,0), colors.HexColor("#0E3B4A")),
+            ("TEXTCOLOR",  (0,0), (-1,0), colors.white),
+            ("FONTNAME",   (0,0), (-1,0), "Helvetica-Bold"),
+            ("FONTSIZE",   (0,0), (-1,-1), 8),
+            ("GRID",       (0,0), (-1,-1), 0.4, colors.HexColor("#d4d2cc")),
+            ("VALIGN",     (0,0), (-1,-1), "MIDDLE"),
+        ]))
+        story.append(tc)
+        story.append(Spacer(1, 10))
+
+        # Audit trail
+        story.append(Paragraph("Audit trail (most recent 50 SoP events)", h2))
+        if not audit_events:
+            story.append(Paragraph("Audit trail not available in this database instance.", small))
+        else:
+            arows = [["When", "Actor", "Action", "Summary"]]
+            for e in audit_events[:50]:
+                arows.append([
+                    (e.get("created_at") or "—")[:16].replace("T", " "),
+                    e.get("actor_name", "—"),
+                    e.get("action", "—"),
+                    (e.get("summary") or "")[:80],
+                ])
+            ta = Table(arows, colWidths=[34*mm, 36*mm, 36*mm, 65*mm])
+            ta.setStyle(TableStyle([
+                ("BACKGROUND", (0,0), (-1,0), colors.HexColor("#0E3B4A")),
+                ("TEXTCOLOR",  (0,0), (-1,0), colors.white),
+                ("FONTNAME",   (0,0), (-1,0), "Helvetica-Bold"),
+                ("FONTSIZE",   (0,0), (-1,-1), 7),
+                ("GRID",       (0,0), (-1,-1), 0.4, colors.HexColor("#d4d2cc")),
+                ("VALIGN",     (0,0), (-1,-1), "TOP"),
+            ]))
+            story.append(ta)
+
+        story.append(Spacer(1, 8))
+        story.append(Paragraph(
+            "This pack is generated directly from the Safelyn audit log. Every signature, "
+            "score, version change and assignment is traceable to the source records.", small))
+        doc.build(story)
+        buf.seek(0)
+        await _record_audit(
+            _db, actor=user, action="sop_evidence_exported",
+            object_type="policy", object_id=policy["id"],
+            metadata={"sector": sector, "version_count": len(versions)},
+            summary=f"Statement of Purpose evidence pack exported for {sector} services",
+        )
+        filename = f"statement-of-purpose-evidence-{sector}.pdf"
+        return StreamingResponse(
+            buf, media_type="application/pdf",
+            headers={"Content-Disposition": f"attachment; filename={filename}"},
+        )
+
+
+def _default_sop_questions(sector: str) -> list[dict]:
+    """Seed a minimal-yet-meaningful assessment when manager doesn't supply one."""
+    sector_label = "children's home" if sector == "children" else "adult service"
+    return [
+        {
+            "type": "mcq",
+            "question": (
+                "The Statement of Purpose sets out the aims, objectives and ethos of the "
+                f"{sector_label}. Who is it primarily for?"
+            ),
+            "options": [
+                "Inspectors only",
+                f"Anyone using, working in, or considering the {sector_label} — including "
+                f"residents, families, staff and regulators",
+                "Senior management only",
+            ],
+            "correct_index": 1,
+            "order": 0,
+        },
+        {
+            "type": "mcq",
+            "question": "How often must the Statement of Purpose be reviewed at minimum?",
+            "options": [
+                "Once every 12 months",
+                "Only when a regulator asks",
+                "Every 5 years",
+            ],
+            "correct_index": 0,
+            "order": 1,
+        },
+        {
+            "type": "mcq",
+            "question": "If your practice contradicts the Statement of Purpose, you should:",
+            "options": [
+                "Carry on — practice always trumps documents",
+                "Raise it with your manager so the SoP or practice can be reviewed",
+                "Ignore the SoP and follow what colleagues do",
+            ],
+            "correct_index": 1,
+            "order": 2,
+        },
+        {
+            "type": "reflection",
+            "question": (
+                "Describe one way your day-to-day practice actively reflects the values "
+                "and aims set out in this Statement of Purpose."
+            ),
+            "order": 3,
+        },
+    ]

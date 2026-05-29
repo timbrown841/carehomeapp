@@ -1,0 +1,43 @@
+{
+  "summary": "Phase H.3 Statement of Purpose Governance Hub — backend + frontend tested end-to-end. All 12 pytest tests in test_iteration50_sop_governance.py pass (100%). Combined Phase H regression: 28/28 pass (16 iter49 + 12 iter50). Frontend governance UI renders fully for manager with all required data-testids — tiles, buckets, version history, upload modal, questions modal, and evidence PDF download all functional.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {
+        "flow": "Staff role hitting /governance route",
+        "issue": "Spec says staff should see data-testid=governance-hub-blocked banner. Actual behaviour: the /governance route is wrapped in <ManagerOnly> in App.js which REDIRECTS staff to '/' (dashboard) instead of rendering the GovernanceHub blocked banner. The blocked banner code (data-testid=governance-hub-blocked, lines ~86-90 of GovernanceHub.jsx) is currently unreachable for the staff role. Backend 403 RBAC is correctly enforced; this is purely a frontend UX discrepancy versus the spec.",
+        "affected_selectors": ["[data-testid=governance-hub-blocked]"]
+      }
+    ],
+    "design_issues": [
+      {
+        "screen": "SoP upload modal",
+        "issues": ["Effective date and Next review date use native browser date pickers (<input type='date'>) instead of the shadcn Calendar component used elsewhere — minor consistency issue, not blocking."]
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration50_sop_governance.py",
+    "/app/test_reports/pytest/iter50_sop_governance.xml"
+  ],
+  "action_items": [
+    "Optional: Decide whether staff hitting /governance should see the blocked banner (remove ManagerOnly wrapper and rely on the in-component tier check) or keep the current redirect-to-dashboard behaviour. Spec wording suggests the banner should render.",
+    "Optional: Replace native date inputs with shadcn Calendar in sop-upload-modal for visual consistency."
+  ],
+  "critical_code_review_comments": [
+    "policy_routes.py is approaching size limits — consider splitting Phase H.3 SoP governance handlers into a separate module if it continues growing.",
+    "PDF generation in evidence.pdf endpoint is small (3.5KB) — acceptable for now but ensure ReportLab is being used (verified header %PDF-1.4)."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "95%"},
+  "test_credentials": "manager@care.local / Manager@123, staff@care.local / Staff@123",
+  "seed_data_creation": "None — used existing Children's SoP (v1.0 archived + v2.0 current) created by iter49 + iter50 pytest runs.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Login flow quirk: app redirects unauthenticated /login visits to /welcome (sector picker). To log in, click 'Enter workspace' first (it bounces to /login), then fill credentials. After auth, may need to pass /welcome again. /governance hard-codes sector from OrgContext (children/adult). All 12 H.3 pytest tests pass. Children's SoP currently has v1.0 (archived) + v2.0 (current). Adult sector likely empty if needed for empty-state testing.",
+  "rca_of_the_issue": "Staff blocked-banner: route guard ManagerOnly in App.js takes precedence over the component-level tier check in GovernanceHub.jsx, so staff are redirected before the banner renders. Fix would be to either (a) remove ManagerOnly from the route and rely on the component's data-testid=governance-hub-blocked tier guard, or (b) update the spec wording to reflect redirect-based protection."
+}
