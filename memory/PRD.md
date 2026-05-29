@@ -155,6 +155,44 @@ A simple and fast care management app for children's homes and supported living.
 - **NEW Documents module (metadata-only)**: 12 categories (care_plan, placement_plan, pathway_plan, court_order, ehcp, assessment, consent_form, review, id_document, placement_agreement, delegated_authority, other). Expiry date with EXPIRED red badge / 30-day "Expiring soon" amber badge. External URL link supported. Add/Delete gated to senior+ via require_tier(2). File uploads themselves arrive next iteration.
 - Tested: 38/38 backend pytest, all 8 frontend tabs verified. One critical FE bug caught by code review (local DocumentsTab function shadowing the imported component) — fixed inline (removed dead local definition + added explicit import). Verified manually after fix: senior creates a doc → document appears in the list with category pill + uploader. Report: `/app/test_reports/iteration_21.json`.
 
+## Implemented (2026-05-29 · iter-47 · Phase G.1 — Digest Delivery & Notification Centre)
+- **Smart in-app Notification Centre** with strict no-spam policy. Backend namespaced under `/api/notif-centre/*` to coexist with the legacy `/api/notifications` DSL/manager bell (both bells now live in the topbar).
+  - 7 categories: safeguarding · missing · compliance · staffing · placement_intelligence · hr · inspection_readiness.
+  - Severities: critical / high / medium / low / info. Critical events always page in-app + email regardless of preferences.
+  - **Dedupe**: sha-256(category|event_type|object_id|window) prevents same event firing twice in a day for the same user.
+  - **Auto-fan-out**: `user_id=None` broadcasts to every manager/admin.
+- **Endpoints** (`/app/backend/server.py` lines ~10428–10720 + `notifications_centre.py`):
+  - `GET /api/notif-centre` — inbox feed (filters: unread_only, category, limit clamp 1–500)
+  - `GET /api/notif-centre/counts` — unread + critical + per-category breakdown (powers the bell badge)
+  - `GET /api/notif-centre/since-last-login` — counts of incidents / safeguarding / missing / critical alerts since the user's previous login
+  - `GET /api/notif-centre/categories` — 7-entry catalogue for filter UI
+  - `GET / PATCH /api/notif-centre/preferences` — per-category channel preferences (in_app / email / sms / digest_only)
+  - `PATCH /api/notif-centre/{id}/read`, `DELETE /api/notif-centre/{id}`, `POST /api/notif-centre/mark-all-read`
+  - `POST /api/notif-centre/manual` (manager+) — manager-initiated broadcast + ad-hoc testing
+- **Auto-hooks** wired into existing operational endpoints:
+  - `POST /api/incidents` fires `notify_safeguarding_incident` whenever incident is flagged safeguarding/high/critical/restraint/police/missing.
+  - `POST /api/residents/{rid}/missing` fires `notify_missing_episode` (always critical).
+  - `POST /api/auth/login` now tracks `previous_login_at` + `last_login_at`; `UserOut` surfaces both fields.
+- **Digest Schedules** (`/api/handover/digest-schedules*`, `digest_scheduler.py`):
+  - Three default schedules seeded idempotently on startup: Morning (07:00 daily) · Weekly (Mondays 08:00) · Monthly (1st of month 08:00). All opt-in (enabled=False on first boot).
+  - Manager+ can toggle enabled, choose recipients, change hour/minute. `next_run_at` recomputed deterministically on every PATCH.
+  - Background asyncio task ticks every 60s, fires due schedules, logs each delivery in `db.digest_deliveries`.
+  - `POST /api/handover/digest-schedules/{id}/send-now` — manual trigger with `manual_trigger=True` flag.
+  - `GET /api/handover/digest-deliveries` — recent dispatch log with full snapshot (manager_actions_total, safeguarding_new, missing_episodes, improving, deteriorating, alerts_count).
+  - **Email/SMS dispatch is MOCKED** (delivery_status="queued_for_email"); database logging, in-app notifications, audit events and digest delivery records are all real.
+- **Frontend additions** (5 new files + 4 edits):
+  - `NotificationCentreBell.jsx` — topbar bell with red critical-aware badge, category filter chips, mark-all-read, dismiss-per-item, view-all link. Coexists with legacy `NotificationBell.jsx` (DSL/manager alerts).
+  - `NotificationCentre.jsx` `/notifications-centre` — full inbox page with category filter chips (8 testids), unread-only checkbox, Preferences panel (7 rows × 4 channel toggles), dismiss/open-deep-link per item.
+  - `SinceLastLogin.jsx` — manager+ Dashboard widget with 4 tiles (Safeguarding incidents · Missing episodes · Critical alerts · New notifications) and deep-link to centre.
+  - `DigestSchedulesPanel.jsx` — under Handover Digest "Schedules" tab. 3 schedule cards with toggle/recipients-picker/send-now, recent-deliveries list, [EMAIL MOCKED] flag persistently shown.
+  - `HandoverDigest.jsx` — added Digest/Schedules tab switcher at the top.
+  - `Layout.jsx` — both bells now mounted in topbar (mobile & desktop).
+  - `Dashboard.jsx` — SinceLastLogin embedded after InspectionSnapshotCard (auto-hidden for staff).
+  - `App.js` — new `/notifications-centre` route (any-auth).
+- **Audit log integration**: notif_preferences_updated, notif_manual_created, digest_schedule_updated, digest_sent_manual all write `audit_events` rows.
+- **Tested**: 22/22 backend pytest in `test_iteration47_notif_centre.py` + supplementary `test_iteration47b_notif_extra.py`. Frontend: all G.1 UI elements rendered and interactive on manager session; legacy bell still works; staff RBAC correctly hides SinceLastLogin widget. Report: `/app/test_reports/iteration_47.json`. **No retest needed.**
+
+
 ## Backlog (next-up)
 ### P0 — User-confirmed sequential plan ("everything ClearCare has, but better"):
 1. ✅ ~~Health & Wellbeing~~ (iter-14)
