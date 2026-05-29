@@ -192,6 +192,31 @@ A simple and fast care management app for children's homes and supported living.
 - **Audit log integration**: notif_preferences_updated, notif_manual_created, digest_schedule_updated, digest_sent_manual all write `audit_events` rows.
 - **Tested**: 22/22 backend pytest in `test_iteration47_notif_centre.py` + supplementary `test_iteration47b_notif_extra.py`. Frontend: all G.1 UI elements rendered and interactive on manager session; legacy bell still works; staff RBAC correctly hides SinceLastLogin widget. Report: `/app/test_reports/iteration_47.json`. **No retest needed.**
 
+## Implemented (2026-05-29 · iter-48 · Phase G.1b — Quiet Hours)
+- **User-controlled quiet hours** layered onto the Notification Centre. Supportive tone throughout — never "disable alerts". Headline: "Protect your downtime while keeping critical safeguarding alerts active."
+- **Per-user `notification_quiet_hours` collection**: enabled · start (HH:MM) · end (HH:MM) · days (Mon=0..Sun=6) · apply_to_email · apply_to_sms · apply_to_in_app · updated_at. Defaults: disabled, 22:00–06:00, all 7 days, all 3 channel toggles on.
+- **Deterministic `is_in_quiet_hours()` helper** (`notifications_centre.py`): handles same-day windows AND midnight-crossing windows. Morning-side of a midnight-crossing window correctly checks the PREVIOUS day's weekday in the `days` list.
+- **Behaviour** (enforced inside `create_notification`):
+  - Critical event during quiet hours → `quiet_hours_breakthrough=True`, normal delivery, `bundled_into_digest=False`. Still pages user.
+  - Non-critical during quiet hours → `bundled_into_digest=True`, email/sms stripped from `pending_channels` (per user's apply_to flags), in-app pulled out of `delivered_channels` so the bell badge doesn't pulse. The notification is STILL visible when the user explicitly opens the centre.
+- **Endpoints**:
+  - `GET /api/notif-centre/quiet-hours` → returns `{quiet_hours, is_in_quiet_hours, critical_breakthrough_events[], bundled_examples[]}`. Critical events list seeded with 8 entries (child_reported_missing, high_risk_incident, new_safeguarding_referral, police_involvement, reg40_trigger, staffing_ratio_breach, medication_safety_urgent, placement_stability_critical).
+  - `PATCH /api/notif-centre/quiet-hours` → upserts settings. Validates `HH:MM` (400 on garbage) and days 0..6 (400 on out-of-range).
+  - `GET /api/notif-centre/counts` now also returns `bundled_for_digest` (count of held non-critical notifications) and excludes bundled from `unread`.
+- **Audit events** (all retrievable via `/api/audit?action=...`):
+  - `quiet_hours_updated` — on every PATCH
+  - `quiet_hours_breakthrough` — when a critical alert breaks through
+  - `quiet_hours_bundled` — when a non-critical is held for digest
+- **Frontend `QuietHoursPanel`** embedded inside `/notifications-centre` Preferences:
+  - Toggle (On/Off), time pickers, weekday chip strip (Mon..Sun), channel-scope chips (In-app push · Email · SMS).
+  - Two-card preview: "Always breaks through" (critical events list, red-tinted) + "Held for your morning digest" (bundled examples, blue-tinted).
+  - "Active now" pill + supportive amber banner when current time falls inside the window.
+  - Headline + microcopy match the user-specified supportive tone exactly.
+- **Notification feed additions**: bundled non-critical items show a "Held for digest" amber chip; critical breakthroughs show "CRITICAL · BROKE THROUGH"; page header surfaces `bundled-for-digest-banner` when count > 0.
+- **Other change**: `nc_manual_notification` now targets the calling user only (instead of broadcasting to all managers) — improves manager testing & per-user behaviour predictability.
+- **Tested**: 31/31 backend pytest (9 new quiet-hours + 22 G.1 regression). Frontend Playwright: 100% data-testid coverage + tone verified. No regressions. Report: `/app/test_reports/iteration_48.json`. **No retest needed.**
+
+
 
 ## Backlog (next-up)
 ### P0 — User-confirmed sequential plan ("everything ClearCare has, but better"):
