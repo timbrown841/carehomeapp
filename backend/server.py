@@ -205,6 +205,13 @@ async def lifespan(_app: FastAPI):
     await init_digest_schedules(db)
     digest_task = await start_digest_scheduler(db, interval_seconds=60)
 
+    # Phase H — seed policy categories + default induction packs
+    try:
+        import policy_management as _pm_seed
+        await _pm_seed.ensure_seed_categories(db)
+    except Exception as _e:
+        logger.warning(f"Policy category seed failed: {_e}")
+
     yield
     # ---- shutdown ----
     try:
@@ -10827,6 +10834,16 @@ async def list_digest_deliveries(
 
 
 app.include_router(api_router)
+
+# Phase H — Induction & Policy Management
+import policy_routes as _policy_routes
+import policy_management as _policy_management
+_policy_routes.init(
+    db=db, get_current_user=get_current_user,
+    require_tier=require_tier, record_audit=record_audit,
+)
+_policy_routes.build_routes()
+app.include_router(_policy_routes.router)
 
 
 app.add_middleware(

@@ -1,5 +1,5 @@
 import HubTabs from "@/components/HubTabs";
-import { CalendarClock, ClipboardList, ClipboardCheck, GraduationCap, ShieldCheck, Heart, Activity } from "lucide-react";
+import { CalendarClock, ClipboardList, ClipboardCheck, GraduationCap, ShieldCheck, Heart, Activity, BookOpen } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 
 import Staff, { TrainingPage } from "@/pages/Staff";
@@ -7,6 +7,8 @@ import Handover from "@/pages/Handover";
 import Supervisions from "@/pages/Supervisions";
 import SaferRecruitment from "@/pages/SaferRecruitment";
 import HandoverDigest from "@/pages/HandoverDigest";
+import InductionPolicyHub from "@/pages/InductionPolicyHub";
+import MyPolicies from "@/pages/MyPolicies";
 import { TeamWellbeingAwarenessCard } from "@/pages/ReflectionSupervision";
 import BurnoutForecastPanel from "@/components/intelligence/BurnoutForecastPanel";
 
@@ -20,6 +22,7 @@ export default function StaffOperationsHub() {
     { id: "wellbeing", label: "Team Wellbeing", icon: Heart, hidden: tier < 3 },
     { id: "training", label: "Training", icon: GraduationCap },
     { id: "recruitment", label: "Safer Recruitment", icon: ShieldCheck, hidden: tier < 3 },
+    { id: "policies", label: "Induction & Policy", icon: BookOpen },
   ];
 
   return (
@@ -40,6 +43,7 @@ export default function StaffOperationsHub() {
           if (active === "wellbeing") return <TeamWellbeingPanel />;
           if (active === "training") return <TrainingPage />;
           if (active === "recruitment") return <SaferRecruitment />;
+          if (active === "policies") return (tier >= 3 ? <InductionPolicyHub /> : <MyPolicies />);
           return null;
         }}
       </HubTabs>
