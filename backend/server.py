@@ -10914,6 +10914,15 @@ _induction_routes.init(
 _induction_routes.build_routes()
 app.include_router(_induction_routes.router)
 
+# Phase E.3.2 — Unified Compliance Dashboard
+import compliance_dashboard as _compliance_dashboard
+_compliance_dashboard.init(
+    db=db, get_current_user=get_current_user,
+    require_tier=require_tier,
+)
+_compliance_dashboard.build_routes()
+app.include_router(_compliance_dashboard.router)
+
 
 app.add_middleware(
     CORSMiddleware,

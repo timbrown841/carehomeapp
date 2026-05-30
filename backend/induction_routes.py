@@ -77,6 +77,89 @@ INDUCTION_SECTIONS: list[dict] = [
 ]
 
 
+# ---- Phase E.3.2 — Role-specific induction templates -----------------------
+# Each template begins with the universal core (welcome → manager_signoff)
+# and then layers role/sector-specific topics.
+
+CHILDREN_WORKER_EXTRAS: list[dict] = [
+    {"key": "cse_awareness", "title": "Child Sexual Exploitation (CSE) awareness",
+     "description": "Indicators, contextual safeguarding, response routes, partner agencies."},
+    {"key": "cce_awareness", "title": "Child Criminal Exploitation (CCE) awareness",
+     "description": "County lines, gang-related risk, trauma response, escalation pathways."},
+    {"key": "pace_practice", "title": "PACE practice deep-dive",
+     "description": "Playfulness · Acceptance · Curiosity · Empathy — applied with our cohort."},
+    {"key": "trauma_informed_practice", "title": "Trauma-informed practice",
+     "description": "Attachment, neurobiology of trauma, regulation, co-regulation strategies."},
+    {"key": "childrens_home_regs", "title": "Children's Homes Regulations 2015",
+     "description": "Quality standards 5–14, Regulation 44, Regulation 45, statutory duties."},
+]
+
+ADULT_WORKER_EXTRAS: list[dict] = [
+    {"key": "mca_practice", "title": "Mental Capacity Act in practice",
+     "description": "Two-stage capacity test, best interests decision-making, documentation."},
+    {"key": "dols", "title": "Deprivation of Liberty Safeguards (DoLS)",
+     "description": "When DoLS apply, authorisation routes, your role as a frontline worker."},
+    {"key": "dementia_care", "title": "Dementia care awareness",
+     "description": "Person-centred care, communication, environmental design, distress signals."},
+    {"key": "moving_handling", "title": "Moving & handling (people)",
+     "description": "LOLER, hoists, transfer techniques, risk-assessment-led practice."},
+    {"key": "pbs_practice", "title": "Positive Behaviour Support (PBS)",
+     "description": "Function-based assessment, proactive strategies, restrictive practice ladder."},
+]
+
+MANAGER_EXTRAS: list[dict] = [
+    {"key": "leadership", "title": "Leadership & home culture",
+     "description": "Setting culture, staff supervision philosophy, modelling values."},
+    {"key": "compliance_audits", "title": "Compliance & audits",
+     "description": "Monthly compliance review, Reg 44 / Reg 45 visit response, audit trail discipline."},
+    {"key": "investigations", "title": "Investigations & allegations",
+     "description": "LADO, internal investigations, evidence preservation, fairness."},
+    {"key": "workforce_management", "title": "Workforce management",
+     "description": "Rota assurance, sickness, capability, performance, retention."},
+    {"key": "inspection_readiness", "title": "Ofsted / CQC inspection readiness",
+     "description": "Notice or no-notice inspection prep, evidence pack, SoP & QoC alignment."},
+]
+
+
+INDUCTION_TEMPLATES = {
+    "children_worker": {
+        "id": "children_worker",
+        "label": "Children's Residential Worker Induction",
+        "sector": "children",
+        "description": "For residential support workers, seniors and team leaders in children's homes.",
+        "sections": INDUCTION_SECTIONS + CHILDREN_WORKER_EXTRAS,
+    },
+    "adult_worker": {
+        "id": "adult_worker",
+        "label": "Adult Support Worker Induction",
+        "sector": "adult",
+        "description": "For support workers in adult care services.",
+        "sections": INDUCTION_SECTIONS + ADULT_WORKER_EXTRAS,
+    },
+    "manager": {
+        "id": "manager",
+        "label": "Manager Induction",
+        "sector": "both",
+        "description": "For deputy managers, registered managers, RIs and ops leads.",
+        "sections": INDUCTION_SECTIONS + MANAGER_EXTRAS,
+    },
+}
+
+
+# Auto-pick rule: maps the user's role (and sector hint) to a template id.
+def recommended_template(role: str, sector: str = "children") -> str:
+    role = (role or "").lower()
+    if role in ("manager", "admin"):
+        return "manager"
+    # Deputy / RI / team_leader currently fold into 'manager' for Manager Induction
+    # when the platform adds those roles. For now use heuristics on role name:
+    if "deputy" in role or "registered" in role or "responsible" in role or "operations" in role:
+        return "manager"
+    if sector == "adult":
+        return "adult_worker"
+    return "children_worker"
+
+
 def _now():
     return datetime.now(timezone.utc).isoformat()
 
@@ -142,6 +225,7 @@ class AssignmentIn(BaseModel):
     staff_id: str
     sector: Literal["children", "adult"] = "children"
     target_completion: Optional[str] = None  # YYYY-MM-DD
+    template_id: Optional[Literal["children_worker", "adult_worker", "manager"]] = None
 
 
 class ItemPatch(BaseModel):
@@ -171,6 +255,43 @@ def build_routes():
     @router.get("/induction/template")
     async def induction_template(_: dict = Depends(_get_current_user)):
         return {"sections": INDUCTION_SECTIONS, "count": len(INDUCTION_SECTIONS)}
+
+    @router.get("/induction/templates")
+    async def list_templates(_: dict = Depends(_get_current_user)):
+        """Phase E.3.2 — role-specific templates with section counts."""
+        out = []
+        for tid, t in INDUCTION_TEMPLATES.items():
+            out.append({
+                "id": tid,
+                "label": t["label"],
+                "sector": t["sector"],
+                "description": t["description"],
+                "section_count": len(t["sections"]),
+                "extra_section_keys": [s["key"] for s in t["sections"][len(INDUCTION_SECTIONS):]],
+            })
+        return {"templates": out}
+
+    @router.get("/induction/templates/{tid}")
+    async def get_template(tid: str, _: dict = Depends(_get_current_user)):
+        t = INDUCTION_TEMPLATES.get(tid)
+        if not t:
+            raise HTTPException(404, "Template not found")
+        return t
+
+    @router.get("/induction/recommend-template")
+    async def recommend_template_for(
+        staff_id: str,
+        sector: str = "children",
+        user: dict = Depends(_get_current_user),
+    ):
+        """Returns the recommended template id for a staff member based on their role + sector."""
+        s = await _db.users.find_one({"id": staff_id}, {"_id": 0})
+        if not s:
+            raise HTTPException(404, "Staff not found")
+        tid = recommended_template(s.get("role") or "staff", sector)
+        return {"staff_id": staff_id, "role": s.get("role"), "sector": sector,
+                "recommended_template_id": tid,
+                "label": INDUCTION_TEMPLATES[tid]["label"]}
 
     @router.get("/induction/assignments")
     async def list_assignments(
@@ -305,14 +426,19 @@ def build_routes():
         )
         if existing:
             raise HTTPException(400, "Staff member already has an active induction assignment")
+        # Resolve template — explicit choice wins; else auto-pick by role + sector
+        tid = payload.template_id or recommended_template(staff.get("role") or "staff", payload.sector)
+        tpl = INDUCTION_TEMPLATES.get(tid) or INDUCTION_TEMPLATES["children_worker"]
         doc = {
             "id": str(uuid.uuid4()),
             "staff_id": payload.staff_id,
             "staff_name": staff.get("name"),
             "staff_role": staff.get("role"),
             "sector": payload.sector,
+            "template_id": tid,
+            "template_label": tpl["label"],
             "target_completion": payload.target_completion,
-            "items": [_new_item(s) for s in INDUCTION_SECTIONS],
+            "items": [_new_item(s) for s in tpl["sections"]],
             "signed_off_at": None,
             "signed_off_by_id": None,
             "signed_off_by_name": None,
@@ -327,7 +453,7 @@ def build_routes():
         await _record_audit(
             db=_db, actor=user, action="induction_assigned",
             object_type="induction_assignment", object_id=doc["id"],
-            summary=f"Induction assigned to {doc['staff_name']}",
+            summary=f"Induction ({tpl['label']}) assigned to {doc['staff_name']}",
         )
         return doc
 
