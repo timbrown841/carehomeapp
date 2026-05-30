@@ -373,6 +373,30 @@ A simple and fast care management app for children's homes and supported living.
 - **Auto-create rules**: only **supervision → task** wired this iteration per user choice. Auto-create from incidents / dev plans / Reg 44 / Ofsted action plans deferred to a future phase.
 - **Tested**: 16/16 backend pytest in `test_iteration54_scheduler.py` (cliff-edge shape + RBAC + snapshot persistence, 12 seeded templates, task CRUD, recurrence spawn-on-complete with weekly day-of-week math, staff RBAC, manager-only delete, dashboard shape + RBAC, supervision bi-dir). Combined 48/48 across iter52+53+54. Frontend testing agent + main agent smoke: all data-testids resolved, widgets render, /tasks page works. Report: `/app/test_reports/iteration_54.json`. **No retest needed.**
 
+## Implemented (2026-05-30 · iter-55 · Phase E.3 — Staff Induction Checklist · BUG FIX + FEATURE)
+- **User-reported bug** ("Induction Pack area opens briefly then clicks/closes off, section is unfinished") — **RESOLVED**. Root cause: legacy InductionTab only had policy-week pack cards with no detail view; the only click affordance was an "Enrol" modal that closed on backdrop click.
+- **New module** delivering the proper structured **16-section induction checklist** users actually work through.
+- **Backend** — new `/app/backend/induction_routes.py` (APIRouter mounted via build_routes/init pattern):
+  - **16 fixed standard sections**: welcome · policies_procedures · safeguarding · fire_emergency · medication · behaviour_support · missing_from_care · recording_logs · key_working · professional_boundaries · whistleblowing · health_safety · shadow_shifts · supervision · mandatory_training · manager_signoff.
+  - Collection `induction_assignments` (one per staff member · sector aware · stores full embedded items[] array with per-item status/notes/evidence_file_id/completed_at/completed_by).
+  - **Endpoints**:
+    - GET `/api/induction/template` — returns 16 sections
+    - GET `/api/induction/assignments` (RBAC: staff sees own only) — with computed progress {complete, in_progress, not_started, total, completion_pct, overall_status}
+    - GET `/api/induction/assignments/mine` (staff personal) — declared BEFORE `/{aid}` for routing order
+    - GET `/api/induction/assignments/{aid}`
+    - POST `/api/induction/assignments` (senior+ tier 2) — pre-seeds all 16 items; rejects duplicate active assignment per staff
+    - PATCH `/api/induction/assignments/{aid}/items/{key}` — status/notes/evidence_file_id; staff scoped to OWN; manager_signoff item locked to manager+; signed-off assignments are read-only (400)
+    - POST `/api/induction/assignments/{aid}/sign-off` (manager+ tier 3) — requires all 16 complete (otherwise 400); freezes assignment, stamps signed_off_at + signed_off_by + declaration
+    - DELETE `/api/induction/assignments/{aid}` (manager+)
+  - All write ops emit `induction_*` audit events.
+- **Frontend** — new `/app/frontend/src/pages/StaffInduction.jsx` (exports `StaffInductionList` default + `InductionDetailPage` named):
+  - `/induction` list page — Manager/senior+: card grid with progress bars + status pills (Not started / In progress / Awaiting sign-off / Signed off). "Assign induction" modal (with `stopPropagation` so it stays open while interacting — fixing the original bug). Staff users auto-redirected to their own `/induction/{aid}` (or shown a friendly "No induction assigned yet" state).
+  - `/induction/{aid}` detail page — Numbered 01..16 sections in an expandable accordion. Each section shows status pills, 3 status buttons (Not started / In progress / Complete), notes textarea, Attach file (PDF/image), Save notes. The `manager_signoff` item is marked "Manager only" and is read-only for staff. After all 16 complete, manager+ sees a prominent "Final manager sign-off" button which opens the sign-off declaration modal. Signed-off assignments display read-only with the manager's declaration quote and signed-off date.
+- **Sector aware** (children's vs adult selected at assignment time, displayed in detail header).
+- **RBAC**: staff sees own only, can update non-signoff items + upload evidence; senior can update other staff items; manager only signs off; staff cannot mark `manager_signoff` item even on own induction (frontend hides + backend 403).
+- **InductionPolicyHub.jsx** "Induction packs" tab — now shows the **new 16-section Staff Induction section at the top** (card grid + "Open full Induction Centre" deep link to `/induction`). The legacy policy-week packs section is retained underneath for mass policy-category enrolment (different purpose). The original click/close bug area is now replaced with proper navigation.
+- **Tested**: 14/14 backend pytest in `test_iteration55_induction.py` (16-section template, 16-item seed, duplicate-prevention 400, staff RBAC 403, manager_signoff item lock for staff, sign-off-requires-all-complete 400, full sign-off flow + read-only after, senior sign-off blocked, staff isolation, manager delete, **`/mine` regression test for FastAPI route ordering**). Frontend testing agent: 100% backend + 100% frontend. **Routing-order bug found and fixed mid-test**: `/api/induction/assignments/mine` was captured by `/{aid}` — testing agent reordered the registrations in `build_routes()` and added active-first selection. Report: `/app/test_reports/iteration_55.json`. **No retest needed.**
+
 
 
 ## Backlog (next-up)

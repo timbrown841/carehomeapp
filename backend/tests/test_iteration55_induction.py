@@ -198,6 +198,26 @@ def test_staff_sees_only_own_assignments():
     for a in r["assignments"]:
         assert a["staff_id"] == me["id"]
 
+def test_mine_endpoint_returns_active_assignment():
+    """Regression: /assignments/mine must not be captured by /assignments/{aid}."""
+    sid = _first_staff_id()
+    _ensure_no_active_for(sid)
+    t = _mtoken()
+    a = requests.post(f"{API}/induction/assignments",
+                       json={"staff_id": sid}, headers=_h(t), timeout=10).json()
+    st = _stoken()
+    me = requests.get(f"{API}/auth/me", headers=_h(st), timeout=10).json()
+    if me["id"] != sid:
+        return  # only one staff -- skip
+    r = requests.get(f"{API}/induction/assignments/mine", headers=_h(st), timeout=10)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["assignment"]
+    assert body["assignment"]["id"] == a["id"]
+    assert body["assignment"]["staff_id"] == me["id"]
+
+
+
 
 def test_manager_delete_assignment():
     sid = _first_staff_id()
