@@ -1,0 +1,37 @@
+{
+  "summary": "Phase E.1 — Training & Workforce Development Centre fully verified. Backend pytest 21/21 PASS. Frontend manager flow: /training renders training-centre-page with all 5 tabs (dashboard, matrix, certificates, qualifications, plans). Every tab opens its content view; modals (record, certificate, qualification, plan-create, objective, quarterly-review) all open with correct data-testids. Drawer opens on plan card click. Staff self-view (tc-self-view) renders correctly with My trainings / My certificates / My qualifications / My development plan sections; manager-only tabs (matrix, dashboard) correctly NOT rendered for staff. Staff Operations Hub /staff-operations Training tab shows tc-summary-tile with tc-summary-link href=/training above embedded TrainingCentre. Sector header reads 'Children's Services' for children's mode. RBAC enforced both server-side (403 for staff on /matrix and /dashboard — backend tests) and client-side (self-view substitution). Bi-directional supervision -> dev plan objective link verified at backend.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "TrainingCentre — Record/Certificate/Qualification/Plan modals", "issues": ["React hydration warning in console: '<span> cannot be a child of <option>'. A <select><option> in the page (likely the staff or course select dropdowns in tc-record/tc-cert/tc-qual/tc-plan modals) renders a <span> child inside an <option>. Browsers will strip this and React logs a hydration warning. Non-blocking but should be cleaned up — use plain text inside <option> or render the badge outside the option."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration53_training_centre.py",
+    "/app/test_reports/pytest/iteration_53.xml"
+  ],
+  "action_items": [
+    "Remove <span> children inside <option> elements in TrainingCentre.jsx modal selects to clear React hydration warning (cosmetic, non-blocking).",
+    "Optional: when opening the plan drawer, the first card a user clicks may be an archived plan (since 2027 archived plans come first); consider sorting active plans first or highlighting active vs archived more clearly in the drawer header — current behaviour correctly hides action buttons for archived plans but UX could surface that state earlier."
+  ],
+  "critical_code_review_comments": [
+    "Backend training_centre_routes.py: comprehensive RBAC checks (manager+ for matrix/dashboard/records create, staff self-only for /records/mine and own certificate uploads) — all enforced and tested.",
+    "Deterministic record_status() helper (no AI) — covered by matrix and dashboard tests.",
+    "Bi-directional supervision link: POST /supervisions/{id}/training-actions returns {plan_id, objective} with objective.linked_supervision_id — both sides asserted.",
+    "TrainingCentre.jsx is ~1100 lines — exceeds 700-line guideline; consider splitting into subcomponents per tab (DashboardTab, MatrixTab, CertificatesTab, QualificationsTab, PlansTab, SelfView, SummaryTile) for maintainability.",
+    "Certificate upload supports both file (multipart with file_id) and external_url; manager uploads auto-verified (verification_status='verified'), staff own uploads stay pending — covered by tests.",
+    "Sector partitioning verified: children courses (team_teach, pace) absent from adult catalogue and vice versa (mca, dols)."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (21/21 pytest)", "frontend": "100% on all required testids and flows"},
+  "test_credentials": "manager@care.local/Manager@123 (tier 3), staff@care.local/Staff@123 (tier 1). Children's sector selected via /welcome tile before login.",
+  "seed_data_creation": "No new seed data created; relied on lifespan seed_catalogues + previously-created records/certificates/qualifications/plans from earlier pytest runs (test data persists across runs). Existing staff user 'Alex Staff' already has records, certificates (gdpr/fire_safety/first_aid v1-v3), qualifications (L3 Residential Childcare) and 6 development plans (2026 active + 2027 archived rollovers).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Phase E.1 Training Centre is solid end-to-end. Backend test_iteration53_training_centre.py is the canonical regression. For UI retests, click sector-tile-children on /welcome first, login as manager, hit /training, then assert training-centre-page + 5 tc-tab-* testids. Staff testing: clear localStorage between logins. Adult sector flow: use workspace switcher in left sidebar profile dropdown (not retested in this iteration due to no obvious test-id for the switcher, but children's-sector flow was thorough and backend sector filter tests cover the data layer for adult)."
+}

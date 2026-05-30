@@ -3,6 +3,7 @@ import { CalendarClock, ClipboardList, ClipboardCheck, GraduationCap, ShieldChec
 import { useAuth } from "@/context/AuthContext";
 
 import Staff, { TrainingPage } from "@/pages/Staff";
+import TrainingCentre, { TrainingCentreSummary } from "@/pages/TrainingCentre";
 import Handover from "@/pages/Handover";
 import Supervisions from "@/pages/Supervisions";
 import SaferRecruitment from "@/pages/SaferRecruitment";
@@ -45,7 +46,12 @@ export default function StaffOperationsHub() {
           if (active === "digest") return <HandoverDigest />;
           if (active === "supervisions") return <Supervisions />;
           if (active === "wellbeing") return <TeamWellbeingPanel />;
-          if (active === "training") return <TrainingPage />;
+          if (active === "training") return (
+            <div>
+              <TrainingCentreSummary />
+              <TrainingCentre />
+            </div>
+          );
           if (active === "recruitment") return <SaferRecruitment />;
           if (active === "policies") return (tier >= 3 ? <InductionPolicyHub /> : <MyPolicies />);
           if (active === "governance") return <GovernanceHub />;

@@ -35,6 +35,7 @@ import Visits from "@/pages/Visits";
 import PocketMoney from "@/pages/PocketMoney";
 import PettyCashPage from "@/pages/PettyCashPage";
 import Staff, { TrainingPage } from "@/pages/Staff";
+import TrainingCentre from "@/pages/TrainingCentre";
 import Handover from "@/pages/Handover";
 import Supervisions from "@/pages/Supervisions";
 import SaferRecruitment from "@/pages/SaferRecruitment";
@@ -155,7 +156,7 @@ function App() {
               <Route path="/shift-swaps" element={<ShiftSwaps />} />
               <Route path="/handover" element={<Handover />} />
               <Route path="/handover/:id" element={<Handover />} />
-              <Route path="/training" element={<TrainingPage />} />
+              <Route path="/training" element={<TrainingCentre />} />
               <Route path="/supervisions" element={<Supervisions />} />
               <Route path="/hr" element={<ManagerOnly><SaferRecruitment /></ManagerOnly>} />
               <Route path="/handover-digest" element={<ManagerOnly><HandoverDigest /></ManagerOnly>} />

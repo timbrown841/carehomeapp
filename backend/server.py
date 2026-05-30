@@ -133,6 +133,14 @@ async def lifespan(_app: FastAPI):
     await db.mca_assessments.create_index([("resident_id", 1), ("assessed_at", -1)])
     await db.wellbeing_observations.create_index([("resident_id", 1), ("observed_at", -1)])
 
+    # Phase E.1 — Training Centre
+    await db.tc_courses.create_index([("code", 1), ("sector", 1)], unique=True)
+    await db.tc_records.create_index([("staff_id", 1), ("course_code", 1), ("completed_on", -1)])
+    await db.tc_certificates.create_index([("staff_id", 1), ("course_code", 1), ("version", -1)])
+    await db.tc_qualifications.create_index([("staff_id", 1), ("qualification_code", 1)])
+    await db.tc_qual_catalogue.create_index("code", unique=True)
+    await db.tc_dev_plans.create_index([("staff_id", 1), ("year", -1)])
+
     # Staff Reflective Practice & Wellbeing (Iteration 33)
     await db.wellbeing_checkins.create_index([("user_id", 1), ("created_at", -1)])
     await db.staff_reflections.create_index([("user_id", 1), ("created_at", -1)])
@@ -211,6 +219,13 @@ async def lifespan(_app: FastAPI):
         await _pm_seed.ensure_seed_categories(db)
     except Exception as _e:
         logger.warning(f"Policy category seed failed: {_e}")
+
+    # Phase E.1 — Training Centre catalogues
+    try:
+        import training_centre as _tc_seed
+        await _tc_seed.seed_catalogues(db)
+    except Exception as _e:
+        logger.warning(f"Training Centre seed failed: {_e}")
 
     yield
     # ---- shutdown ----
@@ -10849,6 +10864,17 @@ _policy_routes.init(
 )
 _policy_routes.build_routes()
 app.include_router(_policy_routes.router)
+
+# Phase E.1 — Training & Workforce Development Centre
+import training_centre as _training_centre
+import training_centre_routes as _tc_routes
+_tc_routes.init(
+    db=db, get_current_user=get_current_user,
+    require_tier=require_tier, record_audit=record_audit,
+    save_upload=save_upload,
+)
+_tc_routes.build_routes()
+app.include_router(_tc_routes.router)
 
 
 app.add_middleware(
