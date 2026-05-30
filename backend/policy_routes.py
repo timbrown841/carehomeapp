@@ -1502,6 +1502,678 @@ def build_routes():
             headers={"Content-Disposition": f"attachment; filename={filename}"},
         )
 
+    # ============================================================
+    # Phase H.2 — Policy Intelligence & Inspection Readiness
+    # ============================================================
+
+    async def _all_assignments_for_sector(sector: str) -> list[dict]:
+        q = {"policy_sector": sector} if sector else {}
+        return await _db.policy_assignments.find(q, {"_id": 0}).to_list(20000)
+
+    async def _all_policies_for_sector(sector: str) -> list[dict]:
+        q = {"sector": sector, "status": "active"} if sector else {"status": "active"}
+        return await _db.policies.find(q, {"_id": 0}).to_list(5000)
+
+    @router.get("/policy-intelligence/dashboard")
+    async def policy_intelligence_dashboard(
+        sector: Optional[str] = Query(None, pattern="^(children|adult)$"),
+        user: dict = Depends(_require_tier(3)),
+    ):
+        """Single-call aggregate for the manager intelligence dashboard.
+
+        Deterministic, evidence-linked metrics — no AI, no inferred scores.
+        """
+        now = datetime.now(timezone.utc)
+        assignments = await _all_assignments_for_sector(sector)
+        active = [a for a in assignments if a.get("status") != "superseded"]
+        complete = [a for a in active if pm.compute_assignment_status(a) == "complete"]
+        overdue = [a for a in active if pm.is_overdue(a, now)]
+        failed = [a for a in active
+                  if a.get("assessment_score") is not None
+                  and a.get("assessment_score") < 80
+                  and not a.get("assessment_passed_at")]
+
+        comp_pct = round(len(complete) / len(active) * 100.0, 1) if active else 0.0
+
+        # Compliance by role
+        by_role: dict = {}
+        for a in active:
+            staff = await _db.users.find_one(
+                {"id": a.get("staff_id")}, {"_id": 0, "role": 1}
+            )
+            role = (staff or {}).get("role") or "unknown"
+            bucket = by_role.setdefault(role, {"role": role, "total": 0, "complete": 0})
+            bucket["total"] += 1
+            if pm.compute_assignment_status(a) == "complete":
+                bucket["complete"] += 1
+        compliance_by_role = sorted(
+            [{**b, "pct": round(b["complete"] / b["total"] * 100.0, 1) if b["total"] else 0.0}
+             for b in by_role.values()],
+            key=lambda x: x["role"],
+        )
+
+        # Compliance by individual staff (top-50)
+        by_staff: dict = {}
+        for a in active:
+            sid = a.get("staff_id")
+            if not sid:
+                continue
+            bucket = by_staff.setdefault(sid, {
+                "staff_id": sid, "staff_name": a.get("staff_name"),
+                "total": 0, "complete": 0, "overdue": 0,
+            })
+            bucket["total"] += 1
+            if pm.compute_assignment_status(a) == "complete":
+                bucket["complete"] += 1
+            if pm.is_overdue(a, now):
+                bucket["overdue"] += 1
+        compliance_by_staff = sorted(
+            [{**b, "pct": round(b["complete"] / b["total"] * 100.0, 1) if b["total"] else 0.0}
+             for b in by_staff.values()],
+            key=lambda x: x["pct"],
+        )
+
+        # Most-failed policies (top-10) — average score per policy
+        by_policy: dict = {}
+        for a in active:
+            pid = a.get("policy_id")
+            if not pid or a.get("assessment_score") is None:
+                continue
+            b = by_policy.setdefault(pid, {
+                "policy_id": pid, "policy_title": a.get("policy_title"),
+                "policy_category": a.get("policy_category"),
+                "attempts": 0, "fails": 0, "score_sum": 0.0,
+            })
+            b["attempts"] += 1
+            b["score_sum"] += float(a["assessment_score"])
+            if a["assessment_score"] < 80:
+                b["fails"] += 1
+        most_failed = sorted(
+            [{
+                "policy_id": b["policy_id"],
+                "policy_title": b["policy_title"],
+                "policy_category": b["policy_category"],
+                "attempts": b["attempts"],
+                "fails": b["fails"],
+                "fail_rate_pct": round(b["fails"] / b["attempts"] * 100.0, 1) if b["attempts"] else 0.0,
+                "avg_score_pct": round(b["score_sum"] / b["attempts"], 1) if b["attempts"] else 0.0,
+            } for b in by_policy.values()],
+            key=lambda x: (-x["fail_rate_pct"], -x["fails"], x["avg_score_pct"]),
+        )[:10]
+
+        # Policies due review (overdue / 30d / 60d)
+        policies = await _all_policies_for_sector(sector)
+        overdue_review = []
+        due_30 = []
+        due_60 = []
+        for p in policies:
+            rd = p.get("review_date")
+            if not rd:
+                continue
+            try:
+                d = datetime.fromisoformat(rd.replace("Z", "+00:00"))
+            except (ValueError, AttributeError):
+                continue
+            delta = (d - now).days
+            entry = {
+                "policy_id": p["id"],
+                "policy_title": p.get("title"),
+                "policy_category": p.get("category"),
+                "review_date": rd,
+                "days_to_review": delta,
+                "rag_status": pm.policy_rag_status(p),
+            }
+            if delta < 0:
+                overdue_review.append(entry)
+            elif delta <= 30:
+                due_30.append(entry)
+            elif delta <= 60:
+                due_60.append(entry)
+
+        # Induction intelligence
+        enrollments_q = {"sector": sector} if sector else {}
+        enrollments = await _db.induction_enrollments.find(enrollments_q, {"_id": 0}).to_list(2000)
+        ind_not_started = 0
+        ind_in_progress = 0
+        ind_overdue = 0
+        ind_total_assignments = 0
+        ind_done_assignments = 0
+        ind_durations_days = []
+        new_starter_attention: list[dict] = []
+        for e in enrollments:
+            aids = [entry["assignment_id"]
+                    for w in e.get("weeks", []) for entry in w.get("assignments", [])
+                    if entry.get("assignment_id")]
+            ind_total_assignments += len(aids)
+            if not aids:
+                ind_not_started += 1
+                continue
+            assigns = await _db.policy_assignments.find(
+                {"id": {"$in": aids}}, {"_id": 0},
+            ).to_list(500)
+            done = [a for a in assigns if pm.compute_assignment_status(a) == "complete"]
+            ind_done_assignments += len(done)
+            opened = [a for a in assigns if a.get("opened_at")]
+            overdue_this = [a for a in assigns if pm.is_overdue(a, now)]
+            if not opened:
+                ind_not_started += 1
+            elif len(done) < len(assigns):
+                ind_in_progress += 1
+            if overdue_this:
+                ind_overdue += 1
+            if done:
+                # Average per-staff durations
+                for a in done:
+                    try:
+                        start = datetime.fromisoformat(a["assigned_at"].replace("Z", "+00:00"))
+                        end = datetime.fromisoformat(
+                            (a.get("completed_at") or a.get("manager_sig_at")).replace("Z", "+00:00")
+                        )
+                        ind_durations_days.append((end - start).total_seconds() / 86400.0)
+                    except (ValueError, AttributeError, TypeError):
+                        continue
+            # New starters needing attention — started < 7 days ago AND nothing opened
+            try:
+                started = datetime.fromisoformat(e["started_at"].replace("Z", "+00:00"))
+                if (now - started).days <= 7 and not opened:
+                    new_starter_attention.append({
+                        "enrollment_id": e["id"],
+                        "staff_id": e["staff_id"],
+                        "staff_name": e.get("staff_name"),
+                        "started_at": e["started_at"],
+                    })
+            except (ValueError, AttributeError):
+                continue
+
+        avg_completion_days = (
+            round(sum(ind_durations_days) / len(ind_durations_days), 1)
+            if ind_durations_days else None
+        )
+
+        # Governance — SoP for this sector
+        sop_state = None
+        if sector:
+            sop_policy = await _db.policies.find_one({
+                "sector": sector, "category": "Statement of Purpose", "status": "active",
+            }, {"_id": 0})
+            if sop_policy and sop_policy.get("current_version_id"):
+                sop_assigns = await _db.policy_assignments.find({
+                    "policy_id": sop_policy["id"],
+                    "version_id_at_assignment": sop_policy["current_version_id"],
+                    "status": {"$ne": "superseded"},
+                }, {"_id": 0}).to_list(1000)
+                sop_total = len(sop_assigns)
+                sop_done = sum(1 for a in sop_assigns
+                               if pm.compute_assignment_status(a) == "complete")
+                sop_outstanding = [
+                    {"staff_id": a.get("staff_id"), "staff_name": a.get("staff_name"),
+                     "status": pm.compute_assignment_status(a)}
+                    for a in sop_assigns
+                    if pm.compute_assignment_status(a) != "complete"
+                ]
+                # Review-date RAG
+                review_rag = "green"
+                review_days = None
+                if sop_policy.get("review_date"):
+                    try:
+                        rd = datetime.fromisoformat(sop_policy["review_date"].replace("Z", "+00:00"))
+                        review_days = (rd - now).days
+                        if review_days < 0:
+                            review_rag = "red"
+                        elif review_days <= 30:
+                            review_rag = "amber"
+                    except (ValueError, AttributeError):
+                        review_rag = "amber"
+                sop_state = {
+                    "exists": True,
+                    "compliance_pct": round(sop_done / sop_total * 100.0, 1) if sop_total else 0.0,
+                    "total": sop_total,
+                    "complete": sop_done,
+                    "outstanding": sop_outstanding[:20],
+                    "review_date": sop_policy.get("review_date"),
+                    "days_to_review": review_days,
+                    "review_rag": review_rag,
+                }
+            else:
+                sop_state = {"exists": False}
+
+        # Overall RAG for the intelligence dashboard
+        if not active or comp_pct < 50 or len(overdue) > 5:
+            overall_rag = "red"
+        elif comp_pct < 80 or len(overdue) > 0 or (most_failed and most_failed[0]["fail_rate_pct"] > 30):
+            overall_rag = "amber"
+        else:
+            overall_rag = "green"
+
+        return {
+            "sector": sector,
+            "generated_at": now.isoformat(),
+            "overall_rag": overall_rag,
+            "policy_compliance": {
+                "overall_pct": comp_pct,
+                "active_assignments": len(active),
+                "complete": len(complete),
+                "overdue": len(overdue),
+                "failed": len(failed),
+                "by_role": compliance_by_role,
+                "by_staff": compliance_by_staff,
+            },
+            "most_failed_policies": most_failed,
+            "policies_due_review": {
+                "overdue": overdue_review,
+                "due_within_30_days": due_30,
+                "due_within_60_days": due_60,
+            },
+            "induction_intelligence": {
+                "enrollments": len(enrollments),
+                "not_started": ind_not_started,
+                "in_progress": ind_in_progress,
+                "overdue": ind_overdue,
+                "total_assignments": ind_total_assignments,
+                "complete_assignments": ind_done_assignments,
+                "completion_pct": round(ind_done_assignments / ind_total_assignments * 100.0, 1) if ind_total_assignments else 0.0,
+                "avg_completion_days": avg_completion_days,
+                "new_starter_attention": new_starter_attention,
+            },
+            "governance": sop_state,
+        }
+
+    @router.get("/inspection-readiness/score")
+    async def inspection_readiness_score(
+        sector: str = Query(..., pattern="^(children|adult)$"),
+        user: dict = Depends(_require_tier(3)),
+    ):
+        """Deterministic 5-pillar readiness score for an inspection.
+
+        Each pillar is 0-100 and evidence-linked. The overall score is the
+        rounded mean. RAG: 85+ green, 65+ amber, else red.
+        """
+        # Pillar 1 — Policy compliance
+        assignments = await _all_assignments_for_sector(sector)
+        active = [a for a in assignments if a.get("status") != "superseded"]
+        if active:
+            done = sum(1 for a in active if pm.compute_assignment_status(a) == "complete")
+            policy_score = round(done / len(active) * 100.0)
+        else:
+            policy_score = 0
+
+        # Pillar 2 — Staff induction
+        enrollments = await _db.induction_enrollments.find({"sector": sector}, {"_id": 0}).to_list(2000)
+        total_ind_assigns = 0
+        done_ind_assigns = 0
+        for e in enrollments:
+            aids = [entry["assignment_id"]
+                    for w in e.get("weeks", []) for entry in w.get("assignments", [])
+                    if entry.get("assignment_id")]
+            if not aids:
+                continue
+            total_ind_assigns += len(aids)
+            done_ind_assigns += await _db.policy_assignments.count_documents(
+                {"id": {"$in": aids}, "manager_sig_at": {"$ne": None}},
+            )
+        induction_score = round(done_ind_assigns / total_ind_assigns * 100.0) if total_ind_assigns else 100
+
+        # Pillar 3 — Governance (SoP)
+        sop_policy = await _db.policies.find_one({
+            "sector": sector, "category": "Statement of Purpose", "status": "active",
+        }, {"_id": 0})
+        if not sop_policy or not sop_policy.get("current_version_id"):
+            gov_score = 0
+        else:
+            sop_assigns = await _db.policy_assignments.find({
+                "policy_id": sop_policy["id"],
+                "version_id_at_assignment": sop_policy["current_version_id"],
+                "status": {"$ne": "superseded"},
+            }, {"_id": 0}).to_list(1000)
+            if sop_assigns:
+                sop_done = sum(1 for a in sop_assigns
+                               if pm.compute_assignment_status(a) == "complete")
+                base = round(sop_done / len(sop_assigns) * 100.0)
+            else:
+                base = 100
+            # Penalty if review overdue
+            if sop_policy.get("review_date"):
+                try:
+                    rd = datetime.fromisoformat(sop_policy["review_date"].replace("Z", "+00:00"))
+                    if rd < datetime.now(timezone.utc):
+                        base = max(0, base - 20)
+                except (ValueError, AttributeError):
+                    pass
+            gov_score = base
+
+        # Pillar 4 — Staff (HR file) compliance — best-effort: assume green if no HR data
+        try:
+            personnel = await _db.staff_personnel_files.find({}, {"_id": 0}).to_list(500)
+            if personnel:
+                rags = [p.get("rag_status", "green") for p in personnel]
+                green = sum(1 for r in rags if r == "green")
+                staff_score = round(green / len(rags) * 100.0)
+            else:
+                staff_score = 100
+        except Exception:
+            staff_score = 100
+
+        # Pillar 5 — SCR compliance — count active staff personnel rows with all checks
+        try:
+            scr_rows = personnel if 'personnel' in locals() else \
+                await _db.staff_personnel_files.find({}, {"_id": 0}).to_list(500)
+            if scr_rows:
+                scr_ok = sum(1 for r in scr_rows
+                             if r.get("dbs_status") in (None, "valid")
+                             and r.get("right_to_work_status") in (None, "valid"))
+                scr_score = round(scr_ok / len(scr_rows) * 100.0)
+            else:
+                scr_score = 100
+        except Exception:
+            scr_score = 100
+
+        overall = round((policy_score + induction_score + gov_score + staff_score + scr_score) / 5)
+        if overall >= 85:
+            rag = "green"
+        elif overall >= 65:
+            rag = "amber"
+        else:
+            rag = "red"
+
+        return {
+            "sector": sector,
+            "overall_score": overall,
+            "rag_status": rag,
+            "pillars": [
+                {"key": "policy",     "label": "Policy compliance",      "score": policy_score,    "evidence": "/policies"},
+                {"key": "induction",  "label": "Staff induction",        "score": induction_score, "evidence": "/policies?tab=induction"},
+                {"key": "governance", "label": "Governance (SoP)",       "score": gov_score,       "evidence": "/governance"},
+                {"key": "staff",      "label": "Staff personnel files",  "score": staff_score,     "evidence": "/staff-operations"},
+                {"key": "scr",        "label": "Single Central Record",  "score": scr_score,       "evidence": "/staff-operations"},
+            ],
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    @router.get("/inspection-readiness/evidence-pack.pdf")
+    async def inspection_readiness_evidence_pack(
+        sector: str = Query(..., pattern="^(children|adult)$"),
+        user: dict = Depends(_require_tier(3)),
+    ):
+        """One-click compiled inspection evidence pack covering:
+        SCR · SoP · Policy compliance · Induction · Outstanding actions · Audit trail.
+
+        Produced as a single PDF for Ofsted / Reg 44 / CQC use.
+        """
+        # Reuse the readiness score
+        score = await inspection_readiness_score(sector=sector, user=user)
+
+        # Pull relevant data sets
+        sop_policy = await _db.policies.find_one({
+            "sector": sector, "category": "Statement of Purpose", "status": "active",
+        }, {"_id": 0})
+        sop_version = None
+        sop_assigns: list[dict] = []
+        if sop_policy and sop_policy.get("current_version_id"):
+            sop_version = await _db.policy_versions.find_one(
+                {"id": sop_policy["current_version_id"]}, {"_id": 0},
+            )
+            sop_assigns = await _db.policy_assignments.find({
+                "policy_id": sop_policy["id"],
+                "version_id_at_assignment": sop_policy["current_version_id"],
+                "status": {"$ne": "superseded"},
+            }, {"_id": 0}).to_list(1000)
+
+        policies = await _all_policies_for_sector(sector)
+        assignments = await _all_assignments_for_sector(sector)
+        active_assignments = [a for a in assignments if a.get("status") != "superseded"]
+        outstanding = [a for a in active_assignments
+                       if pm.compute_assignment_status(a) != "complete"]
+
+        enrollments = await _db.induction_enrollments.find(
+            {"sector": sector}, {"_id": 0},
+        ).to_list(500)
+
+        # Best-effort SCR rows + audit log
+        scr_rows: list[dict] = []
+        try:
+            scr_rows = await _db.staff_personnel_files.find({}, {"_id": 0}).to_list(500)
+        except Exception:
+            scr_rows = []
+        audit_events: list[dict] = []
+        try:
+            audit_events = await _db.audit_events.find({}, {"_id": 0}).sort("created_at", -1).limit(80).to_list(80)
+        except Exception:
+            try:
+                audit_events = await _db.audit_log.find({}, {"_id": 0}).sort("created_at", -1).limit(80).to_list(80)
+            except Exception:
+                audit_events = []
+
+        # Build PDF
+        try:
+            from reportlab.lib.pagesizes import A4
+            from reportlab.lib import colors
+            from reportlab.platypus import (
+                SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak,
+            )
+            from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+            from reportlab.lib.units import mm
+        except ImportError:
+            raise HTTPException(500, "PDF generation library missing")
+
+        buf = io.BytesIO()
+        doc = SimpleDocTemplate(buf, pagesize=A4,
+                                leftMargin=14*mm, rightMargin=14*mm,
+                                topMargin=14*mm, bottomMargin=14*mm)
+        styles = getSampleStyleSheet()
+        h1 = ParagraphStyle("h1", parent=styles["Heading1"],
+                            textColor=colors.HexColor("#0E3B4A"), fontSize=20, spaceAfter=8)
+        h2 = ParagraphStyle("h2", parent=styles["Heading2"],
+                            textColor=colors.HexColor("#0E3B4A"), fontSize=12, spaceAfter=4)
+        small = ParagraphStyle("small", parent=styles["Normal"], fontSize=8,
+                               textColor=colors.HexColor("#5d6068"))
+        body = styles["BodyText"]
+        story = []
+        sector_label = "Children's" if sector == "children" else "Adult"
+        story.append(Paragraph(f"Inspection Evidence Pack · {sector_label} Services", h1))
+        story.append(Paragraph(
+            f"Generated {datetime.now(timezone.utc).strftime('%d %b %Y %H:%M UTC')} by "
+            f"{user.get('name')} &nbsp;·&nbsp; "
+            f"<b>Overall readiness:</b> <font color='{('#A8273A' if score['rag_status']=='red' else '#B8772F' if score['rag_status']=='amber' else '#2F6A3A')}'>"
+            f"{score['overall_score']}/100 ({score['rag_status'].upper()})</font>", body))
+        story.append(Spacer(1, 6))
+
+        # Pillar table
+        story.append(Paragraph("Readiness pillars", h2))
+        rows = [["Pillar", "Score", "Status"]]
+        for p in score["pillars"]:
+            band = "GREEN" if p["score"] >= 85 else "AMBER" if p["score"] >= 65 else "RED"
+            rows.append([p["label"], f"{p['score']}/100", band])
+        t = Table(rows, colWidths=[80*mm, 30*mm, 30*mm])
+        t.setStyle(TableStyle([
+            ("BACKGROUND", (0,0), (-1,0), colors.HexColor("#0E3B4A")),
+            ("TEXTCOLOR",  (0,0), (-1,0), colors.white),
+            ("FONTNAME",   (0,0), (-1,0), "Helvetica-Bold"),
+            ("FONTSIZE",   (0,0), (-1,-1), 9),
+            ("GRID",       (0,0), (-1,-1), 0.4, colors.HexColor("#d4d2cc")),
+            ("VALIGN",     (0,0), (-1,-1), "MIDDLE"),
+        ]))
+        story.append(t)
+        story.append(PageBreak())
+
+        # Section: SoP
+        story.append(Paragraph("1 · Statement of Purpose", h2))
+        if not sop_policy:
+            story.append(Paragraph("No Statement of Purpose has been uploaded for this sector.", body))
+        else:
+            srows = [
+                ["Title",          sop_policy.get("title", "—")],
+                ["Version",        (sop_version or {}).get("version", "—")],
+                ["Author",         (sop_version or {}).get("author_name") or (sop_version or {}).get("uploaded_by_name") or "—"],
+                ["Effective",      (sop_version or {}).get("effective_date", "—")],
+                ["Review date",    sop_policy.get("review_date", "—")],
+                ["Compliance",     f"{sum(1 for a in sop_assigns if pm.compute_assignment_status(a)=='complete')}/{len(sop_assigns)}"],
+            ]
+            ts = Table(srows, colWidths=[40*mm, 130*mm])
+            ts.setStyle(TableStyle([
+                ("BACKGROUND", (0,0), (0,-1), colors.HexColor("#F1EFEC")),
+                ("FONTNAME",   (0,0), (0,-1), "Helvetica-Bold"),
+                ("FONTSIZE",   (0,0), (-1,-1), 8),
+                ("GRID",       (0,0), (-1,-1), 0.4, colors.HexColor("#d4d2cc")),
+                ("VALIGN",     (0,0), (-1,-1), "TOP"),
+            ]))
+            story.append(ts)
+        story.append(Spacer(1, 8))
+
+        # Section: Policy compliance summary
+        story.append(Paragraph("2 · Policy compliance", h2))
+        story.append(Paragraph(
+            f"Active policies: <b>{len(policies)}</b> &nbsp;·&nbsp; "
+            f"Active assignments: <b>{len(active_assignments)}</b> &nbsp;·&nbsp; "
+            f"Outstanding: <b>{len(outstanding)}</b>", body))
+        prows = [["Policy", "Category", "Status", "Score"]]
+        for a in active_assignments[:30]:
+            status_now = pm.compute_assignment_status(a)
+            prows.append([
+                a.get("policy_title", "—")[:50],
+                a.get("policy_category", "—"),
+                status_now.replace("_", " ").upper(),
+                f"{a.get('assessment_score')}%" if a.get("assessment_score") is not None else "—",
+            ])
+        tp = Table(prows, colWidths=[80*mm, 40*mm, 35*mm, 18*mm])
+        tp.setStyle(TableStyle([
+            ("BACKGROUND", (0,0), (-1,0), colors.HexColor("#0E3B4A")),
+            ("TEXTCOLOR",  (0,0), (-1,0), colors.white),
+            ("FONTNAME",   (0,0), (-1,0), "Helvetica-Bold"),
+            ("FONTSIZE",   (0,0), (-1,-1), 7),
+            ("GRID",       (0,0), (-1,-1), 0.3, colors.HexColor("#d4d2cc")),
+            ("VALIGN",     (0,0), (-1,-1), "MIDDLE"),
+        ]))
+        story.append(tp)
+        if len(active_assignments) > 30:
+            story.append(Paragraph(
+                f"… plus {len(active_assignments) - 30} more assignments — full per-staff breakdown "
+                "available via the Compliance dashboard.", small))
+        story.append(PageBreak())
+
+        # Section: Induction
+        story.append(Paragraph("3 · Induction evidence", h2))
+        irows = [["Staff", "Pack", "Started", "Done / Total"]]
+        for e in enrollments[:25]:
+            aids = [entry["assignment_id"]
+                    for w in e.get("weeks", []) for entry in w.get("assignments", [])
+                    if entry.get("assignment_id")]
+            total = len(aids)
+            done = await _db.policy_assignments.count_documents(
+                {"id": {"$in": aids}, "manager_sig_at": {"$ne": None}},
+            ) if aids else 0
+            irows.append([
+                e.get("staff_name", "—"),
+                e.get("pack_name", "—"),
+                (e.get("started_at") or "—")[:10],
+                f"{done}/{total}",
+            ])
+        ti = Table(irows, colWidths=[55*mm, 60*mm, 25*mm, 30*mm])
+        ti.setStyle(TableStyle([
+            ("BACKGROUND", (0,0), (-1,0), colors.HexColor("#0E3B4A")),
+            ("TEXTCOLOR",  (0,0), (-1,0), colors.white),
+            ("FONTNAME",   (0,0), (-1,0), "Helvetica-Bold"),
+            ("FONTSIZE",   (0,0), (-1,-1), 7),
+            ("GRID",       (0,0), (-1,-1), 0.3, colors.HexColor("#d4d2cc")),
+            ("VALIGN",     (0,0), (-1,-1), "MIDDLE"),
+        ]))
+        if enrollments:
+            story.append(ti)
+        else:
+            story.append(Paragraph("No active induction enrollments.", body))
+        story.append(Spacer(1, 8))
+
+        # Section: SCR summary
+        story.append(Paragraph("4 · Single Central Record summary", h2))
+        if not scr_rows:
+            story.append(Paragraph("No personnel rows recorded yet.", body))
+        else:
+            scrh = [["Staff", "DBS", "Right to work", "RAG"]]
+            for r in scr_rows[:30]:
+                scrh.append([
+                    r.get("staff_name", "—"),
+                    r.get("dbs_status", "—") or "—",
+                    r.get("right_to_work_status", "—") or "—",
+                    (r.get("rag_status") or "—").upper(),
+                ])
+            tsc = Table(scrh, colWidths=[60*mm, 35*mm, 45*mm, 30*mm])
+            tsc.setStyle(TableStyle([
+                ("BACKGROUND", (0,0), (-1,0), colors.HexColor("#0E3B4A")),
+                ("TEXTCOLOR",  (0,0), (-1,0), colors.white),
+                ("FONTNAME",   (0,0), (-1,0), "Helvetica-Bold"),
+                ("FONTSIZE",   (0,0), (-1,-1), 7),
+                ("GRID",       (0,0), (-1,-1), 0.3, colors.HexColor("#d4d2cc")),
+                ("VALIGN",     (0,0), (-1,-1), "MIDDLE"),
+            ]))
+            story.append(tsc)
+        story.append(PageBreak())
+
+        # Section: Outstanding actions
+        story.append(Paragraph("5 · Outstanding actions", h2))
+        if not outstanding:
+            story.append(Paragraph("No outstanding policy actions. All current assignments are complete.", body))
+        else:
+            orows = [["Staff", "Policy", "Status", "Due"]]
+            for a in outstanding[:30]:
+                orows.append([
+                    a.get("staff_name", "—"),
+                    a.get("policy_title", "—")[:50],
+                    pm.compute_assignment_status(a).replace("_", " ").upper(),
+                    (a.get("due_date") or "—")[:10],
+                ])
+            to = Table(orows, colWidths=[45*mm, 65*mm, 40*mm, 25*mm])
+            to.setStyle(TableStyle([
+                ("BACKGROUND", (0,0), (-1,0), colors.HexColor("#A8273A")),
+                ("TEXTCOLOR",  (0,0), (-1,0), colors.white),
+                ("FONTNAME",   (0,0), (-1,0), "Helvetica-Bold"),
+                ("FONTSIZE",   (0,0), (-1,-1), 7),
+                ("GRID",       (0,0), (-1,-1), 0.3, colors.HexColor("#d4d2cc")),
+                ("VALIGN",     (0,0), (-1,-1), "MIDDLE"),
+            ]))
+            story.append(to)
+        story.append(Spacer(1, 8))
+
+        # Section: Audit trail
+        story.append(Paragraph("6 · Governance audit trail (latest 80 events)", h2))
+        if not audit_events:
+            story.append(Paragraph("Audit log not available in this database instance.", small))
+        else:
+            arows = [["When", "Actor", "Action", "Summary"]]
+            for e in audit_events:
+                arows.append([
+                    (e.get("created_at") or "—")[:16].replace("T", " "),
+                    e.get("actor_name", "—"),
+                    e.get("action", "—"),
+                    (e.get("summary") or "")[:70],
+                ])
+            ta = Table(arows, colWidths=[34*mm, 35*mm, 36*mm, 65*mm])
+            ta.setStyle(TableStyle([
+                ("BACKGROUND", (0,0), (-1,0), colors.HexColor("#0E3B4A")),
+                ("TEXTCOLOR",  (0,0), (-1,0), colors.white),
+                ("FONTNAME",   (0,0), (-1,0), "Helvetica-Bold"),
+                ("FONTSIZE",   (0,0), (-1,-1), 6.5),
+                ("GRID",       (0,0), (-1,-1), 0.3, colors.HexColor("#d4d2cc")),
+                ("VALIGN",     (0,0), (-1,-1), "TOP"),
+            ]))
+            story.append(ta)
+
+        story.append(Spacer(1, 10))
+        story.append(Paragraph(
+            "Every score, signature and timestamp in this pack is generated deterministically "
+            "from the Safelyn audit log. No AI scoring is used; each metric is fully traceable.", small))
+        doc.build(story)
+        buf.seek(0)
+        await _record_audit(
+            _db, actor=user, action="inspection_evidence_pack_exported",
+            object_type="user", object_id=user.get("id"),
+            metadata={"sector": sector, "overall_score": score["overall_score"]},
+            summary=f"Inspection evidence pack exported · {sector} · score {score['overall_score']}/100",
+        )
+        filename = f"inspection-evidence-pack-{sector}.pdf"
+        return StreamingResponse(
+            buf, media_type="application/pdf",
+            headers={"Content-Disposition": f"attachment; filename={filename}"},
+        )
+
 
 def _default_sop_questions(sector: str) -> list[dict]:
     """Seed a minimal-yet-meaningful assessment when manager doesn't supply one."""

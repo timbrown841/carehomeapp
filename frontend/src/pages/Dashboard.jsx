@@ -10,6 +10,7 @@ import LogIncidentFAB from "@/components/LogIncidentFAB";
 import AttentionNow from "@/components/AttentionNow";
 import { QuickActions, UrgencyWidgets } from "@/components/dashboard/QuickWidgets";
 import SinceLastLogin from "@/components/dashboard/SinceLastLogin";
+import InspectionReadyWidget from "@/components/dashboard/InspectionReadyWidget";
 import { OfstedReadinessDashboardTile } from "@/pages/OfstedReadiness";
 import {
   Users,
@@ -303,6 +304,9 @@ export default function Dashboard() {
 
       {/* Since-your-last-login (manager+ only) */}
       <SinceLastLogin />
+
+      {/* Inspection Ready in 3 Clicks (manager+ only) */}
+      <InspectionReadyWidget />
 
       {/* Operational Intelligence — emerging risks */}
       <EmergingRisksPanel />

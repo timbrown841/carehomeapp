@@ -45,6 +45,7 @@ import PolicyDetail from "@/pages/PolicyDetail";
 import PolicyAssignment from "@/pages/PolicyAssignment";
 import MyPolicies from "@/pages/MyPolicies";
 import GovernanceHub from "@/pages/GovernanceHub";
+import PolicyIntelligence from "@/pages/PolicyIntelligence";
 import OfstedReadiness from "@/pages/OfstedReadiness";
 import CQCReadiness from "@/pages/CQCReadiness";
 import AuditLog from "@/pages/AuditLog";
@@ -164,6 +165,7 @@ function App() {
               <Route path="/policy-assignments/:id" element={<PolicyAssignment />} />
               <Route path="/my-policies" element={<MyPolicies />} />
               <Route path="/governance" element={<GovernanceHub />} />
+              <Route path="/policy-intelligence" element={<PolicyIntelligence />} />
               <Route path="/ofsted" element={<RequireMode mode="children"><OfstedReadiness /></RequireMode>} />
               <Route path="/cqc-readiness" element={<RequireMode mode="adult"><SeniorOrAbove><CQCReadiness /></SeniorOrAbove></RequireMode>} />
               <Route path="/audit" element={<SeniorOrAbove><AuditLog /></SeniorOrAbove>} />
