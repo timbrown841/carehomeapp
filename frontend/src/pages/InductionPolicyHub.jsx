@@ -433,7 +433,7 @@ function ComplianceDash({ sector }) {
           >
             <option value="">Pick a staff member…</option>
             {staffOptions.map((u) => (
-              <option key={u.id} value={u.id}>{u.name} · {u.role}</option>
+              <option key={u.id} value={u.id}>{`${u.name} · ${u.role}`}</option>
             ))}
           </select>
           <Button
@@ -710,7 +710,7 @@ function EnrolModal({ packId, staffOpts, onClose, onEnrol }) {
         >
           <option value="">Pick a staff member…</option>
           {staffOpts.map((u) => (
-            <option key={u.id} value={u.id}>{u.name} · {u.role}</option>
+            <option key={u.id} value={u.id}>{`${u.name} · ${u.role}`}</option>
           ))}
         </select>
         <div className="mt-4 flex items-center justify-end gap-2">

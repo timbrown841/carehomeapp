@@ -420,6 +420,17 @@ A simple and fast care management app for children's homes and supported living.
 - **Tested**: 17/17 backend pytest in `test_iteration56_induction_compliance.py` covering risk rules (green/amber/red + signed-off-always-green), dashboard shape + RBAC, overdue+at-risk aggregation, certificate PDF gating (400 before sign-off, 200 + valid %PDF bytes after, staff own-only download), HR file auto-attach (verified via `/api/hr/staff/{sid}` tabs.folders.induction.files contains hr_file_id), staff summary + own-only RBAC, inspection-pack JSON + multi-page PDF, readiness weights = {60,15,10,15}. Combined 47/47 across iter54+55+56. Frontend testing agent: 100% backend + 100% frontend — all six surfaces verified (Dashboard widget, /induction list compliance bar + filter chips + evidence pack button, detail page preview/download/HR badges, HR Personnel File induction section, staff widget hidden, evidence pack multi-page PDF). Report: `/app/test_reports/iteration_56.json`. **No retest needed.**
 
 
+## Implemented (2026-05-30 · iter-57 · Phase E.3.2 — Policies, Compliance & Induction Centre)
+- **Unified Compliance Dashboard** (`/app/backend/compliance_dashboard.py` + `ComplianceDashboard.jsx`) wired as a tab inside `/policies?tab=dashboard` (sidebar untouched). Sector-adaptive label: **"Ofsted Readiness"** for children's workspace, **"CQC Readiness"** for adult.
+- **Endpoint**: `GET /api/compliance/unified-dashboard?sector=children|adult` (manager+ tier ≥2; staff 403). Returns 7 deterministic KPIs (Policy %, Acknowledgement %, Training %, Supervision %, Induction %, Workforce Readiness %, Regulator Readiness %) + RAG block + 6 widgets (policies due review, overdue policies, outstanding acknowledgements, inductions at risk, training cliff edge, 7-day compliance trend) + counts. Regulator Readiness = 30% policy + 25% induction + 20% supervision + 15% training + 10% acknowledgements.
+- **Drill-down links** on every KPI tile — `kpi-policy → /policies?tab=library`, `kpi-acknowledgement → /my-policies`, `kpi-training → /training`, `kpi-supervision → /supervisions`, `kpi-induction → /induction`, `kpi-workforce → /training`, `kpi-regulator → /policy-intelligence`. Each card now renders as a `<Link>` with a "View records →" affordance.
+- **Role-specific induction templates** (`induction_routes.py`): 3 templates auto-picked from role + sector — `children_worker` (21 sections), `adult_worker` (21 sections), `manager` (23 sections). Each exposes `estimated_hours` and `estimated_completion`. New `/api/induction/templates`, `/api/induction/templates/{tid}`, `/api/induction/recommend-template?staff_id=&sector=` endpoints.
+- **Manager Induction** now includes the user-required sections: Leadership · **Delivering Supervision** · Compliance & Audits · Investigations · **Safer Recruitment** · Workforce Management · Ofsted/CQC Readiness (in addition to the universal 16-section core which already covers Supervision).
+- **Assign Induction modal** redesigned (`StaffInduction.jsx`): fetches `/induction/templates` + `/induction/recommend-template`, surfaces a green "Recommended for <role>" tile with template name + section count + estimated days/hours, auto-selects the recommended template, allows manager override via dropdown, shows an amber "Manager override" badge when overridden, and submits with the chosen template_id.
+- **InductionPolicyHub.jsx** Compliance tab now renders `<ComplianceDashboard />` on top; the legacy local tiles block was retired. Inspection evidence pack + Recent assignments sections retained underneath.
+- **Hydration warning fixed**: `<span>` inside `<option>` in `evidence-staff-select` and `enrol-staff-select` (now template-literal text).
+- **Tested**: 16/16 backend pytest in `test_iteration57_compliance_hub.py` (12 original + 4 new for estimated time, manager-section keys, recommend extras). Testing agent E2E: 100% backend, 100% Children's compliance dashboard frontend (all 7 KPI tiles, hero label = "Ofsted Readiness", drill-down links present, evidence pack + recent assignments below). Assign Modal flow self-verified via screenshot (recommended template tile + auto-select + override badge all visible). Adult-sector swap verified at API; frontend uses `effectiveMode` from OrgContext so swap is automatic. Report: `/app/test_reports/iteration_57.json`. **No retest needed.**
+
 
 ## Backlog (next-up)
 ### P0 — User-confirmed sequential plan ("everything ClearCare has, but better"):
@@ -432,6 +443,9 @@ A simple and fast care management app for children's homes and supported living.
 7. **Communications / Handover Log** — shift handover with voice, read-receipts
 8. **Audit Log** — every edit/delete/login captured; filterable for inspections
 9. **Vehicle / Activities Log** — mileage, activity sign-off, photos
+
+### Phase E (next priority — user-confirmed)
+- **Care Task Scheduler & Training Cliff Edge planning tools (refinement)** — base modules shipped in iter-54; user wants planning-tool depth: weekly/monthly capacity views, drag-and-drop reassignment, scenario planning for upcoming training expiries, manager-facing renewal-wave actions.
 
 ### Other backlog
 - Inline edit of resident profile fields (PATCH endpoint already wired)
