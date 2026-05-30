@@ -341,6 +341,38 @@ A simple and fast care management app for children's homes and supported living.
   - **`TrainingCentreSummary` tile** exported and embedded inside `StaffOperationsHub` Training tab so managers see the readiness summary at-a-glance with a deep-link to the full Centre.
 - **Tested**: 21/21 backend pytest in `test_iteration53_training_centre.py`. Frontend testing agent E2E: 100% on all required testids — 5 tabs, modals (record/cert/qual/plan-create/objective/review), drawer open, staff self-view substitution, summary tile + deep-link. Report: `/app/test_reports/iteration_53.json`. **One cosmetic warning** (React `<span>` inside `<option>` hydration log) — non-blocking, deferred. **No retest needed.**
 
+## Implemented (2026-05-30 · iter-54 · Phase E.2 — Workforce Cliff Edge + Care Task Scheduler)
+- **Turns Safelyn from a recording system into a daily operational platform.** Managers now have a single Action Centre that shows what needs doing today AND a 90-day workforce-renewal horizon.
+- **Backend: Training Cliff Edge** (added to `training_centre_routes.py`):
+  - `GET /api/training-centre/cliff-edge?sector=…` (senior+) — returns 4 expiry buckets (overdue / ≤30d / 31–60d / 61–90d), monthly renewal waves for the next 6 months, qualification renewals in next 90 days, top 50 cliff list rows, and a **30-day workforce-readiness trend**.
+  - **Trend backfill + forward snapshots** — on first call each day, retro-computes the last 30 days from existing records (compliance = ratio of cells where the latest training as-of that date was either non-expiring or expires-in-future). After today's first call, persists a row to new `tc_readiness_snapshots` collection so future days are O(1) lookups.
+- **Backend: Care Task Scheduler** — new module `/app/backend/scheduler_routes.py` (APIRouter pattern mirroring policy_routes/training_centre_routes):
+  - 12 seeded **task templates** (idempotent on startup): key_work · supervision · team_meeting · lac_review · pep_meeting · family_time · health_appointment · independent_living · training_renewal · reg44_action · ofsted_action · custom — each with its own default recurrence (weekly key work, monthly supervision, 6-monthly LAC review, termly PEP, etc).
+  - Collections: `scheduler_tasks`, `scheduler_templates`.
+  - **Recurrence model**: day-of-week + interval. Supports weekly/fortnightly/monthly/quarterly/annual with `interval` (every Nth) and optional `day_of_week` (0=Mon..6=Sun) that snaps the next instance forward to the target weekday. Calendar-correct month math with end-of-month clamping.
+  - **Endpoints** (`/api/tasks/*`):
+    - GET `/templates` (any auth) — 12 templates
+    - GET `/tasks` (RBAC: staff sees only own) — filters by status (open / overdue / completed / cancelled), kind, assigned_to, resident, date range, with computed_status
+    - GET `/tasks/mine` — staff personal view
+    - GET `/tasks/dashboard` (senior+) — total_open / overdue[] / upcoming_7d[] / by_kind[] / manager_focus[] / on-time-30d compliance_pct
+    - POST `/tasks` (senior+) — create with optional Recurrence; auto-resolves assignee_name from users collection
+    - PATCH `/tasks/{id}` — staff can ONLY update status of their own task; senior+ can update any field
+    - POST `/tasks/{id}/complete` (assignee or manager+) — records evidence + completed_at + completed_by; **if recurrence kind != none, spawns a NEW pending task with the next due_at** (parent_task_id linkback)
+    - DELETE `/tasks/{id}` (manager+)
+  - **Bi-directional supervision → task**: `POST /api/supervisions/{sid}/tasks` creates a scheduled task linked back to the supervision (linked_supervision_id) and pushes the task id onto the supervision's `linked_task_ids[]`. Audit-logged as `task_from_supervision`.
+  - All write ops emit `task_*` audit events.
+- **Frontend additions** (3 new files + 5 edits):
+  - `TasksPage.jsx` — full `/tasks` page with senior+ manager view (4 status tabs Open/Overdue/Completed/All, kind filter, 4 summary tiles, task rows with priority/status/recurrence/supervision-link badges, Start/Complete/Delete actions). Tier-1 staff get a simplified `tasks-page-staff` self view via `/tasks/mine`.
+  - `CliffEdgeWidget.jsx` (Dashboard) — overdue / 30 / 60 / 90 day buckets, monthly renewal-wave bar chart, 30-day mini bar-chart trend with delta %, qualification renewals strip.
+  - `TasksSnapshotWidget.jsx` (Dashboard) — Manager Action Centre tile: total open + 9 overdue + 7-day pipeline + on-time compliance %, plus inline overdue + upcoming-in-7d lists with deep-links.
+  - `App.js` — new `/tasks` route.
+  - `Dashboard.jsx` — both widgets embedded after `<InspectionReadyWidget />`.
+  - `HomeOperations.jsx` — new "Tasks" tab (`ops-tab-tasks` → `ops-tasks-view`).
+  - `StaffOperationsHub.jsx` — new "Tasks" tab after Handover (`staffops-tab-tasks`).
+  - `QuickWidgets.jsx` — `qa-tasks` Quick Action tile in BOTH children's and adult action sets.
+- **Auto-create rules**: only **supervision → task** wired this iteration per user choice. Auto-create from incidents / dev plans / Reg 44 / Ofsted action plans deferred to a future phase.
+- **Tested**: 16/16 backend pytest in `test_iteration54_scheduler.py` (cliff-edge shape + RBAC + snapshot persistence, 12 seeded templates, task CRUD, recurrence spawn-on-complete with weekly day-of-week math, staff RBAC, manager-only delete, dashboard shape + RBAC, supervision bi-dir). Combined 48/48 across iter52+53+54. Frontend testing agent + main agent smoke: all data-testids resolved, widgets render, /tasks page works. Report: `/app/test_reports/iteration_54.json`. **No retest needed.**
+
 
 
 ## Backlog (next-up)
