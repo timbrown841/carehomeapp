@@ -140,6 +140,13 @@ async def lifespan(_app: FastAPI):
     await db.tc_qualifications.create_index([("staff_id", 1), ("qualification_code", 1)])
     await db.tc_qual_catalogue.create_index("code", unique=True)
     await db.tc_dev_plans.create_index([("staff_id", 1), ("year", -1)])
+    await db.tc_readiness_snapshots.create_index([("sector", 1), ("at", -1)])
+
+    # Phase E.2 — Care Task Scheduler
+    await db.scheduler_tasks.create_index([("assigned_to_id", 1), ("due_at", 1)])
+    await db.scheduler_tasks.create_index([("status", 1), ("due_at", 1)])
+    await db.scheduler_tasks.create_index([("kind", 1), ("due_at", 1)])
+    await db.scheduler_templates.create_index("kind", unique=True)
 
     # Staff Reflective Practice & Wellbeing (Iteration 33)
     await db.wellbeing_checkins.create_index([("user_id", 1), ("created_at", -1)])
@@ -226,6 +233,13 @@ async def lifespan(_app: FastAPI):
         await _tc_seed.seed_catalogues(db)
     except Exception as _e:
         logger.warning(f"Training Centre seed failed: {_e}")
+
+    # Phase E.2 — Care Task Scheduler templates
+    try:
+        import scheduler_routes as _sched_seed
+        await _sched_seed.seed_templates(db)
+    except Exception as _e:
+        logger.warning(f"Scheduler templates seed failed: {_e}")
 
     yield
     # ---- shutdown ----
@@ -10875,6 +10889,15 @@ _tc_routes.init(
 )
 _tc_routes.build_routes()
 app.include_router(_tc_routes.router)
+
+# Phase E.2 — Care Task Scheduler
+import scheduler_routes as _scheduler_routes
+_scheduler_routes.init(
+    db=db, get_current_user=get_current_user,
+    require_tier=require_tier, record_audit=record_audit,
+)
+_scheduler_routes.build_routes()
+app.include_router(_scheduler_routes.router)
 
 
 app.add_middleware(

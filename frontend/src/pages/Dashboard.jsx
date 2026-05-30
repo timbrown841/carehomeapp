@@ -11,6 +11,8 @@ import AttentionNow from "@/components/AttentionNow";
 import { QuickActions, UrgencyWidgets } from "@/components/dashboard/QuickWidgets";
 import SinceLastLogin from "@/components/dashboard/SinceLastLogin";
 import InspectionReadyWidget from "@/components/dashboard/InspectionReadyWidget";
+import CliffEdgeWidget from "@/components/dashboard/CliffEdgeWidget";
+import TasksSnapshotWidget from "@/components/dashboard/TasksSnapshotWidget";
 import { OfstedReadinessDashboardTile } from "@/pages/OfstedReadiness";
 import {
   Users,
@@ -307,6 +309,10 @@ export default function Dashboard() {
 
       {/* Inspection Ready in 3 Clicks (manager+ only) */}
       <InspectionReadyWidget />
+
+      {/* Phase E.2 — Tasks snapshot + Training Cliff Edge (senior+) */}
+      <TasksSnapshotWidget />
+      <CliffEdgeWidget />
 
       {/* Operational Intelligence — emerging risks */}
       <EmergingRisksPanel />

@@ -1,9 +1,10 @@
 import HubTabs from "@/components/HubTabs";
-import { CalendarClock, ClipboardList, ClipboardCheck, GraduationCap, ShieldCheck, Heart, Activity, BookOpen, ScrollText, TrendingUp } from "lucide-react";
+import { CalendarClock, ClipboardList, ClipboardCheck, GraduationCap, ShieldCheck, Heart, Activity, BookOpen, ScrollText, TrendingUp, ListChecks } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 
 import Staff, { TrainingPage } from "@/pages/Staff";
 import TrainingCentre, { TrainingCentreSummary } from "@/pages/TrainingCentre";
+import { TasksHub } from "@/pages/TasksPage";
 import Handover from "@/pages/Handover";
 import Supervisions from "@/pages/Supervisions";
 import SaferRecruitment from "@/pages/SaferRecruitment";
@@ -20,6 +21,7 @@ export default function StaffOperationsHub() {
   const tabs = [
     { id: "rota", label: "Rota & Shifts", icon: CalendarClock },
     { id: "handover", label: "Shift Handover", icon: ClipboardList },
+    { id: "tasks", label: "Tasks", icon: ListChecks },
     { id: "digest", label: "Manager Digest", icon: Activity, hidden: tier < 3 },
     { id: "supervisions", label: "Supervisions", icon: ClipboardCheck },
     { id: "wellbeing", label: "Team Wellbeing", icon: Heart, hidden: tier < 3 },
@@ -43,6 +45,7 @@ export default function StaffOperationsHub() {
         {(active) => {
           if (active === "rota") return <Staff />;
           if (active === "handover") return <Handover />;
+          if (active === "tasks") return <TasksHub />;
           if (active === "digest") return <HandoverDigest />;
           if (active === "supervisions") return <Supervisions />;
           if (active === "wellbeing") return <TeamWellbeingPanel />;

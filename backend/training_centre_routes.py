@@ -807,6 +807,150 @@ def build_routes():
             "readiness_rag": readiness_rag,
         }
 
+    # ===== Cliff Edge — expiry waves + trend =====
+    @router.get("/training-centre/cliff-edge")
+    async def cliff_edge(
+        sector: str = Query(..., pattern="^(children|adult)$"),
+        _: dict = Depends(_require_tier(2)),
+    ):
+        """Workforce readiness cliff-edge widget: 30/60/90-day buckets,
+        monthly renewal waves (next 6 months), 30-day backfilled trend."""
+        from datetime import date
+        today = date.today()
+        today_s = today.isoformat()
+        d30 = (today + timedelta(days=30)).isoformat()
+        d60 = (today + timedelta(days=60)).isoformat()
+        d90 = (today + timedelta(days=90)).isoformat()
+
+        courses = await _db.tc_courses.find(
+            {"sector": {"$in": [sector, "both"]}, "mandatory": True}, {"_id": 0}
+        ).to_list(500)
+        course_codes = {c["code"] for c in courses}
+        code_to_name = {c["code"]: c["name"] for c in courses}
+
+        records = await _db.tc_records.find(
+            {"course_code": {"$in": list(course_codes)}}, {"_id": 0}
+        ).to_list(5000)
+
+        # Bucket by expiry date
+        bucket_30 = bucket_60 = bucket_90 = overdue = 0
+        wave_by_month: dict[str, int] = {}
+        cliff_list: list[dict] = []
+        for r in records:
+            exp = r.get("expires_on")
+            if not exp:
+                continue
+            if exp < today_s:
+                overdue += 1
+                cliff_list.append({"staff_id": r.get("staff_id"), "staff_name": r.get("staff_name"),
+                                    "course_code": r["course_code"], "course_name": code_to_name.get(r["course_code"], r["course_code"]),
+                                    "expires_on": exp, "bucket": "overdue"})
+            elif exp <= d30:
+                bucket_30 += 1
+                cliff_list.append({"staff_id": r.get("staff_id"), "staff_name": r.get("staff_name"),
+                                    "course_code": r["course_code"], "course_name": code_to_name.get(r["course_code"], r["course_code"]),
+                                    "expires_on": exp, "bucket": "30"})
+            elif exp <= d60:
+                bucket_60 += 1
+                cliff_list.append({"staff_id": r.get("staff_id"), "staff_name": r.get("staff_name"),
+                                    "course_code": r["course_code"], "course_name": code_to_name.get(r["course_code"], r["course_code"]),
+                                    "expires_on": exp, "bucket": "60"})
+            elif exp <= d90:
+                bucket_90 += 1
+                cliff_list.append({"staff_id": r.get("staff_id"), "staff_name": r.get("staff_name"),
+                                    "course_code": r["course_code"], "course_name": code_to_name.get(r["course_code"], r["course_code"]),
+                                    "expires_on": exp, "bucket": "90"})
+            # Renewal wave: count records by YYYY-MM expiring in next 6 months
+            if today_s <= exp <= (today + timedelta(days=183)).isoformat():
+                ym = exp[:7]
+                wave_by_month[ym] = wave_by_month.get(ym, 0) + 1
+
+        waves = [{"month": m, "count": c} for m, c in sorted(wave_by_month.items())]
+
+        # Qualification renewals — expected_completion in next 90d for in-progress
+        quals = await _db.tc_qualifications.find(
+            {"status": "in_progress"}, {"_id": 0}
+        ).to_list(1000)
+        qual_renewals = [
+            {"staff_name": q.get("staff_name"), "qualification_name": q.get("qualification_name"),
+             "expected_completion": q.get("expected_completion")}
+            for q in quals
+            if q.get("expected_completion") and today_s <= q["expected_completion"] <= d90
+        ]
+
+        # === Trend: 30 days, retro-computed + future-snapshotted ===
+        # Backfill: for each day in last 30, compute compliance for records
+        # that already existed by that date (completed_on <= that_date and
+        # (expires_on >= that_date OR expires_on is None)).
+        staff = await _staff_list()
+        n_staff = len(staff)
+        n_mandatory = len(course_codes)
+        expected_cells = max(n_staff * n_mandatory, 1)
+        all_records_by_staff_course: dict = {}
+        for r in records:
+            all_records_by_staff_course.setdefault((r["staff_id"], r["course_code"]), []).append(r)
+
+        # Try snapshots first
+        snaps = await _db.tc_readiness_snapshots.find(
+            {"sector": sector}, {"_id": 0}
+        ).sort("at", 1).to_list(60)
+        snap_by_date = {s["at"][:10]: s for s in snaps}
+
+        trend = []
+        for i in range(29, -1, -1):
+            d = today - timedelta(days=i)
+            ds = d.isoformat()
+            if ds in snap_by_date:
+                trend.append({
+                    "date": ds,
+                    "compliance_pct": snap_by_date[ds]["compliance_pct"],
+                    "readiness_score": snap_by_date[ds].get("readiness_score", snap_by_date[ds]["compliance_pct"]),
+                    "source": "snapshot",
+                })
+            else:
+                # Retro-compute for that date
+                compliant = 0
+                for s in staff:
+                    for code in course_codes:
+                        rs = [r for r in all_records_by_staff_course.get((s["id"], code), [])
+                              if (r.get("completed_on") or "0000-00-00") <= ds]
+                        if not rs:
+                            continue
+                        latest = sorted(rs, key=lambda r: r.get("completed_on") or "")[-1]
+                        exp = latest.get("expires_on")
+                        # ok or expiring at that date = compliant
+                        if not exp or exp >= ds:
+                            compliant += 1
+                pct = round((compliant / expected_cells) * 100)
+                trend.append({
+                    "date": ds, "compliance_pct": pct, "readiness_score": pct, "source": "backfill",
+                })
+
+        # Persist today's snapshot if not present
+        if today_s not in snap_by_date:
+            dash_score = trend[-1]["readiness_score"]
+            await _db.tc_readiness_snapshots.update_one(
+                {"sector": sector, "at": today_s},
+                {"$setOnInsert": {
+                    "sector": sector,
+                    "at": today_s,
+                    "compliance_pct": trend[-1]["compliance_pct"],
+                    "readiness_score": dash_score,
+                    "created_at": _now(),
+                }},
+                upsert=True,
+            )
+
+        return {
+            "sector": sector,
+            "today": today_s,
+            "buckets": {"30": bucket_30, "60": bucket_60, "90": bucket_90, "overdue": overdue},
+            "renewal_waves": waves,
+            "qualification_renewals": qual_renewals,
+            "cliff_list": sorted(cliff_list, key=lambda x: x.get("expires_on") or "")[:50],
+            "trend": trend,
+        }
+
     # ===== Supervision integration (bi-dir) =====
     @router.post("/supervisions/{sid}/training-actions")
     async def add_supervision_training_action(

@@ -60,6 +60,7 @@ import Reflection from "@/pages/Reflection";
 import ReflectionSupervision from "@/pages/ReflectionSupervision";
 import LeaveRequests from "@/pages/LeaveRequests";
 import ShiftSwaps from "@/pages/ShiftSwaps";
+import TasksPage from "@/pages/TasksPage";
 
 function Protected({ children }) {
   const { user, loading } = useAuth();
@@ -157,6 +158,7 @@ function App() {
               <Route path="/handover" element={<Handover />} />
               <Route path="/handover/:id" element={<Handover />} />
               <Route path="/training" element={<TrainingCentre />} />
+              <Route path="/tasks" element={<TasksPage />} />
               <Route path="/supervisions" element={<Supervisions />} />
               <Route path="/hr" element={<ManagerOnly><SaferRecruitment /></ManagerOnly>} />
               <Route path="/handover-digest" element={<ManagerOnly><HandoverDigest /></ManagerOnly>} />

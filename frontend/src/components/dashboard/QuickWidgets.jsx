@@ -20,11 +20,13 @@ import {
   Users as UsersI,
   Map,
   Scale,
+  ListChecks,
 } from "lucide-react";
 
 const CHILDREN_ACTIONS = [
   { label: "Log Incident", to: "/incidents/new", icon: Mic, accent: "#A8273A", testid: "qa-incident", primary: true },
   { label: "Shift Handover", to: "/handover", icon: ClipboardList, accent: "#0e3b4a", testid: "qa-handover" },
+  { label: "Tasks", to: "/tasks", icon: ListChecks, accent: "#0e3b4a", testid: "qa-tasks" },
   { label: "Key Work", to: "/key-work", icon: UsersI, accent: "#0e3b4a", testid: "qa-key-work" },
   { label: "Missing Episode", to: "/missing", icon: Map, accent: "#B8772F", testid: "qa-missing" },
   { label: "Body Map", to: "/body-maps", icon: ShieldAlert, accent: "#2F6A3A", testid: "qa-body-map" },
@@ -33,6 +35,7 @@ const CHILDREN_ACTIONS = [
 const ADULT_ACTIONS = [
   { label: "Log Incident", to: "/incidents/new", icon: Mic, accent: "#A8273A", testid: "qa-incident", primary: true },
   { label: "MAR Round", to: "/medications", icon: Pill, accent: "#3F2E5C", testid: "qa-medication" },
+  { label: "Tasks", to: "/tasks", icon: ListChecks, accent: "#0e3b4a", testid: "qa-tasks" },
   { label: "Care Task", to: "/care-tasks", icon: CheckCircle2, accent: "#0e3b4a", testid: "qa-care-task" },
   { label: "Fall / Mobility", to: "/falls", icon: Footprints, accent: "#B8772F", testid: "qa-fall" },
   { label: "Wellbeing", to: "/wellbeing", icon: HeartPulse, accent: "#2F6A3A", testid: "qa-wellbeing" },

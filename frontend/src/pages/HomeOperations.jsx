@@ -34,6 +34,7 @@ import {
 } from "lucide-react";
 
 import PettyCashPage from "@/pages/PettyCashPage";
+import { TasksHub } from "@/pages/TasksPage";
 
 const ICON_MAP = {
   Thermometer, Snowflake, Droplets, BellRing, Flame, Lightbulb, Siren,
@@ -591,6 +592,7 @@ export default function HomeOperations() {
           { id: "dashboard", label: "Compliance", icon: ListChecks },
           { id: "checks", label: "Safety checks", icon: ShieldCheck },
           { id: "maintenance", label: `Maintenance${issues.length ? ` (${issues.filter(i=>i.status!=="resolved").length})` : ""}`, icon: Wrench },
+          { id: "tasks", label: "Tasks", icon: ListChecks },
           { id: "history", label: "History", icon: HistoryIcon },
           { id: "petty-cash", label: "Petty Cash", icon: HandCoins },
         ].map((t) => {
@@ -642,6 +644,12 @@ export default function HomeOperations() {
           onEdit={(i) => setOpenMaint(i)}
           onDelete={deleteIssue}
         />
+      )}
+
+      {!loading && tab === "tasks" && (
+        <div data-testid="ops-tasks-view">
+          <TasksHub />
+        </div>
       )}
 
       {!loading && tab === "history" && (
