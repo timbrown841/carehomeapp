@@ -1,0 +1,35 @@
+{
+  "summary": "Phase E.3.1 — Induction Compliance & Ofsted Evidence — FULLY VERIFIED. Backend 17/17 PASS in pytest. Frontend smoke OK across all six surfaces: dashboard risk widget (KPI tiles + open-button + banner-hidden-when-zero), /induction list (compliance-bar 100%/17 signed, filter-chips, evidence-pack-btn), /induction/{aid} signed-off detail (preview + download + 'On HR file' badge), HR personnel file (profile-induction-empty state rendered BEFORE the tab navigation), staff RBAC (widget correctly hidden for staff tier).",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": { "ui_bugs": [], "integration_issues": [], "design_issues": [] },
+  "verified_flows": [
+    "Backend pytest: 17/17 PASS in 10s — risk green/amber/red rules, dashboard shape+RBAC, due-this-week/overdue/at-risk aggregation, certificate.pdf gating (400 before sign-off, 200 after, %PDF bytes >1KB), staff own-download, sign-off auto-attach to HR induction folder (verified via /api/hr/staff/{sid}), /induction/staff/{sid}/summary shape + own-only RBAC, /induction/inspection-pack JSON (manager-only) + .pdf (multi-page %PDF), /training-centre/dashboard new readiness_weights {mandatory_training:60, induction:15, qualifications:10, supervision:15} with score 0..100.",
+    "Manager dashboard: data-testid='induction-risk-widget' renders. Four KPI tiles present — due-this-week=0, overdue=0, at-risk=0, recently-completed=10 (matches pytest's 17 signed-off, of which 10 within last 30d). 'induction-at-risk-banner' correctly absent when at-risk count is 0.",
+    "'induction-widget-open' button navigates to /induction successfully.",
+    "/induction list: induction-compliance-bar shows '100% Compliance · 17/17 signed off · 0 Due this week · 0 Overdue · 10 Recently completed (last 30 days)'. induction-filter-chips renders All/At risk/Overdue/Signed off and is clickable. induction-evidence-pack-btn visible ('Export Induction Evidence Pack').",
+    "Signed-off detail page (/induction/{aid}): induction-cert-preview link + induction-cert-download button + induction-hr-file-badge ('On HR file') all rendered. Sign-off banner shows '100% · 16/16 complete · Signed off by Sarah Manager · 2026-05-30'.",
+    "HR Personnel File (/hr → Priya Senior): the 'Induction' section renders BEFORE the Recruitment/Compliance/Supervisions/Training/HR/Audit tab navigation as required. For a staff with no induction, profile-induction-empty state shows 'No induction assigned yet.' (friendly empty copy).",
+    "Staff RBAC: staff@care.local sees NO induction-risk-widget on dashboard (count=0). Confirmed manager+ gating on the widget.",
+    "Console: no errors during navigation."
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_iteration56_induction_compliance.py",
+    "/app/test_reports/pytest/iteration_56.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Risk model is centralized in _risk() helper in induction_routes.py and reused across /dashboard, /staff/{sid}/summary, /inspection-pack — good DRY.",
+    "Certificate PDF endpoint correctly returns 400 (not 404) before sign-off; staff own-download authz boundary holds.",
+    "Sign-off side-effect (HR file attach via uploads_service.save_bytes) is transactional in practice — failure to attach would still 200 the sign-off; consider wrapping in try/except with rollback or surfacing hr_file_id=null with a warning. Acceptable for current MVP; flag for future iteration.",
+    "readiness_weights returned as a dict in /training-centre/dashboard is a nice forward-compatible contract; UI should treat the values as authoritative (not re-hardcode 60/15/10/15).",
+    "induction_routes.py is now growing (multiple endpoints + risk helper + PDF + inspection-pack); consider splitting inspection-pack and certificate handlers into a separate module once it crosses ~700 lines."
+  ],
+  "updated_files": [],
+  "success_rate": { "backend": "100%", "frontend": "100%" },
+  "test_credentials": "manager@care.local/Manager@123, senior@care.local/Senior@123, staff@care.local/Staff@123",
+  "seed_data_creation": "No new seed data. The pytest run created/cleaned several temporary at-risk assignments for the first staff member as part of _ensure_no_active_for() teardown; 17 signed-off inductions remain for Alex Staff (matches dashboard 17/17 signed off, 100% compliance).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "All E.3.1 surfaces work end-to-end. The empty/banner states render only when their underlying counts are non-zero (verified: 0 at-risk → no banner, 0 induction → empty card). To exercise the AT-RISK BANNER on the dashboard manually, POST /api/induction/assignments with {staff_id, target_completion: today+3} via manager token; the dashboard widget will then show induction-kpi-at-risk > 0 and 'induction-at-risk-banner' will appear. The inspection-pack PDF concatenates summary + every signed-off certificate; with 17 signed-off it should be a multi-page PDF (verified %PDF bytes > 1KB in pytest). HR auto-attach uses the existing uploads_service.save_bytes() helper; the resulting file appears under tabs[].folders[id='induction'].files[].",
+  "rca of the issue": "No issues found in this iteration."
+}

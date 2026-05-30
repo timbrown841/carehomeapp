@@ -27,8 +27,10 @@ const STATUS_TONE = {
 export default function StaffInductionList() {
   const { user, isSeniorOrAbove, isManagerOrAbove } = useAuth();
   const [assignments, setAssignments] = useState([]);
+  const [dashboard, setDashboard] = useState(null);
   const [loading, setLoading] = useState(true);
   const [showAssign, setShowAssign] = useState(false);
+  const [filter, setFilter] = useState("all"); // all | at_risk | overdue | signed_off
   const navigate = useNavigate();
 
   // Staff -> redirect to their own assignment
@@ -48,13 +50,25 @@ export default function StaffInductionList() {
     if (!isSeniorOrAbove) return;
     setLoading(true);
     try {
-      const r = await api.get("/induction/assignments");
+      const [r, d] = await Promise.all([
+        api.get("/induction/assignments"),
+        api.get("/induction/dashboard"),
+      ]);
       setAssignments(r.data.assignments || []);
+      setDashboard(d.data);
     } catch { toast.error("Could not load inductions"); }
     finally { setLoading(false); }
   }, [isSeniorOrAbove]);
 
   useEffect(() => { if (isSeniorOrAbove) load(); }, [load, isSeniorOrAbove]);
+
+  const filtered = useMemo(() => {
+    if (filter === "all") return assignments;
+    if (filter === "signed_off") return assignments.filter(a => a.signed_off_at);
+    if (filter === "overdue") return assignments.filter(a => a.risk === "red" && !a.signed_off_at);
+    if (filter === "at_risk") return assignments.filter(a => ["amber", "red"].includes(a.risk) && !a.signed_off_at);
+    return assignments;
+  }, [assignments, filter]);
 
   // Staff with no assignment
   if (!isSeniorOrAbove) {
@@ -87,23 +101,70 @@ export default function StaffInductionList() {
           </p>
         </div>
         {isManagerOrAbove && (
-          <Button onClick={() => setShowAssign(true)} data-testid="induction-assign-btn">
-            <Plus size={14} className="mr-1" /> Assign induction
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            <a className="text-xs inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-stone-300 text-stone-700 hover:bg-stone-50"
+               href={`/api/induction/inspection-pack.pdf?token=${encodeURIComponent(localStorage.getItem("token") || "")}`}
+               target="_blank" rel="noreferrer"
+               data-testid="induction-evidence-pack-btn">
+              <FileText size={12} /> Export Induction Evidence Pack
+            </a>
+            <Button onClick={() => setShowAssign(true)} data-testid="induction-assign-btn">
+              <Plus size={14} className="mr-1" /> Assign induction
+            </Button>
+          </div>
         )}
       </header>
 
-      {assignments.length === 0 ? (
+      {dashboard && (
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3" data-testid="induction-compliance-bar">
+          <ComplianceTile label="Compliance" value={`${dashboard.compliance_pct}%`}
+                          sub={`${dashboard.signed_off}/${dashboard.total} signed off`}
+                          tone={dashboard.compliance_pct >= 85 ? "green" : dashboard.compliance_pct >= 65 ? "amber" : "red"}
+                          testid="induction-summary-compliance" />
+          <ComplianceTile label="Due this week" value={dashboard.due_this_week.length}
+                          tone={dashboard.due_this_week.length > 0 ? "amber" : "green"}
+                          testid="induction-summary-due-this-week" />
+          <ComplianceTile label="Overdue" value={dashboard.overdue.length}
+                          tone={dashboard.overdue.length > 0 ? "red" : "green"}
+                          testid="induction-summary-overdue" />
+          <ComplianceTile label="Recently completed" value={dashboard.recently_completed.length}
+                          sub="last 30 days"
+                          tone={dashboard.recently_completed.length > 0 ? "green" : "grey"}
+                          testid="induction-summary-recently" />
+        </div>
+      )}
+
+      {/* Filter chips */}
+      <div className="flex flex-wrap gap-1.5 text-xs" data-testid="induction-filter-chips">
+        {[
+          { id: "all", label: "All" },
+          { id: "at_risk", label: "At risk" },
+          { id: "overdue", label: "Overdue" },
+          { id: "signed_off", label: "Signed off" },
+        ].map(f => (
+          <button key={f.id} onClick={() => setFilter(f.id)}
+                  className={`px-3 py-1 rounded-full ${filter === f.id ? "bg-[#0F1115] text-white" : "bg-stone-100 text-stone-700 hover:bg-stone-200"}`}
+                  data-testid={`induction-filter-${f.id}`}>
+            {f.label}
+          </button>
+        ))}
+      </div>
+
+      {filtered.length === 0 ? (
         <div className="bg-stone-50 border divider-soft rounded-2xl p-10 text-center" data-testid="induction-empty-state">
           <GraduationCap size={32} className="mx-auto text-stone-400 mb-2" />
-          <div className="text-stone-800 font-semibold">No active inductions</div>
+          <div className="text-stone-800 font-semibold">
+            {assignments.length === 0 ? "No active inductions" : `No inductions match "${filter}"`}
+          </div>
           <p className="text-sm text-stone-500 mt-1">
-            Assign an induction to a newly recruited staff member to start their checklist.
+            {assignments.length === 0
+              ? "Assign an induction to a newly recruited staff member to start their checklist."
+              : "Switch filter to see other inductions."}
           </p>
         </div>
       ) : (
         <ul className="grid sm:grid-cols-2 gap-3">
-          {assignments.map(a => (
+          {filtered.map(a => (
             <li key={a.id} data-testid={`induction-card-${a.id}`}>
               <Link to={`/induction/${a.id}`}
                     className="block bg-white border divider-soft rounded-xl p-4 hover:border-stone-400 transition">
@@ -295,6 +356,26 @@ export function InductionDetailPage() {
               </div>
               <div className="text-[11px] text-emerald-700 mt-0.5">
                 by {a.signed_off_by_name} · {(a.signed_off_at || "").slice(0, 10)}
+              </div>
+              <div className="mt-2 flex flex-wrap items-center justify-end gap-2">
+                <a className="inline-flex items-center gap-1 text-xs text-[#0E3B4A] underline"
+                   href={`/api/induction/assignments/${a.id}/certificate.pdf?token=${encodeURIComponent(localStorage.getItem("token") || "")}`}
+                   target="_blank" rel="noreferrer"
+                   data-testid="induction-cert-preview">
+                  <FileText size={11} /> Preview certificate
+                </a>
+                <a className="inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-lg bg-emerald-700 text-white hover:bg-emerald-800"
+                   href={`/api/induction/assignments/${a.id}/certificate.pdf?token=${encodeURIComponent(localStorage.getItem("token") || "")}`}
+                   download={`induction-certificate-${a.staff_name?.replace(/\s+/g, "_")}.pdf`}
+                   data-testid="induction-cert-download">
+                  <Award size={11} /> Download PDF
+                </a>
+                {a.hr_file_id && (
+                  <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200"
+                        data-testid="induction-hr-file-badge">
+                    <CheckCircle2 size={10} /> On HR file
+                  </span>
+                )}
               </div>
             </div>
           ) : allComplete && isManagerOrAbove ? (
@@ -542,5 +623,22 @@ function Field({ label, children }) {
       <div className="text-[11px] uppercase font-semibold tracking-wider text-stone-600 mb-1">{label}</div>
       {children}
     </label>
+  );
+}
+
+const COMPLIANCE_TONE = {
+  red: "bg-rose-50 text-rose-800 border-rose-200",
+  amber: "bg-amber-50 text-amber-800 border-amber-200",
+  green: "bg-emerald-50 text-emerald-800 border-emerald-200",
+  grey: "bg-stone-50 text-stone-700 border-stone-200",
+};
+
+function ComplianceTile({ label, value, sub, tone = "grey", testid }) {
+  return (
+    <div className={`rounded-xl border p-3 ${COMPLIANCE_TONE[tone]}`} data-testid={testid}>
+      <div className="font-display font-semibold text-2xl leading-none">{value}</div>
+      <div className="text-[11px] font-semibold mt-1.5">{label}</div>
+      {sub && <div className="text-[10px] opacity-80 mt-0.5">{sub}</div>}
+    </div>
   );
 }

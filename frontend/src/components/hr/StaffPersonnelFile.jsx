@@ -15,6 +15,7 @@ import {
 import { Button } from "@/components/ui/button";
 import PersonnelFolderCard from "@/components/hr/PersonnelFolderCard";
 import HRAuditTab from "@/components/hr/HRAuditTab";
+import StaffProfileInductionSection from "@/components/staff/StaffProfileInductionSection";
 
 const TAB_LABELS = {
   Recruitment:  "Recruitment",
@@ -156,6 +157,9 @@ export default function StaffPersonnelFile({ staffId, onBack }) {
           <Stat label="Optional"      value={view.overall_counts.grey}   tone="#5D6068" />
         </div>
       </header>
+
+      {/* Phase E.3.1 — Induction summary panel */}
+      <StaffProfileInductionSection staffId={staffId} />
 
       {/* Tabs */}
       <nav className="bg-white border divider-soft rounded-xl p-1 flex gap-1 overflow-x-auto" data-testid="personnel-file-tabs">

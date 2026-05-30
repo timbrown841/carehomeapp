@@ -776,13 +776,50 @@ def build_routes():
                     })
 
         compliance_pct_val = tc.compliance_pct(expected, ok + expiring)
-        # Readiness score: weighted 70% compliance, 15% certificates verified ratio, 15% active plans coverage
+        # Readiness score (Phase E.3.1 reweighted):
+        #   Mandatory Training 60% · Induction Completion 15% · Qualifications 10% · Supervision Compliance 15%
         cert_total = len(certs)
         cert_verified = sum(1 for c in certs if c.get("verification_status") == "verified")
         cert_pct = (cert_verified / cert_total * 100) if cert_total else 100
         plans_coverage = (len(plans) / max(len(staff), 1)) * 100
         plans_coverage = min(plans_coverage, 100)
-        readiness_score = round(0.7 * compliance_pct_val + 0.15 * cert_pct + 0.15 * plans_coverage)
+
+        # Induction completion %: ratio of staff with a signed-off induction
+        signed_off_inductions = await _db.induction_assignments.count_documents(
+            {"signed_off_at": {"$ne": None}}
+        )
+        # De-dup by staff (one per staff)
+        signed_off_staff_ids = set()
+        async for d in _db.induction_assignments.find(
+            {"signed_off_at": {"$ne": None}}, {"_id": 0, "staff_id": 1}
+        ):
+            signed_off_staff_ids.add(d.get("staff_id"))
+        induction_pct = (len(signed_off_staff_ids) / max(len(staff), 1)) * 100
+        induction_pct = min(induction_pct, 100)
+
+        # Supervision compliance: % of staff who have had a supervision in the last 90 days
+        from datetime import date as _date, timedelta as _td
+        ninety_ago = (_date.today() - _td(days=90)).isoformat()
+        recent_sup = await _db.supervisions.distinct(
+            "staff_id", {"completed_at": {"$gte": ninety_ago}}
+        )
+        sup_pct = (len(recent_sup) / max(len(staff), 1)) * 100
+        sup_pct = min(sup_pct, 100)
+
+        # Qualifications coverage: % of staff with at least one in_progress / completed qualification
+        qual_staff_ids = set()
+        async for q in _db.tc_qualifications.find({}, {"_id": 0, "staff_id": 1, "status": 1}):
+            if q.get("status") in ("in_progress", "completed"):
+                qual_staff_ids.add(q.get("staff_id"))
+        qual_pct = (len(qual_staff_ids) / max(len(staff), 1)) * 100
+        qual_pct = min(qual_pct, 100)
+
+        readiness_score = round(
+            0.60 * compliance_pct_val
+            + 0.15 * induction_pct
+            + 0.10 * qual_pct
+            + 0.15 * sup_pct
+        )
 
         readiness_rag = "green" if readiness_score >= 85 else "amber" if readiness_score >= 65 else "red"
 
@@ -803,8 +840,18 @@ def build_routes():
             "certificates": {"total": cert_total, "verified": cert_verified, "pending": sum(1 for c in certs if c.get("verification_status") == "pending")},
             "qualifications": {"counts": qual_counts, "total": len(quals)},
             "dev_plans": {"active": len(plans), "coverage_pct": round(plans_coverage)},
+            "induction": {"compliance_pct": round(induction_pct),
+                          "fully_inducted": len(signed_off_staff_ids)},
+            "supervision": {"compliance_pct": round(sup_pct),
+                            "recent_count": len(recent_sup)},
             "readiness_score": readiness_score,
             "readiness_rag": readiness_rag,
+            "readiness_weights": {
+                "mandatory_training": 60,
+                "induction": 15,
+                "qualifications": 10,
+                "supervision": 15,
+            },
         }
 
     # ===== Cliff Edge — expiry waves + trend =====

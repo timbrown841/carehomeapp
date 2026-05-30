@@ -13,6 +13,7 @@ import SinceLastLogin from "@/components/dashboard/SinceLastLogin";
 import InspectionReadyWidget from "@/components/dashboard/InspectionReadyWidget";
 import CliffEdgeWidget from "@/components/dashboard/CliffEdgeWidget";
 import TasksSnapshotWidget from "@/components/dashboard/TasksSnapshotWidget";
+import InductionRiskWidget from "@/components/dashboard/InductionRiskWidget";
 import { OfstedReadinessDashboardTile } from "@/pages/OfstedReadiness";
 import {
   Users,
@@ -313,6 +314,9 @@ export default function Dashboard() {
       {/* Phase E.2 — Tasks snapshot + Training Cliff Edge (senior+) */}
       <TasksSnapshotWidget />
       <CliffEdgeWidget />
+
+      {/* Phase E.3.1 — Induction at-risk widget (senior+) */}
+      <InductionRiskWidget />
 
       {/* Operational Intelligence — emerging risks */}
       <EmergingRisksPanel />

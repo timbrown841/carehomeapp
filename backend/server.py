@@ -10908,6 +10908,8 @@ import induction_routes as _induction_routes
 _induction_routes.init(
     db=db, get_current_user=get_current_user,
     require_tier=require_tier, record_audit=record_audit,
+    save_upload=save_upload,
+    org_name=os.environ.get("HOME_NAME", "Safelyn Children's Home"),
 )
 _induction_routes.build_routes()
 app.include_router(_induction_routes.router)

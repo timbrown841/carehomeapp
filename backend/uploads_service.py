@@ -110,6 +110,47 @@ async def save_upload(
     return meta
 
 
+async def save_bytes(
+    data: bytes,
+    filename: str,
+    mime: str,
+    kind: FileKind,
+    uploaded_by: dict,
+    db,
+) -> dict:
+    """Persist raw bytes (e.g. server-generated PDFs) to the uploads store.
+    Same on-disk layout + `files` collection as save_upload."""
+    mime = (mime or "").lower()
+    if mime not in ALLOWED_DOC_MIME:
+        raise HTTPException(415, f"Unsupported file type: {mime or 'unknown'}")
+    if len(data) > MAX_FILE_SIZE:
+        raise HTTPException(413, "File exceeds 10 MB limit")
+    ext = EXT_BY_MIME[mime]
+    file_id = str(uuid.uuid4())
+    sub = KIND_DIR[kind]
+    dest_dir = UPLOAD_ROOT / sub
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest = dest_dir / f"{file_id}.{ext}"
+    with dest.open("wb") as out:
+        out.write(data)
+    meta = {
+        "id": file_id,
+        "kind": kind,
+        "ext": ext,
+        "mime": mime,
+        "size": len(data),
+        "original_name": filename or f"{file_id}.{ext}",
+        "stored_path": str(dest.relative_to(UPLOAD_ROOT)),
+        "uploaded_by_id": uploaded_by.get("id"),
+        "uploaded_by_name": uploaded_by.get("name"),
+        "created_at": _now_iso(),
+    }
+    await db.files.insert_one(meta.copy())
+    meta["url"] = f"/api/files/{file_id}"
+    return meta
+
+
+
 def disk_path(meta: dict) -> Optional[Path]:
     if not meta:
         return None
