@@ -1,0 +1,52 @@
+{
+  "summary": "Phase E.3 Induction Centre — Backend 13/13 PASS (pytest). Frontend smoke covered manager assign flow, modal stop-propagation (original bug fixed), 16 numbered sections, expand-on-click, status update, staff redirect to own induction, staff RBAC (no assign btn, manager_signoff marked read-only/manager-only), and /policies → Induction packs tab integration (staff-induction-section + cards + open-induction-page deep-link). Found and FIXED one routing bug in induction_routes.py.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "fixed_during_testing": [
+    {
+      "file": "/app/backend/induction_routes.py",
+      "issue": "GET /api/induction/assignments/mine returned 404 because it was registered AFTER GET /api/induction/assignments/{aid}; FastAPI matched {aid}=\"mine\" first. Reordered so /mine is registered before /{aid}. Also strengthened: prefer active (non-signed-off) assignment, fall back to most recent. This fixes the empty-staff card incorrectly appearing for Alex Staff (who already had assignments). Verified: /mine now returns the active assignment; pytest still 13/13 PASS."
+    }
+  ],
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "verified_flows": [
+    "Manager login → /induction renders induction-list-page with Assign induction button (induction-assign-btn).",
+    "Click Assign → induction-assign-modal opens. Clicking on select dropdown AND on inner title text does NOT close the modal (original bug fixed; backdrop has no onClick, inner uses stopPropagation).",
+    "Select staff (Alex Staff) → Create → list refreshed: card count 2 → 3, new induction-card-{id} appears.",
+    "Click card → /induction/{aid} loads induction-detail-page with exactly 16 items in correct order: welcome, policies_procedures, safeguarding, fire_emergency, medication, behaviour_support, missing_from_care, recording_logs, key_working, professional_boundaries, whistleblowing, health_safety, shadow_shifts, supervision, mandatory_training, manager_signoff.",
+    "Expand item 'welcome' → induction-item-body-welcome visible, all 3 status buttons (not_started/in_progress/completed) present, induction-notes-welcome textarea present.",
+    "Click Complete → progress text updates (visible re-render).",
+    "Staff login → /induction redirects to /induction/{their-id} (verified URL contains aid). Assign button NOT shown to staff.",
+    "Staff expands manager_signoff item → shows 'Read-only · manager-only item' marker; no induction-status-completed-manager_signoff button rendered (frontend hides; backend would 403 anyway as covered by pytest).",
+    "Staff updates own non-signoff item (welcome → in_progress) and Save notes works without console errors.",
+    "Manager → /policies → 'Induction packs' tab: staff-induction-section visible with 3 induction-tab-card-* entries and open-induction-page deep-link; clicking deep-link lands on /induction (induction-list-page)."
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_iteration55_induction.py",
+    "/app/test_reports/pytest/iteration_55_induction.xml"
+  ],
+  "action_items": [
+    "(Optional) Add a small frontend toast/visual cue when the legacy policy-week 'Induction packs' (week 1..4) modal vs the new staff-induction-section co-exist on the same tab — currently both render in the same tab; consider adding a section divider/heading to avoid confusion. Not a blocker."
+  ],
+  "critical_code_review_comments": [
+    "Route ordering: previously /induction/assignments/mine was unreachable due to being registered after /induction/assignments/{aid}. Fixed. Recommend adding a regression test for /mine to test_iteration55_induction.py.",
+    "induction_routes.py uses build_routes() with function-scoped handlers; this works but makes future refactoring harder. Acceptable for now.",
+    "Frontend StaffInduction.jsx (547 lines) is approaching the 700-line soft cap; consider splitting InductionDetailPage into its own file as it grows."
+  ],
+  "updated_files": [
+    "/app/backend/induction_routes.py — reordered /mine endpoint above /{aid}, added active-first selection logic."
+  ],
+  "success_rate": { "backend": "100%", "frontend": "100%" },
+  "test_credentials": "manager@care.local/Manager@123, staff@care.local/Staff@123, senior@care.local/Senior@123, admin@care.local/Admin@123",
+  "seed_data_creation": "Created 1 new induction assignment for Alex Staff during manager UI smoke; total active+signed inductions for Alex Staff = 3 in induction_assignments collection.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend uses new induction_routes module mounted in server.py. Important: when adding new endpoints, ensure specific paths (/assignments/mine) are declared BEFORE parameterized paths (/assignments/{aid}). Routing-order regression risk. The legacy InductionTab policy-week enrolment modal still functions underneath the new staff-induction-section (intentional). All 16 section keys are fixed and unit-tested. induction_assignments collection currently has 3 Alex Staff records (mix of signed and active).",
+  "rca of the issue": "Bug: /api/induction/assignments/mine → 404. RCA: in build_routes(), the parameterized path /induction/assignments/{aid} was declared before the literal path /induction/assignments/mine. FastAPI matches routes in declaration order; the {aid} route captured aid='mine' and the handler did find_one({'id':'mine'}) → None → raised 404. Repro: GET /api/induction/assignments/mine with staff JWT returned {'detail':'Induction assignment not found'}, HTTP 404. Mitigation: moved /mine endpoint above /{aid} in induction_routes.build_routes(); also improved /mine to prefer active (signed_off_at=None) assignment, falling back to latest. Verified post-fix: /mine returns 200 with assignment payload; pytest 13/13 still passing; UI staff redirect now works."
+}

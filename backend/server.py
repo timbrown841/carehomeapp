@@ -148,6 +148,10 @@ async def lifespan(_app: FastAPI):
     await db.scheduler_tasks.create_index([("kind", 1), ("due_at", 1)])
     await db.scheduler_templates.create_index("kind", unique=True)
 
+    # Phase E.3 — Staff Induction Checklist
+    await db.induction_assignments.create_index([("staff_id", 1), ("created_at", -1)])
+    await db.induction_assignments.create_index("signed_off_at")
+
     # Staff Reflective Practice & Wellbeing (Iteration 33)
     await db.wellbeing_checkins.create_index([("user_id", 1), ("created_at", -1)])
     await db.staff_reflections.create_index([("user_id", 1), ("created_at", -1)])
@@ -10898,6 +10902,15 @@ _scheduler_routes.init(
 )
 _scheduler_routes.build_routes()
 app.include_router(_scheduler_routes.router)
+
+# Phase E.3 — Staff Induction Checklist
+import induction_routes as _induction_routes
+_induction_routes.init(
+    db=db, get_current_user=get_current_user,
+    require_tier=require_tier, record_audit=record_audit,
+)
+_induction_routes.build_routes()
+app.include_router(_induction_routes.router)
 
 
 app.add_middleware(

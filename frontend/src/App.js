@@ -61,6 +61,7 @@ import ReflectionSupervision from "@/pages/ReflectionSupervision";
 import LeaveRequests from "@/pages/LeaveRequests";
 import ShiftSwaps from "@/pages/ShiftSwaps";
 import TasksPage from "@/pages/TasksPage";
+import StaffInductionList, { InductionDetailPage } from "@/pages/StaffInduction";
 
 function Protected({ children }) {
   const { user, loading } = useAuth();
@@ -159,6 +160,8 @@ function App() {
               <Route path="/handover/:id" element={<Handover />} />
               <Route path="/training" element={<TrainingCentre />} />
               <Route path="/tasks" element={<TasksPage />} />
+              <Route path="/induction" element={<StaffInductionList />} />
+              <Route path="/induction/:aid" element={<InductionDetailPage />} />
               <Route path="/supervisions" element={<Supervisions />} />
               <Route path="/hr" element={<ManagerOnly><SaferRecruitment /></ManagerOnly>} />
               <Route path="/handover-digest" element={<ManagerOnly><HandoverDigest /></ManagerOnly>} />

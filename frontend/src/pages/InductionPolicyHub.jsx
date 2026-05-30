@@ -558,17 +558,20 @@ function InductionTab({ sector }) {
   const [enrollments, setEnrollments] = useState([]);
   const [showEnroll, setShowEnroll] = useState(null);
   const [staffOpts, setStaffOpts] = useState([]);
+  const [inductions, setInductions] = useState([]);
 
   const load = useCallback(async () => {
     try {
-      const [p, e, u] = await Promise.all([
+      const [p, e, u, ind] = await Promise.all([
         api.get(`/induction-packs?sector=${sector}`),
         api.get(`/induction-enrollments?sector=${sector}`),
         api.get(`/auth/users/picker`),
+        api.get(`/induction/assignments`),
       ]);
       setPacks(p.data.packs || []);
       setEnrollments(e.data.enrollments || []);
       setStaffOpts(u.data || []);
+      setInductions(ind.data.assignments || []);
     } catch { /* */ }
   }, [sector]);
 
@@ -587,10 +590,69 @@ function InductionTab({ sector }) {
 
   return (
     <div className="space-y-4" data-testid="induction-tab">
+      {/* === NEW: Staff Induction Checklist (E.3) === */}
+      <section className="bg-white border divider-soft rounded-2xl p-5" data-testid="staff-induction-section">
+        <div className="flex items-start justify-between gap-3 flex-wrap mb-3">
+          <div>
+            <h3 className="font-display font-semibold text-lg text-[#0F1115]">
+              Staff induction checklists
+            </h3>
+            <p className="text-[12px] text-stone-500 mt-0.5">
+              The 16-section structured induction every new staff member works through —
+              welcome, safeguarding, shadow shifts, supervision, mandatory training, final manager sign-off.
+            </p>
+          </div>
+          <Link to="/induction" className="text-xs text-[#0E3B4A] underline inline-flex items-center gap-1"
+                       data-testid="open-induction-page">
+            Open full Induction Centre →
+          </Link>
+        </div>
+        {inductions.length === 0 ? (
+          <div className="text-[13px] text-stone-500 py-3" data-testid="induction-tab-empty">
+            No active inductions. Use the Induction Centre to assign one.
+          </div>
+        ) : (
+          <ul className="grid sm:grid-cols-2 gap-2" data-testid="induction-tab-list">
+            {inductions.slice(0, 6).map(a => (
+              <li key={a.id}>
+                <Link to={`/induction/${a.id}`}
+                            className="block border divider-soft rounded-lg p-3 hover:border-stone-400"
+                            data-testid={`induction-tab-card-${a.id}`}>
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <div className="font-semibold text-sm text-stone-800">{a.staff_name}</div>
+                      <div className="text-[11px] text-stone-500">
+                        {a.sector === "adult" ? "Adult Services" : "Children's"} · started {(a.created_at || "").slice(0, 10)}
+                      </div>
+                    </div>
+                    {a.signed_off_at && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800">Signed off</span>
+                    )}
+                  </div>
+                  <div className="mt-2 flex items-center justify-between text-[11px]">
+                    <span className="text-stone-600">{a.progress.complete}/{a.progress.total} sections</span>
+                    <span className="font-semibold text-stone-800">{a.progress.completion_pct}%</span>
+                  </div>
+                  <div className="mt-1 h-1 bg-stone-100 rounded-full overflow-hidden">
+                    <div className="h-full"
+                         style={{ width: `${a.progress.completion_pct}%`,
+                                  background: a.signed_off_at ? "#2F6A3A" : a.progress.completion_pct === 100 ? "#B8772F" : "#0e3b4a" }} />
+                  </div>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      {/* === Legacy: Policy-week packs (still useful for policy enrolment) === */}
       <section className="bg-white border divider-soft rounded-2xl p-5">
         <h3 className="font-display font-semibold text-lg text-[#0F1115] mb-3">
-          Induction packs
+          Policy-week packs
         </h3>
+        <p className="text-[12px] text-stone-500 mb-3">
+          For mass enrolment into policy read-and-sign categories (separate from the 16-section checklist above).
+        </p>
         <div className="grid lg:grid-cols-2 gap-3">
           {packs.map((p) => (
             <div key={p.id} className="border divider-soft rounded-xl p-3.5"
@@ -629,10 +691,10 @@ function InductionTab({ sector }) {
 
       <section className="bg-white border divider-soft rounded-2xl p-5">
         <h3 className="font-display font-semibold text-lg text-[#0F1115] mb-3">
-          Active inductions
+          Active policy-pack enrolments
         </h3>
         {enrollments.length === 0 ? (
-          <div className="text-[13px] text-stone-500 py-3">No staff currently in induction.</div>
+          <div className="text-[13px] text-stone-500 py-3">No staff currently in a policy-week pack.</div>
         ) : (
           <ul className="divide-y divider-soft" data-testid="enrollments-list">
             {enrollments.map((e) => (
