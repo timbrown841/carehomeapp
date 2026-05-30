@@ -2,12 +2,25 @@ import { useEffect, useState, useCallback, useMemo } from "react";
 import { Link } from "react-router-dom";
 import api from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
+import { useOrg } from "@/context/OrgContext";
 import { toast } from "sonner";
 import {
   Activity, AlertTriangle, Clock, Moon, Sun, Users, UserCheck, UserX,
   Loader2, RefreshCw, LogIn, LogOut, Bed, AlertCircle, ChevronRight,
   Calendar, PlugZap, Coffee, ArrowRightLeft, Heart, ShieldAlert,
 } from "lucide-react";
+
+// Which service-type ids belong to which sector. Used to prune the
+// "sectors_available" list returned by the backend so a children's-services
+// workspace never surfaces adult-care chips (and vice-versa).
+const SECTOR_OF = {
+  children: "children",
+  adult_supported_living: "adult",
+  elderly_residential: "adult",
+  dementia: "adult",
+  mental_health: "adult",
+  veteran: "adult",
+};
 
 const TONE = {
   ok:       { fg: "#2F6A3A", bg: "#2F6A3A12", line: "#2F6A3A", label: "On track" },
@@ -163,11 +176,16 @@ export function MyShiftBar({ onAction }) {
 // ---------------------------------------------------------------------------
 export default function LiveStaffingOps() {
   const { tier } = useAuth();
+  const { effectiveMode } = useOrg();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [disturbanceFor, setDisturbanceFor] = useState(null);
   const [sectorFilter, setSectorFilter] = useState("all");
   const [shiftFilter, setShiftFilter] = useState("all");
+
+  // Reset sector filter when the workspace mode changes — otherwise an adult-mode
+  // filter would silently persist on a switch into Children's mode.
+  useEffect(() => { setSectorFilter("all"); }, [effectiveMode]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -175,12 +193,15 @@ export default function LiveStaffingOps() {
       const params = {};
       if (sectorFilter !== "all") params.sector = sectorFilter;
       if (shiftFilter !== "all") params.shift_filter = shiftFilter;
+      // Tell the backend which workspace we're in so it only returns
+      // sector-relevant residents / shifts / sectors_available.
+      if (effectiveMode) params.workspace_sector = effectiveMode;
       const r = await api.get("/staffing/overview", { params });
       setData(r.data);
     } catch (e) {
       toast.error("Couldn't load staffing overview");
     } finally { setLoading(false); }
-  }, [sectorFilter, shiftFilter]);
+  }, [sectorFilter, shiftFilter, effectiveMode]);
   useEffect(() => { load(); }, [load]);
 
   const isManager = tier >= 3;
@@ -210,8 +231,10 @@ export default function LiveStaffingOps() {
             active={sectorFilter === "all"}
             onClick={() => setSectorFilter("all")}
             testid="sector-all"
-          >Organisation-wide</FilterChip>
-          {(data?.sectors_available || []).map((s) => (
+          >{effectiveMode === "adult" ? "All adult services" : effectiveMode === "children" ? "All children's services" : "Organisation-wide"}</FilterChip>
+          {(data?.sectors_available || [])
+            .filter((s) => !effectiveMode || (SECTOR_OF[s.sector] || s.sector) === effectiveMode)
+            .map((s) => (
             <FilterChip
               key={s.sector}
               active={sectorFilter === s.sector}

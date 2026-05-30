@@ -33,7 +33,8 @@ const RAG_TONE = {
 
 export default function InductionPolicyHub() {
   const { isManagerOrAbove } = useAuth();
-  const { mode } = useOrg();
+  const { mode: legacyMode, effectiveMode } = useOrg();
+  const mode = effectiveMode || legacyMode;
   const [params, setParams] = useSearchParams();
   const tab = params.get("tab") || "library";
 

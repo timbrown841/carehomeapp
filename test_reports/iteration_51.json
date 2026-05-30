@@ -1,0 +1,30 @@
+{
+  "summary": "Iteration 51 sector boundary fix verified end-to-end. Backend: 4/4 boundary tests pass + 28/28 Phase H regression tests pass (test_iteration49_policies + test_iteration49b + test_iteration50_sop_governance + test_iteration51_sector_boundary = 32/32). Manual curl confirms /api/staffing/overview honours workspace_sector: children -> sectors_available=['children'], ratios=['children']; adult -> sectors_available=['adult_supported_living','elderly_residential'], ratios match; no children leak. filters_applied.workspace_sector echoed correctly. Frontend Live Staffing chip strip honours workspace: Children's mode shows only sector-children chip with 'All children's services' label; Adult mode shows only adult chips with 'All adult services' label. No cross-sector leak observed. Ratios widget pruned correctly per workspace. Workspace switch via /welcome carries new sessionMode through to LiveStaffingOps re-fetch.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration51_sector_boundary.py",
+    "/app/test_reports/pytest/iter51_sector_boundary.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Frontend belt-and-braces filter in LiveStaffingOps.jsx (line ~236) uses SECTOR_OF lookup with a fallback `|| s.sector`, which would incorrectly let unknown sectors through. Backend already prunes, so this is currently harmless, but consider tightening the fallback to default-deny.",
+    "OrgContext stores sessionMode in localStorage but does not clear it on logout — verified that picking a workspace as logged-out user, then logging in, retains the pre-pick sector, which is the desired UX. No action needed.",
+    "Other dashboards/widgets (Manager Digest, Handover, QuickWidgets) were spot-checked through navigation and behave consistently with the active sector; full cross-page sector-leak sweep is recommended as a follow-up if user reports any further sightings (e.g., notification centre, reports/exports)."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "manager@care.local / Manager@123",
+  "seed_data_creation": "None — used existing seeded residents (4 children, 1 adult_supported_living, 1 elderly_residential).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Workspace switching flow: visit /welcome, click 'Enter workspace' on the desired sector card, then login. Session mode is stored in localStorage['cc_session_mode'] = 'children' | 'adult'. The /staff-operations -> Rota & Shifts tab renders <LiveStaffingOps/> which reads effectiveMode from OrgContext and forwards as workspace_sector to /api/staffing/overview. data-testids of interest: [data-testid=filter-sectors], [data-testid=sector-all], [data-testid=sector-children], [data-testid=sector-adult_supported_living], [data-testid=sector-elderly_residential], [data-testid=staffing-ratios], [data-testid=ratio-<sector>]. No backend/frontend regressions found.",
+  "rca_of_the_issue": "Original leak was caused by /api/staffing/overview returning all sectors regardless of the user's active workspace. Fix added workspace_sector query parameter on the endpoint and the underlying build_staffing_overview() in staffing_service.py prunes residents_by_sector, sectors_available, and ratios using a SECTOR_OF map. LiveStaffingOps.jsx now forwards effectiveMode from OrgContext as workspace_sector, double-filters sectors_available client-side as belt-and-braces, resets sectorFilter when effectiveMode changes, and dynamically labels the 'All' chip. All 4 boundary tests + UI smoke pass."
+}

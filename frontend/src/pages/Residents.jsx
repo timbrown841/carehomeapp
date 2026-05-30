@@ -53,7 +53,9 @@ export default function Residents({ sector }) {
             Residents
           </h1>
           <p className="text-stone-600 mt-1">
-            Children and young people in your care.
+            {sector === "adult"
+              ? "Adults in your care."
+              : "Children and young people in your care."}
           </p>
         </div>
         {canManage && (

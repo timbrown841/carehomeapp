@@ -8399,12 +8399,17 @@ async def strategy_meeting_pack_pdf(resident_id: str, user: dict = Depends(requi
 async def staffing_overview(
     sector: Optional[str] = None,
     shift_filter: Optional[str] = None,
+    workspace_sector: Optional[str] = None,
     _: dict = Depends(get_current_user),
 ):
     """Single-call live operational picture for the home — for managers and shift staff.
     Optional filters never split sectors — they only narrow the view for one screen.
+    `workspace_sector` ("children" | "adult") enforces a hard sector boundary for the
+    sector-native experience.
     """
-    return await build_staffing_overview(db, sector=sector, shift_filter=shift_filter)
+    return await build_staffing_overview(
+        db, sector=sector, shift_filter=shift_filter, workspace_sector=workspace_sector,
+    )
 
 
 @api_router.get("/staffing/config")

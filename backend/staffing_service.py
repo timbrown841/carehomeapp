@@ -94,7 +94,8 @@ def _is_asleep_window(start_at: str, end_at: str, cfg: dict) -> bool:
     return False
 
 
-async def build_staffing_overview(db, sector: Optional[str] = None, shift_filter: Optional[str] = None) -> dict:
+async def build_staffing_overview(db, sector: Optional[str] = None, shift_filter: Optional[str] = None,
+                                  workspace_sector: Optional[str] = None) -> dict:
     """Single-call live operational picture for the home.
 
     Optional filters (UI controlled, never enforce sector silos at the org level):
@@ -102,6 +103,10 @@ async def build_staffing_overview(db, sector: Optional[str] = None, shift_filter
                 Returns `sectors_available[]` so the UI can render filter chips.
       - shift_filter: narrow on_shift_now / coverage_gaps to one of:
                 "awake" | "sleep_in" | "agency". Pressure indicators stay org-wide.
+      - workspace_sector: hard sector boundary — "children" or "adult". When set,
+                the response only includes residents/shifts/ratios/sectors_available
+                that belong to the active workspace. This is the sector-aware
+                experience the user picks at the welcome screen.
     """
     now = datetime.now(timezone.utc)
     cfg = await get_staffing_config(db)
@@ -175,12 +180,29 @@ async def build_staffing_overview(db, sector: Optional[str] = None, shift_filter
     # ============================================================
     # Staffing ratios per sector (compares live awake/asleep staffing vs required)
     # ============================================================
-    sectors = ["children", "adult_supported_living", "elderly_residential",
-                "dementia", "mental_health", "veteran"]
+    ALL_SECTORS = ["children", "adult_supported_living", "elderly_residential",
+                   "dementia", "mental_health", "veteran"]
+    # Sector belongs-to map: which workspace-sector ("children"/"adult") each
+    # service_type id belongs to.
+    SECTOR_OF = {
+        "children": "children",
+        "adult_supported_living": "adult",
+        "elderly_residential": "adult",
+        "dementia": "adult",
+        "mental_health": "adult",
+        "veteran": "adult",
+    }
+    if workspace_sector in ("children", "adult"):
+        sectors = [s for s in ALL_SECTORS if SECTOR_OF[s] == workspace_sector]
+    else:
+        sectors = ALL_SECTORS
     residents = await db.residents.find({}, {"_id": 0, "service_type": 1}).to_list(500)
     residents_by_sector = {}
     for r in residents:
         st = r.get("service_type") or "children"
+        # Skip out-of-workspace residents
+        if workspace_sector in ("children", "adult") and SECTOR_OF.get(st, "children") != workspace_sector:
+            continue
         residents_by_sector[st] = residents_by_sector.get(st, 0) + 1
 
     awake_count = sum(1 for s in on_shift_all if not s["is_sleep_in"] and s["clocked_in"])
@@ -322,7 +344,7 @@ async def build_staffing_overview(db, sector: Optional[str] = None, shift_filter
     return {
         "generated_at": now.isoformat(),
         "is_asleep_window": (now.hour >= cfg["asleep_hours_start"] or now.hour < cfg["asleep_hours_end"]),
-        "filters_applied": {"sector": sector, "shift_filter": shift_filter},
+        "filters_applied": {"sector": sector, "shift_filter": shift_filter, "workspace_sector": workspace_sector},
         "sectors_available": sectors_available,
         "on_shift_now": on_shift,
         "on_shift_total": len(on_shift_all),

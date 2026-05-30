@@ -40,7 +40,8 @@ const fmtDate = (iso) => {
 
 export default function GovernanceHub() {
   const { isManagerOrAbove } = useAuth();
-  const { mode } = useOrg();
+  const { mode: legacyMode, effectiveMode } = useOrg();
+  const mode = effectiveMode || legacyMode;
   const sector = mode === "adult" ? "adult" : "children";
   const [data, setData] = useState(null);
   const [compliance, setCompliance] = useState(null);
