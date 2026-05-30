@@ -110,10 +110,14 @@ ADULT_WORKER_EXTRAS: list[dict] = [
 MANAGER_EXTRAS: list[dict] = [
     {"key": "leadership", "title": "Leadership & home culture",
      "description": "Setting culture, staff supervision philosophy, modelling values."},
+    {"key": "supervision_leadership", "title": "Delivering supervision",
+     "description": "Reflective supervision, performance & wellbeing conversations, supervision quality assurance."},
     {"key": "compliance_audits", "title": "Compliance & audits",
      "description": "Monthly compliance review, Reg 44 / Reg 45 visit response, audit trail discipline."},
     {"key": "investigations", "title": "Investigations & allegations",
      "description": "LADO, internal investigations, evidence preservation, fairness."},
+    {"key": "safer_recruitment", "title": "Safer recruitment",
+     "description": "Safer recruitment principles, DBS, references, right to work, Single Central Record."},
     {"key": "workforce_management", "title": "Workforce management",
      "description": "Rota assurance, sickness, capability, performance, retention."},
     {"key": "inspection_readiness", "title": "Ofsted / CQC inspection readiness",
@@ -128,6 +132,8 @@ INDUCTION_TEMPLATES = {
         "sector": "children",
         "description": "For residential support workers, seniors and team leaders in children's homes.",
         "sections": INDUCTION_SECTIONS + CHILDREN_WORKER_EXTRAS,
+        "estimated_hours": 24,
+        "estimated_completion": "3-4 working days",
     },
     "adult_worker": {
         "id": "adult_worker",
@@ -135,6 +141,8 @@ INDUCTION_TEMPLATES = {
         "sector": "adult",
         "description": "For support workers in adult care services.",
         "sections": INDUCTION_SECTIONS + ADULT_WORKER_EXTRAS,
+        "estimated_hours": 24,
+        "estimated_completion": "3-4 working days",
     },
     "manager": {
         "id": "manager",
@@ -142,6 +150,8 @@ INDUCTION_TEMPLATES = {
         "sector": "both",
         "description": "For deputy managers, registered managers, RIs and ops leads.",
         "sections": INDUCTION_SECTIONS + MANAGER_EXTRAS,
+        "estimated_hours": 32,
+        "estimated_completion": "4-5 working days",
     },
 }
 
@@ -268,6 +278,8 @@ def build_routes():
                 "description": t["description"],
                 "section_count": len(t["sections"]),
                 "extra_section_keys": [s["key"] for s in t["sections"][len(INDUCTION_SECTIONS):]],
+                "estimated_hours": t.get("estimated_hours"),
+                "estimated_completion": t.get("estimated_completion"),
             })
         return {"templates": out}
 
@@ -289,9 +301,13 @@ def build_routes():
         if not s:
             raise HTTPException(404, "Staff not found")
         tid = recommended_template(s.get("role") or "staff", sector)
+        t = INDUCTION_TEMPLATES[tid]
         return {"staff_id": staff_id, "role": s.get("role"), "sector": sector,
                 "recommended_template_id": tid,
-                "label": INDUCTION_TEMPLATES[tid]["label"]}
+                "label": t["label"],
+                "section_count": len(t["sections"]),
+                "estimated_hours": t.get("estimated_hours"),
+                "estimated_completion": t.get("estimated_completion")}
 
     @router.get("/induction/assignments")
     async def list_assignments(

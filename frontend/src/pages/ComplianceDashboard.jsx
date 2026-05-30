@@ -89,21 +89,28 @@ export default function ComplianceDashboard() {
       {/* === 7 KPI tiles === */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3" data-testid="compliance-kpi-row">
         <KPI label="Policy Compliance" value={data.policy_pct} tone={data.rag.policy}
-             icon={FileText} testid="kpi-policy" hint={`${data.counts.active_policies} active`} />
+             icon={FileText} testid="kpi-policy" hint={`${data.counts.active_policies} active`}
+             link="/policies?tab=library" />
         <KPI label="Staff Acknowledgements" value={data.acknowledgement_pct} tone={data.rag.acknowledgement}
              icon={ClipboardCheck} testid="kpi-acknowledgement"
-             hint={`${data.counts.ack_done}/${data.counts.ack_total}`} />
+             hint={`${data.counts.ack_done}/${data.counts.ack_total}`}
+             link="/my-policies" />
         <KPI label="Training Compliance" value={data.training_pct} tone={data.rag.training}
-             icon={Award} testid="kpi-training" />
+             icon={Award} testid="kpi-training"
+             link="/training" />
         <KPI label="Supervision Compliance" value={data.supervision_pct} tone={data.rag.supervision}
-             icon={Users} testid="kpi-supervision" hint="Within 90 days" />
+             icon={Users} testid="kpi-supervision" hint="Within 90 days"
+             link="/supervisions" />
         <KPI label="Induction Compliance" value={data.induction_pct} tone={data.rag.induction}
              icon={GraduationCap} testid="kpi-induction"
-             hint={`${data.counts.signed_off_inductions}/${data.counts.staff_total} signed off`} />
+             hint={`${data.counts.signed_off_inductions}/${data.counts.staff_total} signed off`}
+             link="/induction" />
         <KPI label="Workforce Readiness" value={data.workforce_readiness_pct} tone={data.rag.workforce_readiness}
-             icon={Sparkles} testid="kpi-workforce" hint="Composite 60/15/10/15" />
+             icon={Sparkles} testid="kpi-workforce" hint="Composite 60/15/10/15"
+             link="/training" />
         <KPI label={data.readiness_label} value={data.regulator_readiness_pct} tone={data.rag.regulator_readiness}
-             icon={ShieldCheck} testid="kpi-regulator" hint="Inspection ready" />
+             icon={ShieldCheck} testid="kpi-regulator" hint="Inspection ready"
+             link="/policy-intelligence" />
         <TrendTile trend={data.widgets.compliance_trend} />
       </div>
 
@@ -140,17 +147,26 @@ export default function ComplianceDashboard() {
   );
 }
 
-function KPI({ label, value, tone, icon: Icon, testid, hint }) {
-  return (
-    <div className={`rounded-xl border p-4 ${TONE[tone] || TONE.grey}`} data-testid={testid}>
+function KPI({ label, value, tone, icon: Icon, testid, hint, link }) {
+  const body = (
+    <>
       <div className="flex items-baseline justify-between">
         <span className="font-display font-semibold text-3xl leading-none">{value}%</span>
-        <Icon size={14} className="opacity-70" />
+        <div className="flex items-center gap-1">
+          <Icon size={14} className="opacity-70" />
+          {link && <ChevronRight size={11} className="opacity-50" />}
+        </div>
       </div>
       <div className="text-[11px] font-semibold mt-1.5">{label}</div>
       {hint && <div className="text-[10px] opacity-80 mt-0.5">{hint}</div>}
-    </div>
+      {link && <div className="text-[10px] opacity-70 mt-1 underline">View records →</div>}
+    </>
   );
+  const cls = `rounded-xl border p-4 ${TONE[tone] || TONE.grey} ${link ? "block hover:opacity-90 transition" : ""}`;
+  if (link) {
+    return <Link to={link} className={cls} data-testid={testid}>{body}</Link>;
+  }
+  return <div className={cls} data-testid={testid}>{body}</div>;
 }
 
 function WidgetTile({ w, icon: Icon, link, subValue, testid }) {

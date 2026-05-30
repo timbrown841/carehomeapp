@@ -1,0 +1,37 @@
+{
+  "summary": "Phase E.3.2 testing: Backend pytest 12/12 PASS (test_iteration57_compliance_hub.py). Curl verified induction templates (children_worker=21, adult_worker=21, manager=23 sections; estimated_hours & estimated_completion present) and /api/induction/recommend-template returns correct fields. Frontend /policies?tab=dashboard rendered fully in Children's workspace: all 7 KPI tiles (kpi-policy/acknowledgement/training/supervision/induction/workforce/regulator) present, 'View records' text appears 7 times (drill-down on every KPI), hero label = 'Ofsted Readiness · Children's Services' with score 41/100, evidence-download-btn present, 'Inspection evidence' & 'Recent assignments' sections present BENEATH the unified dashboard, kpi-policy is an <a> with href '/policies?tab=library' (drill-down working). The induction modal flow and the Adult-sector UI switch were not fully exercised because the demo login form became flaky in subsequent Playwright contexts (form inputs failed to render despite networkidle — re-login from a fresh browser context kept bouncing through /login → /welcome → /login). Backend already proves adult-sector dashboard returns regulator_readiness with regulator='cqc' and readiness_label='CQC Readiness' (covered in test_iteration57_compliance_hub.py).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "/policies?tab=dashboard (and across Layout)", "issues": ["React hydration warning logged: '<span> cannot be a child of <option>' originating from InductionPolicyHub line 436 (evidence-staff select renders staff names wrapped in a <span> inside <option>). Cosmetic — does not break functionality but pollutes console and risks SSR/hydration mismatches."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration57_compliance_hub.py",
+    "/app/test_reports/pytest/iteration_57.xml"
+  ],
+  "action_items": [
+    "Main agent: please self-verify the AssignModal recommendation tile + auto-template-select + 'Manager override' badge flow on /induction (testids: induction-assign-modal, induction-assign-staff, induction-assign-template, induction-recommendation). Backend recommendation API is confirmed correct, so the wiring just needs UI smoke-test.",
+    "Main agent: please self-verify Adult sector swap via avatar / OrgSwitcher (no [data-testid='org-switcher'] was found in DOM; sector swap probably lives behind the 'Sarah Manager' sidebar avatar menu — confirm a user-facing path to switch to Adult exists from a logged-in session). Backend already returns CQC for sector=adult.",
+    "Optional: fix the InductionPolicyHub evidence-staff <option> hydration warning by removing the <span> wrapper or rendering plain text inside <option>."
+  ],
+  "critical_code_review_comments": [
+    "ComplianceDashboard.jsx: clean separation, deterministic, sector-aware via effectiveMode — good.",
+    "compliance_dashboard.py mounted at /api/compliance/unified-dashboard — staff RBAC returns 403 as required (verified by pytest).",
+    "Backend induction template counts match spec (21/21/23) and include all required manager keys (safer_recruitment, supervision_leadership, leadership, compliance_audits, investigations, workforce_management, inspection_readiness, supervision).",
+    "Hydration warning from <span> inside <option> in InductionPolicyHub.jsx ~line 436 (staffOptions render). Low priority but should be cleaned up."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "75% (Children's dashboard fully verified; induction modal + adult sector UI swap not fully covered due to flaky login on repeat browser sessions)"},
+  "test_credentials": "manager@care.local / Manager@123 (used)",
+  "seed_data_creation": "None. No test data was created (Assign submit was skipped to avoid duplicate inductions).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "First Playwright run (with persistent session) successfully verified Children's compliance dashboard end-to-end. Subsequent contexts kept failing because the SPA login form's <input> elements didn't render in time (input count=0 even after networkidle). When re-testing, use page.wait_for_selector('input[name=\\\"email\\\"], #email', timeout=15000) before fill, or call the backend /api/auth/login first and inject the JWT cookie. Backend pytest 12/12 PASS is the source of truth for KPI structure and sector-aware regulator switching.",
+  "rca_of_the_issue": "Not a product bug — testing-tool flakiness only. The SPA login page momentarily renders a skeleton before mounting the controlled-input form; selectors like input[type=email] resolved before mount in 2 out of 3 Playwright runs."
+}

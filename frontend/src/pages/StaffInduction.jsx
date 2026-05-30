@@ -218,26 +218,51 @@ export default function StaffInductionList() {
 
 function AssignModal({ onClose, onSaved }) {
   const [staff, setStaff] = useState([]);
-  const [form, setForm] = useState({ staff_id: "", sector: "children", target_completion: "" });
+  const [templates, setTemplates] = useState([]);
+  const [recommendation, setRecommendation] = useState(null);
+  const [form, setForm] = useState({ staff_id: "", sector: "children", target_completion: "", template_id: "" });
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     api.get("/auth/users").then(r => {
       const all = Array.isArray(r.data) ? r.data : (r.data.users || []);
-      setStaff(all.filter(u => ["staff", "senior"].includes(u.role)));
+      setStaff(all.filter(u => ["staff", "senior", "manager"].includes(u.role)));
     });
+    api.get("/induction/templates").then(r => setTemplates(r.data.templates || []));
   }, []);
+
+  // Recompute recommended template whenever staff or sector changes
+  useEffect(() => {
+    if (!form.staff_id) { setRecommendation(null); return; }
+    api.get(`/induction/recommend-template?staff_id=${form.staff_id}&sector=${form.sector}`)
+      .then(r => {
+        setRecommendation(r.data);
+        // Auto-select if user hasn't overridden
+        setForm(f => ({ ...f, template_id: r.data.recommended_template_id }));
+      })
+      .catch(() => setRecommendation(null));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.staff_id, form.sector]);
 
   const submit = async () => {
     if (!form.staff_id) { toast.error("Pick a staff member"); return; }
     setSaving(true);
     try {
-      const r = await api.post("/induction/assignments", form);
+      const payload = {
+        staff_id: form.staff_id,
+        sector: form.sector,
+        target_completion: form.target_completion || undefined,
+        template_id: form.template_id || undefined,
+      };
+      const r = await api.post("/induction/assignments", payload);
       toast.success("Induction created");
       onSaved(r.data.id);
     } catch (e) { toast.error(e?.response?.data?.detail || "Could not create"); }
     finally { setSaving(false); }
   };
+
+  const selectedTemplate = templates.find(t => t.id === form.template_id);
+  const isOverridden = recommendation && form.template_id && form.template_id !== recommendation.recommended_template_id;
 
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-end sm:items-center justify-center p-2" data-testid="induction-assign-modal">
@@ -249,19 +274,65 @@ function AssignModal({ onClose, onSaved }) {
                   onChange={e => setForm({...form, staff_id: e.target.value})}
                   data-testid="induction-assign-staff">
             <option value="">—</option>
-            {staff.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+            {staff.map(s => <option key={s.id} value={s.id}>{s.name} · {s.role}</option>)}
           </select>
         </Field>
         <Field label="Sector">
           <select className="w-full border rounded-lg px-3 py-2 text-sm" value={form.sector}
-                  onChange={e => setForm({...form, sector: e.target.value})}>
+                  onChange={e => setForm({...form, sector: e.target.value})}
+                  data-testid="induction-assign-sector">
             <option value="children">Children's Services</option>
             <option value="adult">Adult Services</option>
           </select>
         </Field>
+
+        {/* Phase E.3.2 — Recommended template auto-pick + override */}
+        {recommendation && (
+          <div className="rounded-lg border bg-emerald-50 border-emerald-200 p-2.5"
+               data-testid="induction-recommendation">
+            <div className="text-[10px] uppercase font-bold tracking-wider text-emerald-800">
+              Recommended for {recommendation.role}
+            </div>
+            <div className="text-sm font-semibold text-emerald-900 mt-0.5">
+              {recommendation.label}
+            </div>
+            <div className="text-[11px] text-emerald-800/80 mt-0.5">
+              {recommendation.section_count} sections · est. {recommendation.estimated_completion}
+              {recommendation.estimated_hours ? ` (~${recommendation.estimated_hours}h)` : ""}
+            </div>
+          </div>
+        )}
+
+        <Field label="Induction template">
+          <select className="w-full border rounded-lg px-3 py-2 text-sm" value={form.template_id}
+                  onChange={e => setForm({...form, template_id: e.target.value})}
+                  data-testid="induction-assign-template">
+            {templates
+              .filter(t => t.sector === "both" || t.sector === form.sector)
+              .map(t => (
+                <option key={t.id} value={t.id}>
+                  {t.label} ({t.section_count} sections{t.estimated_completion ? ` · ${t.estimated_completion}` : ""})
+                </option>
+              ))}
+          </select>
+        </Field>
+
+        {selectedTemplate && (
+          <div className="text-[11px] text-stone-600 -mt-1.5" data-testid="induction-template-details">
+            {selectedTemplate.section_count} sections · est. {selectedTemplate.estimated_completion}
+            {selectedTemplate.estimated_hours ? ` (~${selectedTemplate.estimated_hours}h)` : ""}
+            {isOverridden && (
+              <span className="ml-1 inline-block px-1.5 py-0.5 rounded bg-amber-100 text-amber-900 text-[10px] font-bold">
+                Manager override
+              </span>
+            )}
+          </div>
+        )}
+
         <Field label="Target completion (optional)">
           <input type="date" className="w-full border rounded-lg px-3 py-2 text-sm" value={form.target_completion}
-                 onChange={e => setForm({...form, target_completion: e.target.value})} />
+                 onChange={e => setForm({...form, target_completion: e.target.value})}
+                 data-testid="induction-assign-target" />
         </Field>
         <div className="flex justify-end gap-2 pt-2">
           <Button variant="outline" onClick={onClose}>Cancel</Button>

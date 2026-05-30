@@ -17,6 +17,7 @@ import {
   Loader2, AlertTriangle, CheckCircle2, Clock, FileDown, GraduationCap,
   Users as UsersIcon, RefreshCw, ChevronRight, AlertCircle, FileText,
 } from "lucide-react";
+import ComplianceDashboard from "./ComplianceDashboard";
 
 const TABS = [
   { id: "library",   label: "Policy library", icon: FolderOpen },
@@ -372,7 +373,6 @@ function CreatePolicyModal({ sector, category, onClose, onCreated }) {
 // ============= COMPLIANCE DASHBOARD =============
 
 function ComplianceDash({ sector }) {
-  const [data, setData] = useState(null);
   const [assignments, setAssignments] = useState([]);
   const [staffOptions, setStaffOptions] = useState([]);
   const [evidStaff, setEvidStaff] = useState("");
@@ -380,16 +380,14 @@ function ComplianceDash({ sector }) {
 
   const load = useCallback(async () => {
     try {
-      const [d, a, u] = await Promise.all([
-        api.get(`/policy-compliance/dashboard?sector=${sector}`),
+      const [a, u] = await Promise.all([
         api.get(`/policy-assignments`),
         api.get(`/auth/users/picker`),
       ]);
-      setData(d.data);
       setAssignments((a.data.assignments || []).slice(0, 30));
       setStaffOptions(u.data || []);
     } catch { /* */ }
-  }, [sector]);
+  }, []);
 
   useEffect(() => { load(); }, [load]);
 
@@ -411,55 +409,10 @@ function ComplianceDash({ sector }) {
     }
   };
 
-  if (!data) {
-    return (
-      <div className="bg-white border divider-soft rounded-2xl p-6 inline-flex items-center gap-2 text-stone-600 text-sm">
-        <Loader2 size={14} className="animate-spin" /> Loading dashboard…
-      </div>
-    );
-  }
-
-  const tiles = [
-    { label: "Total assigned",        value: data.total_assignments,        icon: ClipboardList, tone: "blue" },
-    { label: "Completion %",          value: `${data.completion_pct}%`,     icon: CheckCircle2, tone: data.completion_pct >= 80 ? "green" : "amber" },
-    { label: "Overdue",               value: data.overdue,                  icon: AlertTriangle, tone: data.overdue > 0 ? "red" : "green" },
-    { label: "Awaiting manager sign", value: data.awaiting_manager_sign_off, icon: Clock,        tone: data.awaiting_manager_sign_off > 0 ? "amber" : "grey" },
-    { label: "Failed assessments",    value: data.failed_assessments,       icon: AlertCircle,   tone: data.failed_assessments > 0 ? "red" : "green" },
-    { label: "Staff in induction",    value: data.in_induction,             icon: GraduationCap, tone: "blue" },
-  ];
-  const toneCls = (t) => {
-    if (t === "red")   return { bg: "bg-[#FBE3E7]", fg: "text-[#7a1a28]", line: "border-[#A8273A]/30" };
-    if (t === "amber") return { bg: "bg-[#FCEFD4]", fg: "text-[#7a4d12]", line: "border-[#B8772F]/30" };
-    if (t === "green") return { bg: "bg-[#E7F3EC]", fg: "text-[#1f4f2b]", line: "border-[#2F6A3A]/30" };
-    if (t === "blue")  return { bg: "bg-[#E5F0F7]", fg: "text-[#15405d]", line: "border-[#2E6FA7]/30" };
-    return { bg: "bg-stone-50", fg: "text-stone-500", line: "border-stone-200" };
-  };
-
   return (
     <div className="space-y-4" data-testid="policies-dashboard">
-      <section className="bg-white border divider-soft rounded-2xl p-5">
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2.5">
-          {tiles.map((t) => {
-            const cls = toneCls(t.tone);
-            const Icon = t.icon;
-            return (
-              <div
-                key={t.label}
-                data-testid={`policies-tile-${t.label.replace(/\W+/g, '-').toLowerCase()}`}
-                className={`rounded-xl border p-3 ${cls.line}`}
-              >
-                <div className={`w-9 h-9 rounded-lg flex items-center justify-center ${cls.bg} ${cls.fg}`}>
-                  <Icon size={15} />
-                </div>
-                <div className={`mt-2 font-display font-bold text-2xl ${cls.fg}`}>{t.value}</div>
-                <div className="text-[11px] uppercase tracking-wider text-stone-500 font-bold mt-0.5">
-                  {t.label}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </section>
+      {/* === Phase E.3.2 Unified Compliance Dashboard === */}
+      <ComplianceDashboard />
 
       <section className="bg-white border divider-soft rounded-2xl p-5">
         <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">

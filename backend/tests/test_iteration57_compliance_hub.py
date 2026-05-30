@@ -66,6 +66,29 @@ def test_template_recommend_for_staff_role():
     assert r.status_code == 200
     body = r.json()
     assert body["recommended_template_id"] in ("children_worker", "adult_worker", "manager")
+    # Phase E.3.2 — estimated time exposed
+    assert body.get("section_count", 0) >= 16
+    assert body.get("estimated_completion")
+
+
+def test_templates_expose_estimated_time():
+    t = _mtoken()
+    body = requests.get(f"{API}/induction/templates", headers=_h(t), timeout=10).json()
+    for tpl in body["templates"]:
+        assert tpl.get("estimated_hours")
+        assert tpl.get("estimated_completion")
+
+
+def test_manager_template_includes_safer_recruitment_and_supervision():
+    """Manager Induction must include Leadership/Supervision/Audits/Compliance/
+    Investigations/Safer Recruitment/Inspection Readiness/Workforce Management."""
+    t = _mtoken()
+    body = requests.get(f"{API}/induction/templates/manager", headers=_h(t), timeout=10).json()
+    keys = {s["key"] for s in body["sections"]}
+    for k in ("leadership", "supervision_leadership", "compliance_audits",
+              "investigations", "safer_recruitment", "workforce_management",
+              "inspection_readiness", "supervision"):
+        assert k in keys, f"manager induction missing {k}"
 
 
 def test_assignment_uses_recommended_template():
