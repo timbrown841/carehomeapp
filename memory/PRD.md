@@ -299,8 +299,19 @@ A simple and fast care management app for children's homes and supported living.
   - `Residents.jsx` subtitle now sector-aware ("Adults in your care." / "Children and young people in your care.").
 - **Tested**: 4/4 new sector-boundary pytest in `test_iteration51_sector_boundary.py` + 27/27 combined Phase H regression. Frontend testing agent: 100% backend + 100% frontend success rate verified by Playwright. No regressions. Report: `/app/test_reports/iteration_51.json`. **No retest needed.**
 
-
-
+## Implemented (2026-05-29 · iter-52 · Phase H.2 — Policy Intelligence & Inspection Readiness)
+- **Manager+ inspection-readiness dashboard** combining policy compliance + governance + induction signals into a single deterministic operational score (no AI-generated scoring).
+- **Backend endpoints** (`policy_routes.py`):
+  - `GET /api/policy-intelligence/dashboard?sector=children|adult` — KPIs (total policies, completion %, overdue, awaiting manager sign-off, failed assessments, in induction, avg completion days), by-role breakdown (Manager/Senior/Staff), most_failed[] (capped at 10), governance_block when SoP exists, staff_needing_attention list.
+  - `GET /api/inspection-readiness/score?sector=…` — 0–100 readiness score with 5-pillar deterministic sub-scores (Policy Compliance · Induction · Governance · Staff Profile / Files · Safeguarding & CR).
+  - `GET /api/inspection-readiness/evidence-pack.pdf?sector=…` — single-shot inspection-ready PDF (reportlab) compiling readiness summary, pillars, top failed policies, version history, audit trail signpost. Emits `inspection_evidence_exported` audit event.
+- **RBAC**: manager+ (tier ≥3) on all three endpoints; staff hit 403.
+- **Frontend additions**:
+  - `/policy-intelligence` page (`PolicyIntelligence.jsx`) — manager+ only (renders friendly `policy-intel-blocked` banner for staff rather than crash). KPI tiles, by-role table, staff-needing-attention list, most-failed-policies (top 10 with fail-rate bars), governance block, sector-aware header, `Generate Inspection Evidence Pack` button.
+  - `InspectionReadyWidget.jsx` embedded on the Dashboard — readiness score donut, 5 pillar bars, deep-link to `/policy-intelligence`, inline evidence-pack download. Hidden for staff (manager+ only).
+  - `App.js` — `/policy-intelligence` route (any-auth; component-level tier gate).
+- **Sector-aware**: both endpoints + UI take sector from `OrgContext.effectiveMode` so Children's and Adult workspaces show distinct figures with no cross-leakage.
+- **Tested**: 11/11 backend pytest in `test_iteration52_policy_intelligence.py` (dashboard shape, RBAC 403, most_failed cap, readiness shape, evidence-pack PDF, governance block when SoP exists, by-role coverage, adult vs children distinctness, audit event emission). 38/38 combined Phase H suite (iter49+iter50+iter51+iter52) PASS. Frontend testing agent: 100% (5/5 flows) — manager dashboard widget, deep-link, KPI tiles, PDF downloads (13kB), staff blocked banner + 403, adult sector swap. Report: `/app/test_reports/iteration_52.json`. **No retest needed.**
 
 
 
