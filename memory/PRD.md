@@ -397,6 +397,28 @@ A simple and fast care management app for children's homes and supported living.
 - **InductionPolicyHub.jsx** "Induction packs" tab — now shows the **new 16-section Staff Induction section at the top** (card grid + "Open full Induction Centre" deep link to `/induction`). The legacy policy-week packs section is retained underneath for mass policy-category enrolment (different purpose). The original click/close bug area is now replaced with proper navigation.
 - **Tested**: 14/14 backend pytest in `test_iteration55_induction.py` (16-section template, 16-item seed, duplicate-prevention 400, staff RBAC 403, manager_signoff item lock for staff, sign-off-requires-all-complete 400, full sign-off flow + read-only after, senior sign-off blocked, staff isolation, manager delete, **`/mine` regression test for FastAPI route ordering**). Frontend testing agent: 100% backend + 100% frontend. **Routing-order bug found and fixed mid-test**: `/api/induction/assignments/mine` was captured by `/{aid}` — testing agent reordered the registrations in `build_routes()` and added active-first selection. Report: `/app/test_reports/iteration_55.json`. **No retest needed.**
 
+## Implemented (2026-05-30 · iter-56 · Phase E.3.1 — Induction Compliance & Ofsted Evidence)
+- **Backend additions** (`induction_routes.py` + new `induction_pdf.py`):
+  - `_risk()` deterministic RAG helper — red if `target_completion < today`, amber if within 7 days, green if signed off or no target. Reused by `/dashboard`, `/staff/{sid}/summary`, `/inspection-pack`.
+  - `GET /api/induction/dashboard` (senior+) — KPI counts (due this week, overdue, at-risk, recently completed last 30d) + per-row payload sorted by target.
+  - `GET /api/induction/staff/{sid}/summary` — staff-profile summary (RBAC: staff sees own only) with completion_pct, risk, top 6 outstanding sections, hr_file_id.
+  - `GET /api/induction/inspection-pack` (senior+) — JSON Ofsted summary (total/fully_inducted/in_progress/no_induction/overdue/compliance_pct + per-staff rows).
+  - `GET /api/induction/inspection-pack.pdf` — multi-page evidence pack: summary page + every signed-off completion certificate appended via `pypdf` PdfWriter. One-click inspector evidence.
+  - `GET /api/induction/assignments/{aid}/certificate.pdf` — single certificate (preview / download). 400 before sign-off; staff can download own.
+  - **`POST /api/induction/assignments/{aid}/sign-off` now AUTO-ATTACHES** the generated certificate PDF to the staff member's HR file under the existing `induction` folder (via new `uploads_service.save_bytes()` helper + `staff_files` insert). The response returns `hr_file_id` for confirmation.
+- **`induction_pdf.py`** — Reportlab certificate builder (A4): branded header, staff details table, manager declaration in italic, 16 numbered sections with completion dates + names, manager signature block, footer with assignment ID.
+- **Workforce Readiness reweighting** (`training_centre_routes.py` `/dashboard`):
+  - New formula: **Mandatory Training 60% · Induction 15% · Qualifications 10% · Supervision 15%**.
+  - Added `induction.compliance_pct` (signed-off staff / total), `supervision.compliance_pct` (staff with supervision in last 90d), `readiness_weights` (forward-compatible dict so frontend can read authoritative values).
+- **Frontend additions** (3 new files + 3 edits):
+  - `InductionRiskWidget.jsx` (Dashboard, senior+) — 4 KPI tiles (Due this week · Overdue · At risk · Recently completed), compliance % bar, prominent ⚠️ at-risk banner when count > 0, deep-link to /induction, inline at-risk list with row-level red/amber/green pills.
+  - `StaffProfileInductionSection.jsx` — Embedded inside the HR Personnel File at the top: latest induction tile with completion %, status pill, risk tone, outstanding sections list (top 6), and Preview/Download buttons when signed off. Empty state when no induction assigned.
+  - `StaffInduction.jsx` list page — now shows a 4-tile compliance bar (Compliance % · Due this week · Overdue · Recently completed last 30d), four filter chips (All / At risk / Overdue / Signed off), and an **Export Induction Evidence Pack** button calling `/inspection-pack.pdf`.
+  - `StaffInduction.jsx` detail page — signed-off header now exposes **Preview certificate**, **Download PDF** and an **On HR file** badge confirming the auto-attach worked.
+  - `Dashboard.jsx` embeds `<InductionRiskWidget />` after `<CliffEdgeWidget />`.
+  - `StaffPersonnelFile.jsx` embeds `<StaffProfileInductionSection />` between the header and the tab bar.
+- **Tested**: 17/17 backend pytest in `test_iteration56_induction_compliance.py` covering risk rules (green/amber/red + signed-off-always-green), dashboard shape + RBAC, overdue+at-risk aggregation, certificate PDF gating (400 before sign-off, 200 + valid %PDF bytes after, staff own-only download), HR file auto-attach (verified via `/api/hr/staff/{sid}` tabs.folders.induction.files contains hr_file_id), staff summary + own-only RBAC, inspection-pack JSON + multi-page PDF, readiness weights = {60,15,10,15}. Combined 47/47 across iter54+55+56. Frontend testing agent: 100% backend + 100% frontend — all six surfaces verified (Dashboard widget, /induction list compliance bar + filter chips + evidence pack button, detail page preview/download/HR badges, HR Personnel File induction section, staff widget hidden, evidence pack multi-page PDF). Report: `/app/test_reports/iteration_56.json`. **No retest needed.**
+
 
 
 ## Backlog (next-up)
