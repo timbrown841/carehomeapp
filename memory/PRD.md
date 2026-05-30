@@ -313,6 +313,34 @@ A simple and fast care management app for children's homes and supported living.
 - **Sector-aware**: both endpoints + UI take sector from `OrgContext.effectiveMode` so Children's and Adult workspaces show distinct figures with no cross-leakage.
 - **Tested**: 11/11 backend pytest in `test_iteration52_policy_intelligence.py` (dashboard shape, RBAC 403, most_failed cap, readiness shape, evidence-pack PDF, governance block when SoP exists, by-role coverage, adult vs children distinctness, audit event emission). 38/38 combined Phase H suite (iter49+iter50+iter51+iter52) PASS. Frontend testing agent: 100% (5/5 flows) — manager dashboard widget, deep-link, KPI tiles, PDF downloads (13kB), staff blocked banner + 403, adult sector swap. Report: `/app/test_reports/iteration_52.json`. **No retest needed.**
 
+## Implemented (2026-05-30 · iter-53 · Phase E.1 — Training & Workforce Development Centre)
+- **Major P1 module — central place for all staff training, certificates, qualifications and annual development planning.** Replaces the legacy `/training` matrix with a full deterministic Workforce Readiness command centre. Sector-aware (children's vs adult mandatory training).
+- **Backend** (`/app/backend/training_centre.py` seed/helpers + `training_centre_routes.py` APIRouter, mounted via `build_routes()`/`init()` pattern in `server.py`):
+  - **Seeded catalogues** (idempotent, on startup):
+    - 16 **children's mandatory courses**: Safeguarding L3, Team Teach, PACE, Trauma-Informed Practice, Child Development, CSE/CCE, Missing from Care, Prevent Duty, First Aid, Medication, Fire Safety, Infection Control, Food Hygiene, GDPR, EDI, Lone Working.
+    - 16 **adult mandatory courses**: Safeguarding Adults L3, MCA, DoLS, Medication, Falls Prevention, Dementia Care, Moving & Handling, Positive Behaviour Support, First Aid, Fire Safety, Infection Control, Food Hygiene, GDPR, EDI, End-of-Life Care, Lone Working.
+    - 10 **qualifications** in catalogue: L3 Residential Childcare, L4 CYP, L5 Leadership & Management, L3/L4 Adult Care, Social Work Degree, RN (NMC), L2 H&SC, Team Teach Advanced, BIA. No auto-enrol (per user choice).
+  - **Endpoints** (all under `/api/training-centre/*`):
+    - Courses: GET/POST/PATCH/DELETE — sector + mandatory filters
+    - Records: GET (with auto-computed RAG status `ok/expiring/expired/missing`), POST (auto-computes `expires_on` from `frequency_months` if blank), PATCH, DELETE, GET `/records/mine`
+    - Matrix: GET `/matrix?sector=…` — full staff × course grid with cell-level RAG and compliance %
+    - Certificates: POST (multipart — file OR `external_url`, manager uploads auto-verified, staff own go to `pending`), GET, PATCH `/verify`, DELETE. Version increments on re-upload for the same staff+course.
+    - Qualifications: GET catalogue, GET (RBAC scoped), POST, PATCH, DELETE
+    - Dev Plans: GET, POST (one active per staff+year), POST `/objectives`, PATCH `/objectives/{id}` (auto-stamps `completed_at` on status=completed), DELETE objective, POST `/quarterly-review` (q1..q4), POST `/archive` (annual rollover)
+    - Dashboard: GET `/dashboard?sector=…` — deterministic Workforce Readiness score 0–100 (70% compliance + 15% certificate verification rate + 15% dev-plan coverage), KPI counts, expiring/overdue lists, certificate + qualification rollups
+    - Supervision bi-dir: POST `/api/supervisions/{id}/training-actions` — creates a dev-plan objective tied to a supervision; auto-creates the active annual plan if none exists. The supervision document also gets a `linked_objectives[]` entry.
+  - **RBAC** strictly enforced (manager+ for matrix/dashboard/records create, senior+ for matrix view, staff scoped to own records/certs/qualifications/plans). Staff cannot upload certificates for other users (403). All write ops emit `tc_*` audit events.
+- **Frontend** (`/app/frontend/src/pages/TrainingCentre.jsx`):
+  - 5-tab manager/senior view at `/training`: **Dashboard · Training matrix · Certificates · Qualifications · Development plans**.
+  - Hero readiness score card with RAG tone, 4 KPI tiles, expiring-in-60-days + overdue/missing lists.
+  - Matrix tab: staff × course grid with cell pills (Current/Expiring/Expired/Missing), `Record training` modal.
+  - Certificates tab: table with verification pills, file/URL source links, manager Verify/Reject actions, file-or-URL upload modal.
+  - Qualifications tab: catalogue-driven cards with level + status pills, add modal.
+  - Development plans tab: card grid + click-to-open drawer with objectives, quarterly reviews, archive action.
+  - Staff view (`/training` for tier 1): simplified personal profile — 4 KPI tiles (Current/Expiring/Expired/Active plan) + My trainings + My certificates + My qualifications + My active dev plan objectives with completion checkmarks.
+  - **`TrainingCentreSummary` tile** exported and embedded inside `StaffOperationsHub` Training tab so managers see the readiness summary at-a-glance with a deep-link to the full Centre.
+- **Tested**: 21/21 backend pytest in `test_iteration53_training_centre.py`. Frontend testing agent E2E: 100% on all required testids — 5 tabs, modals (record/cert/qual/plan-create/objective/review), drawer open, staff self-view substitution, summary tile + deep-link. Report: `/app/test_reports/iteration_53.json`. **One cosmetic warning** (React `<span>` inside `<option>` hydration log) — non-blocking, deferred. **No retest needed.**
+
 
 
 ## Backlog (next-up)
