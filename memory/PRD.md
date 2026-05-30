@@ -279,6 +279,27 @@ A simple and fast care management app for children's homes and supported living.
 - **Sector-aware** — picks sector from `OrgContext` (`children` / `adult`). The same hub works for both Adult Services and Children's Services with separate SoP records.
 - **Tested**: 12/12 new backend pytest (`test_iteration50_sop_governance.py`) + 28/28 combined Phase H regression (16 iter49 + 12 iter50). Frontend Playwright: all tiles, buckets, version history, upload modal, questions modal, evidence PDF download verified — 95% success rate (only minor stylistic note about native date inputs vs shadcn Calendar). No retest needed. Report: `/app/test_reports/iteration_50.json`.
 
+## Implemented (2026-05-29 · iter-51 · URGENT — Sector Boundary Fix)
+- **User-reported leakage** — Children's mode was surfacing adult chips (Elderly Residential, Supported Living); Adult mode was surfacing the Children's Home chip.
+- **Root cause**: `/api/staffing/overview` returned every populated service_type in `sectors_available[]` + `ratios[]` regardless of the active workspace.
+- **Backend fix** (`staffing_service.py`):
+  - Added `workspace_sector: Optional[str]` to `build_staffing_overview(...)`.
+  - New `SECTOR_OF` map within the function (single source of truth: children → "children", adult_supported_living/elderly_residential/dementia/mental_health/veteran → "adult").
+  - When `workspace_sector ∈ ("children", "adult")`, the function prunes `residents_by_sector` (skip cross-sector residents), `sectors_available`, and the `ratios` loop accordingly.
+  - `filters_applied.workspace_sector` echoed back in the response.
+- **API surface** (`server.py`):
+  - `GET /api/staffing/overview` now accepts `?workspace_sector=children|adult`. Default behaviour unchanged (no workspace passed → all sectors).
+- **Frontend** (`LiveStaffingOps.jsx`):
+  - Pulls `effectiveMode` from `OrgContext` and forwards as `workspace_sector` on every fetch.
+  - Belt-and-braces client-side filter on `sectors_available` chips (default-deny on unknown sectors — tightened after review).
+  - `setSectorFilter("all")` runs when `effectiveMode` changes — prevents a stale adult filter persisting into children's mode after a workspace switch.
+  - "All" chip label now reads "All children's services" / "All adult services" / "Organisation-wide" based on the active workspace.
+- Side fixes:
+  - `GovernanceHub.jsx` + `InductionPolicyHub.jsx` — switched from non-existent `mode` field to `effectiveMode` (`mode` was undefined before this patch, sector was defaulting to "children" always).
+  - `Residents.jsx` subtitle now sector-aware ("Adults in your care." / "Children and young people in your care.").
+- **Tested**: 4/4 new sector-boundary pytest in `test_iteration51_sector_boundary.py` + 27/27 combined Phase H regression. Frontend testing agent: 100% backend + 100% frontend success rate verified by Playwright. No regressions. Report: `/app/test_reports/iteration_51.json`. **No retest needed.**
+
+
 
 
 

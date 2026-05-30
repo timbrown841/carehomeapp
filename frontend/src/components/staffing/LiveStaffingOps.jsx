@@ -233,7 +233,7 @@ export default function LiveStaffingOps() {
             testid="sector-all"
           >{effectiveMode === "adult" ? "All adult services" : effectiveMode === "children" ? "All children's services" : "Organisation-wide"}</FilterChip>
           {(data?.sectors_available || [])
-            .filter((s) => !effectiveMode || (SECTOR_OF[s.sector] || s.sector) === effectiveMode)
+            .filter((s) => !effectiveMode || SECTOR_OF[s.sector] === effectiveMode)
             .map((s) => (
             <FilterChip
               key={s.sector}
