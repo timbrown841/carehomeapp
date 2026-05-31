@@ -418,8 +418,6 @@ A simple and fast care management app for children's homes and supported living.
   - `Dashboard.jsx` embeds `<InductionRiskWidget />` after `<CliffEdgeWidget />`.
   - `StaffPersonnelFile.jsx` embeds `<StaffProfileInductionSection />` between the header and the tab bar.
 - **Tested**: 17/17 backend pytest in `test_iteration56_induction_compliance.py` covering risk rules (green/amber/red + signed-off-always-green), dashboard shape + RBAC, overdue+at-risk aggregation, certificate PDF gating (400 before sign-off, 200 + valid %PDF bytes after, staff own-only download), HR file auto-attach (verified via `/api/hr/staff/{sid}` tabs.folders.induction.files contains hr_file_id), staff summary + own-only RBAC, inspection-pack JSON + multi-page PDF, readiness weights = {60,15,10,15}. Combined 47/47 across iter54+55+56. Frontend testing agent: 100% backend + 100% frontend — all six surfaces verified (Dashboard widget, /induction list compliance bar + filter chips + evidence pack button, detail page preview/download/HR badges, HR Personnel File induction section, staff widget hidden, evidence pack multi-page PDF). Report: `/app/test_reports/iteration_56.json`. **No retest needed.**
-
-
 ## Implemented (2026-05-30 · iter-57 · Phase E.3.2 — Policies, Compliance & Induction Centre)
 - **Unified Compliance Dashboard** (`/app/backend/compliance_dashboard.py` + `ComplianceDashboard.jsx`) wired as a tab inside `/policies?tab=dashboard` (sidebar untouched). Sector-adaptive label: **"Ofsted Readiness"** for children's workspace, **"CQC Readiness"** for adult.
 - **Endpoint**: `GET /api/compliance/unified-dashboard?sector=children|adult` (manager+ tier ≥2; staff 403). Returns 7 deterministic KPIs (Policy %, Acknowledgement %, Training %, Supervision %, Induction %, Workforce Readiness %, Regulator Readiness %) + RAG block + 6 widgets (policies due review, overdue policies, outstanding acknowledgements, inductions at risk, training cliff edge, 7-day compliance trend) + counts. Regulator Readiness = 30% policy + 25% induction + 20% supervision + 15% training + 10% acknowledgements.
@@ -430,6 +428,27 @@ A simple and fast care management app for children's homes and supported living.
 - **InductionPolicyHub.jsx** Compliance tab now renders `<ComplianceDashboard />` on top; the legacy local tiles block was retired. Inspection evidence pack + Recent assignments sections retained underneath.
 - **Hydration warning fixed**: `<span>` inside `<option>` in `evidence-staff-select` and `enrol-staff-select` (now template-literal text).
 - **Tested**: 16/16 backend pytest in `test_iteration57_compliance_hub.py` (12 original + 4 new for estimated time, manager-section keys, recommend extras). Testing agent E2E: 100% backend, 100% Children's compliance dashboard frontend (all 7 KPI tiles, hero label = "Ofsted Readiness", drill-down links present, evidence pack + recent assignments below). Assign Modal flow self-verified via screenshot (recommended template tile + auto-select + override badge all visible). Adult-sector swap verified at API; frontend uses `effectiveMode` from OrgContext so swap is automatic. Report: `/app/test_reports/iteration_57.json`. **No retest needed.**
+
+
+## Implemented (2026-05-31 · iter-58 · Phase E.4 — Workforce Planning & Capacity Intelligence)
+- **Predictive-planning layer** turning Safelyn from a "compliance-tracking" platform into a "compliance-forecasting" platform. Lives as a manager+ tab inside Staff Operations Hub (no new sidebar item).
+- **Backend** — new module `/app/backend/workforce_planning.py` mounted in `server.py`. All endpoints manager+ (tier ≥3); staff get 403.
+  - `GET /api/workforce-planning/dashboard?sector=children|adult` — unified payload: **Workforce Readiness Forecast** (today/30/60/90 days; projected compliance % + RAG; monotonically non-increasing); **Cliff Edge buckets** (overdue/30/60/90 + per-role breakdown for staff/senior/manager/admin with compliance % + RAG); **Renewal Waves** (next 6 months with month_label + course_count + staff_count + estimated_hours + recommended_action_date = wave-month-1st - 30 days); **Capacity** (staff_total, on_shift_now, on_leave_today, on_sickness_today, on_training_today, vacancies, available_today, release_for_training_safe ≥60% threshold); **Manager Actions** (priority-sorted, severity red/amber/blue, deep_link to /training, /hr, /supervisions, /induction).
+  - `GET /api/workforce-planning/calendar?sector=&from=&to=` — unified event feed: training_expiry, supervision_due (next = last + 28d staff / 56d senior+), appraisal_due (annual), induction_target, dbs_renewal (folder=dbs in staff_files), probation_review (folder=probation), qualification_review. Invalid / reversed dates → 400.
+  - `GET /api/workforce-planning/capacity?sector=&from=&to=` — day-by-day heatmap (max 60 days), each day has rag + release_for_training_safe.
+- **Sector-aware**: training calculations driven by `tc_courses.sector ∈ [sector, "both"]` — children's (Team Teach, PACE, Safeguarding, Trauma) vs adult (MCA, DoLS, Falls, Dementia, Medication).
+- **Strategic Goal achieved**: forecast assumes no renewals are booked → shows the manager "what happens if you do nothing" with deterministic RAG decay across 30/60/90 days.
+- **Frontend** — new `WorkforcePlanning.jsx` rendered inside Staff Operations Hub tab `workforce-planning` (manager+ only, hidden tier <3):
+  1. **Forecast Hero** — 4 RAG tiles (today/30/60/90) with copy "Predicting compliance risk before it happens."
+  2. **Manager Actions Panel** — priority-sorted action list with severity dots + one-click deep-links.
+  3. **Training Cliff Edge** — 4 bucket tiles + per-role breakdown.
+  4. **Renewal Wave Planning** — up to 6 monthly cards with course count, staff count, est hours, recommended action date.
+  5. **Workforce Capacity** — 6 tiles + "Safe to release" / "Hold — capacity low" pill.
+  6. **Planning Calendar** — weekly (7) / monthly (30) day cell view with colour-coded event chips.
+  7. **Cliff Top List** drill-down table.
+- **Integration**: feeds entirely from existing collections — `tc_records`, `tc_courses`, `tc_qualifications`, `supervisions`, `induction_assignments`, `staff_files`, `leave_requests`, `shifts`, `users`, `staff_profiles`. No new writes; pure read aggregation.
+- **Tested**: 14/14 new pytest in `test_iteration58_workforce_planning.py`. Combined regression 40/40 across iter55+57+58. **Testing agent E2E: 100% backend + 100% frontend** — all six sections in correct order with required data-testids, capacity "Safe to release" pill, calendar weekly/monthly toggle, RBAC (staff cannot see tab), sector swap, sector=bogus 422. Report: `/app/test_reports/iteration_58.json`. **No retest needed.**
+
 
 
 ## Backlog (next-up)
