@@ -1,5 +1,5 @@
 import HubTabs from "@/components/HubTabs";
-import { CalendarClock, ClipboardList, ClipboardCheck, GraduationCap, ShieldCheck, Heart, Activity, BookOpen, ScrollText, TrendingUp, ListChecks } from "lucide-react";
+import { CalendarClock, ClipboardList, ClipboardCheck, GraduationCap, ShieldCheck, Heart, Activity, BookOpen, ScrollText, TrendingUp, ListChecks, Sparkles } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 
 import Staff, { TrainingPage } from "@/pages/Staff";
@@ -13,6 +13,7 @@ import InductionPolicyHub from "@/pages/InductionPolicyHub";
 import MyPolicies from "@/pages/MyPolicies";
 import GovernanceHub from "@/pages/GovernanceHub";
 import PolicyIntelligence from "@/pages/PolicyIntelligence";
+import WorkforcePlanning from "@/pages/WorkforcePlanning";
 import { TeamWellbeingAwarenessCard } from "@/pages/ReflectionSupervision";
 import BurnoutForecastPanel from "@/components/intelligence/BurnoutForecastPanel";
 
@@ -26,6 +27,7 @@ export default function StaffOperationsHub() {
     { id: "supervisions", label: "Supervisions", icon: ClipboardCheck },
     { id: "wellbeing", label: "Team Wellbeing", icon: Heart, hidden: tier < 3 },
     { id: "training", label: "Training", icon: GraduationCap },
+    { id: "workforce-planning", label: "Workforce Planning", icon: Sparkles, hidden: tier < 3 },
     { id: "recruitment", label: "Safer Recruitment", icon: ShieldCheck, hidden: tier < 3 },
     { id: "policies", label: "Induction & Policy", icon: BookOpen },
     { id: "governance", label: "Governance", icon: ScrollText, hidden: tier < 3 },
@@ -55,6 +57,7 @@ export default function StaffOperationsHub() {
               <TrainingCentre />
             </div>
           );
+          if (active === "workforce-planning") return <WorkforcePlanning />;
           if (active === "recruitment") return <SaferRecruitment />;
           if (active === "policies") return (tier >= 3 ? <InductionPolicyHub /> : <MyPolicies />);
           if (active === "governance") return <GovernanceHub />;

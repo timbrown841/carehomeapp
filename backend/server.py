@@ -10924,6 +10924,16 @@ _compliance_dashboard.build_routes()
 app.include_router(_compliance_dashboard.router)
 
 
+# Phase E.4 — Workforce Planning & Capacity Intelligence
+import workforce_planning as _workforce_planning
+_workforce_planning.init(
+    db=db, get_current_user=get_current_user,
+    require_tier=require_tier,
+)
+_workforce_planning.build_routes()
+app.include_router(_workforce_planning.router)
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=False,
