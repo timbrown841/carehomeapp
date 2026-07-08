@@ -18,7 +18,7 @@ from __future__ import annotations
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Iterable
 
-from intelligence_engine import build_burnout_forecast, CHILDREN_SECTORS
+from .intelligence_engine import build_burnout_forecast, CHILDREN_SECTORS
 
 
 # ---------------------------------------------------------------------------
