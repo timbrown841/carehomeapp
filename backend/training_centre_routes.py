@@ -18,7 +18,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Body, Query, UploadFile, File, Form
 from pydantic import BaseModel, Field
 
-import training_centre as tc
+from . import training_centre as tc
 
 router = APIRouter(prefix="/api", tags=["Training Centre"])
 
