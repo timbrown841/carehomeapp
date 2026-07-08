@@ -9050,7 +9050,7 @@ async def intelligence_burnout_forecast(_: dict = Depends(require_tier(3))):
 # Children's services only. Manager+ only.
 # ============================================================
 
-from placement_intelligence import (
+from .placement_intelligence import (
     build_home_readiness, build_match_analysis,
     NEED_OPTIONS, CONDITION_OPTIONS,
 )
