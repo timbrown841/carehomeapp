@@ -9054,7 +9054,7 @@ from .placement_intelligence import (
     build_home_readiness, build_match_analysis,
     NEED_OPTIONS, CONDITION_OPTIONS,
 )
-from referral_pdf import build_referral_pdf
+from .referral_pdf import build_referral_pdf
 
 
 _RISK_RATING = Literal["low", "medium", "high"]
