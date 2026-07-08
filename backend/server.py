@@ -11,6 +11,7 @@ import uuid
 import logging
 import bcrypt
 import jwt
+from openai import OpenAI
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional, Literal, Dict
 
@@ -20,7 +21,6 @@ from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field, EmailStr, field_validator
 
-from emergentintegrations.llm.openai import OpenAISpeechToText
 from emergentintegrations.llm.chat import LlmChat, UserMessage
 from fastapi.responses import StreamingResponse, Response, FileResponse
 from contextlib import asynccontextmanager
@@ -3851,20 +3851,20 @@ async def transcribe(audio: UploadFile = File(...), _: dict = Depends(get_curren
     file_like = io.BytesIO(raw)
     file_like.name = name
 
-    stt = OpenAISpeechToText(api_key=EMERGENT_LLM_KEY)
-    try:
-        response = await stt.transcribe(
-            file=file_like,
-            model="whisper-1",
-            response_format="json",
-            language="en",
-        )
-        text = getattr(response, "text", None) or str(response)
-        return {"text": text}
-    except Exception:
-        logger.exception("Transcription failed")
-        raise HTTPException(502, "Voice transcription service unavailable.")
+    client = OpenAI(api_key=EMERGENT_LLM_KEY)
 
+try:
+    response = client.audio.transcriptions.create(
+        file=file_like,
+        model="whisper-1",
+        response_format="json",
+        language="en",
+    )
+    text = response.text
+    return {"text": text}
+except Exception:
+    logger.exception("Transcription failed")
+    raise HTTPException(502, "Voice transcription service unavailable.")
 
 # ---------- AI Reports ----------
 @api_router.post("/reports/generate", response_model=ReportOut)
