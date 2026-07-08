@@ -3851,20 +3851,23 @@ async def transcribe(audio: UploadFile = File(...), _: dict = Depends(get_curren
     file_like = io.BytesIO(raw)
     file_like.name = name
 
-    client = OpenAI(api_key=EMERGENT_LLM_KEY)
+    from openai import OpenAI
 
-try:
-    response = client.audio.transcriptions.create(
-        file=file_like,
-        model="whisper-1",
-        response_format="json",
-        language="en",
-    )
-    text = response.text
-    return {"text": text}
-except Exception:
-    logger.exception("Transcription failed")
-    raise HTTPException(502, "Voice transcription service unavailable.")
+client = OpenAI(api_key=EMERGENT_LLM_KEY)
+
+@app.post("/transcribe")
+async def transcribe_audio(file: UploadFile):
+    try:
+        response = client.audio.transcriptions.create(
+            file=file.file,
+            model="whisper-1",
+            response_format="json",
+            language="en",
+        )
+        return {"text": response.text}
+    except Exception:
+        logger.exception("Transcription failed")
+        raise HTTPException(502, "Voice transcription service unavailable.")
 
 # ---------- AI Reports ----------
 @api_router.post("/reports/generate", response_model=ReportOut)
