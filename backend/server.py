@@ -34,7 +34,7 @@ from .notifications_service import send_email, send_sms, recipient_for
 from .uploads_service import save_upload, disk_path, public_meta
 from .audit_service import record_audit
 from .key_work_session_pdf import build_key_work_session_pdf
-from seed_therapeutic import (
+from .seed_therapeutic import (
     FRAMEWORKS,
     RESOURCE_PACKS,
     KEY_WORK_TOPICS,
