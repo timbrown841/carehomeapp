@@ -14,7 +14,7 @@ from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import mm
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 
-from placement_intelligence import (
+from .placement_intelligence import (
     build_match_analysis, NEED_LABELS, CONDITION_LABELS,
 )
 
