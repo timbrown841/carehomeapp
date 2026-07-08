@@ -21,7 +21,6 @@ from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field, EmailStr, field_validator
 
-from emergentintegrations.llm.chat import LlmChat, UserMessage
 from fastapi.responses import StreamingResponse, Response, FileResponse
 from contextlib import asynccontextmanager
 
@@ -3679,11 +3678,18 @@ async def structure_incident(payload: StructureRequest, _: dict = Depends(get_cu
         "Return ONLY the JSON object."
     )
 
-    chat = LlmChat(
-        api_key=EMERGENT_LLM_KEY,
-        session_id=f"structure-{uuid.uuid4()}",
-        system_message=system,
-    ).with_model("openai", "gpt-5.2")
+    from openai import OpenAI
+client = OpenAI(api_key=EMERGENT_LLM_KEY)
+
+response = client.chat.completions.create(
+    model="gpt-4o-mini",
+    messages=[
+        {"role": "system", "content": system},
+        {"role": "user", "content": prompt},
+    ],
+)
+
+summary = response.choices[0].message["content"]
 
     try:
         raw = await chat.send_message(UserMessage(text=user_prompt))
