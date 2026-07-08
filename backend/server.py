@@ -9285,13 +9285,13 @@ async def referral_pdf(rid: str, user: dict = Depends(require_tier(3))):
 # Non-binding, on-demand matching intelligence. Accepts pasted text, PDF/TXT
 # upload, or manual overrides. NEVER persists a referral — purely transient.
 
-from referral_extractor import extract_referral_from_text, extract_pdf_text
-from placement_stability import (
+from .referral_extractor import extract_referral_from_text, extract_pdf_text
+from .placement_stability import (
     build_resident_placement_stability,
     build_emerging_placement_concerns,
     build_resident_placement_trajectory,
 )
-from staff_personnel import (
+from .staff_personnel import (
     FOLDERS as HR_FOLDERS,
     FOLDER_BY_ID as HR_FOLDER_BY_ID,
     TABS_ORDER as HR_TABS_ORDER,
@@ -9301,15 +9301,15 @@ from staff_personnel import (
     build_hr_dashboard,
     build_scr,
 )
-from scr_pdf import build_scr_pdf
-from inspector_links import (
+from .scr_pdf import build_scr_pdf
+from .inspector_links import (
     ALLOWED_EXPIRY_HOURS, DEFAULT_EXPIRY_HOURS,
     generate_token, hash_token, public_link_view,
     filter_inspector_payload, _link_lite, _is_active,
 )
-from handover_digest import build_handover_digest, PERIOD_DEFS as HANDOVER_PERIODS
-from handover_pdf import build_handover_pdf
-from notifications_centre import (
+from .handover_digest import build_handover_digest, PERIOD_DEFS as HANDOVER_PERIODS
+from .handover_pdf import build_handover_pdf
+from .notifications_centre import (
     CATEGORIES as NOTIF_CATEGORIES,
     CATEGORY_LABELS as NOTIF_CATEGORY_LABELS,
     DEFAULT_CHANNELS as NOTIF_DEFAULT_CHANNELS,
@@ -9320,7 +9320,7 @@ from notifications_centre import (
     notify_safeguarding_incident,
     notify_missing_episode,
 )
-from digest_scheduler import (
+from .digest_scheduler import (
     DEFAULT_SCHEDULES as DIGEST_DEFAULTS,
     initialise_schedules as init_digest_schedules,
     trigger_digest_delivery,
