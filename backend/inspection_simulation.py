@@ -23,7 +23,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Optional
 
-from regulation_44_modules import QS
+from .regulation_44_modules import QS
 
 
 def _pct(n: int, total: int) -> int:
