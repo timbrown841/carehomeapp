@@ -3833,25 +3833,7 @@ async def delete_incident(iid: str, _: dict = Depends(require_role("admin"))):
 
 
 # ---------- Voice Transcription ----------
-@api_router.post("/voice/transcribe")
-async def transcribe(audio: UploadFile = File(...), _: dict = Depends(get_current_user)):
-    if not EMERGENT_LLM_KEY:
-        raise HTTPException(500, "Voice transcription not configured")
-    raw = await audio.read()
-    if len(raw) == 0:
-        raise HTTPException(400, "Empty audio file")
-    if len(raw) > 25 * 1024 * 1024:
-        raise HTTPException(400, "Audio file too large (>25MB)")
-
-    # Determine extension
-    name = audio.filename or "audio.webm"
-    if "." not in name:
-        name = "audio.webm"
-
-    file_like = io.BytesIO(raw)
-    file_like.name = name
-
-    from openai import OpenAI
+from openai import OpenAI
 
 client = OpenAI(api_key=EMERGENT_LLM_KEY)
 
