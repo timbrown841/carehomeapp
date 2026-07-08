@@ -10854,8 +10854,8 @@ async def list_digest_deliveries(
 app.include_router(api_router)
 
 # Phase H — Induction & Policy Management
-import policy_routes as _policy_routes
-import policy_management as _policy_management
+from . import policy_routes as _policy_routes
+from . import policy_management as _policy_management
 _policy_routes.init(
     db=db, get_current_user=get_current_user,
     require_tier=require_tier, record_audit=record_audit,
@@ -10864,8 +10864,8 @@ _policy_routes.build_routes()
 app.include_router(_policy_routes.router)
 
 # Phase E.1 — Training & Workforce Development Centre
-import training_centre as _training_centre
-import training_centre_routes as _tc_routes
+from . import training_centre as _training_centre
+from . import training_centre_routes as _tc_routes
 _tc_routes.init(
     db=db, get_current_user=get_current_user,
     require_tier=require_tier, record_audit=record_audit,
@@ -10875,7 +10875,7 @@ _tc_routes.build_routes()
 app.include_router(_tc_routes.router)
 
 # Phase E.2 — Care Task Scheduler
-import scheduler_routes as _scheduler_routes
+from . import scheduler_routes as _scheduler_routes
 _scheduler_routes.init(
     db=db, get_current_user=get_current_user,
     require_tier=require_tier, record_audit=record_audit,
@@ -10884,7 +10884,7 @@ _scheduler_routes.build_routes()
 app.include_router(_scheduler_routes.router)
 
 # Phase E.3 — Staff Induction Checklist
-import induction_routes as _induction_routes
+from . import induction_routes as _induction_routes
 _induction_routes.init(
     db=db, get_current_user=get_current_user,
     require_tier=require_tier, record_audit=record_audit,
@@ -10895,7 +10895,7 @@ _induction_routes.build_routes()
 app.include_router(_induction_routes.router)
 
 # Phase E.3.2 — Unified Compliance Dashboard
-import compliance_dashboard as _compliance_dashboard
+from . import compliance_dashboard as _compliance_dashboard
 _compliance_dashboard.init(
     db=db, get_current_user=get_current_user,
     require_tier=require_tier,
@@ -10905,7 +10905,7 @@ app.include_router(_compliance_dashboard.router)
 
 
 # Phase E.4 — Workforce Planning & Capacity Intelligence
-import workforce_planning as _workforce_planning
+from . import workforce_planning as _workforce_planning
 _workforce_planning.init(
     db=db, get_current_user=get_current_user,
     require_tier=require_tier,
