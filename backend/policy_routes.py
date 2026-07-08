@@ -15,7 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException, Body, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-import policy_management as pm
+import .policy_management as pm
 
 router = APIRouter(prefix="/api", tags=["Policies & Induction"])
 
