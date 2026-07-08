@@ -24,16 +24,16 @@ from pydantic import BaseModel, Field, EmailStr, field_validator
 from fastapi.responses import StreamingResponse, Response, FileResponse
 from contextlib import asynccontextmanager
 
-from pdf_builder import build_incident_pdf, build_report_pdf
-from missing_pack_pdf import build_missing_pack_pdf
-from mar_pdf import build_mar_pdf
-from inspection_bundle_pdf import build_inspection_bundle_pdf
-from return_interview_pdf import build_return_interview_pdf
-from inspection_snapshot_pdf import build_inspection_snapshot_pdf
+from .pdf_builder import build_incident_pdf, build_report_pdf
+from .missing_pack_pdf import build_missing_pack_pdf
+from .mar_pdf import build_mar_pdf
+from .inspection_bundle_pdf import build_inspection_bundle_pdf
+from .return_interview_pdf import build_return_interview_pdf
+from .inspection_snapshot_pdf import build_inspection_snapshot_pdf
 from notifications_service import send_email, send_sms, recipient_for
 from uploads_service import save_upload, disk_path, public_meta
 from audit_service import record_audit
-from key_work_session_pdf import build_key_work_session_pdf
+from .key_work_session_pdf import build_key_work_session_pdf
 from seed_therapeutic import (
     FRAMEWORKS,
     RESOURCE_PACKS,
@@ -41,9 +41,9 @@ from seed_therapeutic import (
     GUIDED_PROMPTS,
 )
 from home_operations_seed import CHECK_TYPES, evaluate_status
-from home_operations_pdf import build_compliance_snapshot_pdf
+from .home_operations_pdf import build_compliance_snapshot_pdf
 from timeline_service import build_chronology, detect_patterns, CATEGORY_META
-from chronology_pdf import build_chronology_pdf
+from .chronology_pdf import build_chronology_pdf
 from seed_adult_demo import seed_adult_demo_if_empty
 from adult_services_models import (
     CareTaskIn, CareTaskUpdate, FallIn, FallUpdate,
@@ -57,9 +57,9 @@ from staff_reflection_models import (
 from ofsted_command_centre import build_command_centre
 from regulation_44_modules import build_regulation_44, MODULES as REG44_MODULES
 from inspection_simulation import build_inspection_simulation, build_reg44_auto_draft
-from pre_inspection_scan_pdf import build_pre_inspection_scan_pdf
+from .pre_inspection_scan_pdf import build_pre_inspection_scan_pdf
 from cross_module_patterns import build_pattern_intelligence
-from strategy_meeting_pack_pdf import build_strategy_meeting_pack
+from .strategy_meeting_pack_pdf import build_strategy_meeting_pack
 from staffing_service import build_staffing_overview, get_staffing_config, set_staffing_config
 from intelligence_engine import build_forecast, build_resident_stability, build_burnout_forecast
 import secrets as _secrets
